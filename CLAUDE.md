@@ -41,6 +41,7 @@ These are synced from the source files above and should not be edited manually:
 - `npx skills add` reads source skills from `skills/` in this repo. It does not require checked-in `.github/skills/` copies.
 - Hooks fail fast if `memory-mason.json` is missing and `MEMORY_MASON_VAULT_PATH` is unset.
 - Do not commit a real `memory-mason.json`. Keep only `memory-mason.example.json` in git.
+- Versioning policy: bump patch for fixes/refactors, minor for backward-compatible features, and major for breaking changes.
 - Keep repo/product naming aligned to `Memory Mason` and `https://github.com/s-gryt/memory-mason`.
 
 ## Validation

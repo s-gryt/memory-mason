@@ -13,9 +13,15 @@ Run six health checks on the knowledge base and report all findings by severity.
 
 ## Path Resolution
 
-Read memory-mason.json first and resolve:
+Before any other reasoning, read `./memory-mason.json` from the current project root and resolve:
 - {vault}: absolute path to the Obsidian vault
 - {subfolder}: plugin-managed subfolder inside the vault
+
+Do not claim config is missing until you have attempted that read.
+If `./memory-mason.json` is missing, run one workspace search for `**/memory-mason.json`.
+- If exactly one file is found, read it and continue.
+- If multiple files are found, report the candidate paths briefly and ask which project root to use.
+- If no file is found, fail fast with an explicit error.
 
 Use these paths:
 - Knowledge root: {vault}/{subfolder}/knowledge/

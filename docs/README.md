@@ -8,13 +8,15 @@ It combines hook-based capture with reusable KB skills so you can keep one knowl
 - Claude Code: `claude plugin marketplace add s-gryt/memory-mason && claude plugin install memory-mason@memory-mason`
 - Codex: clone this repo into your Codex plugins directory, open `/plugins`, search `Memory Mason`, then install it.
 - Gemini CLI: `gemini extensions install https://github.com/s-gryt/memory-mason`
-- GitHub Copilot: `npx skills add s-gryt/memory-mason -a github-copilot --all`
-- Cursor: `npx skills add s-gryt/memory-mason -a cursor --all`
-- Windsurf: `npx skills add s-gryt/memory-mason -a windsurf --all`
-- Cline: `npx skills add s-gryt/memory-mason -a cline --all`
-- Any other Agent Skills host: `npx skills add s-gryt/memory-mason --all`
+- GitHub Copilot: `npx skills add s-gryt/memory-mason -a github-copilot -s '*' -y`
+- Cursor: `npx skills add s-gryt/memory-mason -a cursor -s '*' -y`
+- Windsurf: `npx skills add s-gryt/memory-mason -a windsurf -s '*' -y`
+- Cline: `npx skills add s-gryt/memory-mason -a cline -s '*' -y`
+- Any other Agent Skills host: `npx skills add s-gryt/memory-mason`
 
 `npx skills` installs skills only. It does not install GitHub Copilot hooks.
+
+Use `npx skills add s-gryt/memory-mason --all` only if you intentionally want every Memory Mason skill installed into every supported agent.
 
 It discovers source skills from [skills](skills) in this repository and installs them into agent-specific skill locations. The source repo itself does not need `.github/skills/` for `npx skills add` to work.
 

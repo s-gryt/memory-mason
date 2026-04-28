@@ -4,18 +4,25 @@
 
 Memory Mason captures AI conversation context and syncs it into an Obsidian knowledge base.
 
+[![GitHub stars](https://img.shields.io/github/stars/s-gryt/memory-mason?style=flat&color=e8734a)](https://github.com/s-gryt/memory-mason/stargazers)
+[![CI](https://github.com/s-gryt/memory-mason/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/s-gryt/memory-mason/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Claude Code](https://img.shields.io/badge/Claude_Code-plugin-8B5CF6)](https://code.claude.com/docs/en/discover-plugins)
+
 ## Install
 
 - Claude Code: `claude plugin marketplace add s-gryt/memory-mason && claude plugin install memory-mason@memory-mason`
 - Codex: clone this repo into your Codex plugins directory, open `/plugins`, search for `Memory Mason`, then install it.
 - Gemini CLI: `gemini extensions install https://github.com/s-gryt/memory-mason`
-- Cursor: `npx skills add s-gryt/memory-mason -a cursor --all`
-- Windsurf: `npx skills add s-gryt/memory-mason -a windsurf --all`
-- GitHub Copilot: `npx skills add s-gryt/memory-mason -a github-copilot --all`
-- Cline: `npx skills add s-gryt/memory-mason -a cline --all`
-- Any other Agent Skills host: `npx skills add s-gryt/memory-mason --all`
+- Cursor: `npx skills add s-gryt/memory-mason -a cursor -s '*' -y`
+- Windsurf: `npx skills add s-gryt/memory-mason -a windsurf -s '*' -y`
+- GitHub Copilot: `npx skills add s-gryt/memory-mason -a github-copilot -s '*' -y`
+- Cline: `npx skills add s-gryt/memory-mason -a cline -s '*' -y`
+- Any other Agent Skills host: `npx skills add s-gryt/memory-mason`
 
 `npx skills` installs public KB skills only. For continuous capture in GitHub Copilot, keep [.github/hooks](.github/hooks) in the workspace or copy those hook definitions into `~/.copilot/hooks`.
+
+Use `npx skills add s-gryt/memory-mason --all` only if you intentionally want every Memory Mason skill installed into every supported agent.
 
 Packaging model: [skills](skills) is source of truth for `npx skills add` installs across Cursor, Windsurf, Cline, GitHub Copilot, and other Agent Skills hosts. [hooks](hooks) powers Claude plugin runtime hooks. [.github/hooks](.github/hooks) is only GitHub Copilot hook wiring for continuous capture and is not part of shared skill installation.
 

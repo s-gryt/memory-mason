@@ -15,9 +15,15 @@ Answer a knowledge-base question using index-guided retrieval and cite sources w
 
 ## Path Resolution
 
-Read memory-mason.json first and resolve:
+Before any other reasoning, read `./memory-mason.json` from the current project root and resolve:
 - {vault}: absolute path to the Obsidian vault
 - {subfolder}: plugin-managed subfolder inside the vault
+
+Do not claim config is missing until you have attempted that read.
+If `./memory-mason.json` is missing, run one workspace search for `**/memory-mason.json`.
+- If exactly one file is found, read it and continue.
+- If multiple files are found, report the candidate paths briefly and ask which project root to use.
+- If no file is found, state that the knowledge base is not initialized.
 
 Use these paths:
 - Index: {vault}/{subfolder}/knowledge/index.md

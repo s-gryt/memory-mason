@@ -38,6 +38,10 @@ Also check manifest and naming consistency across:
 
 ## Release hygiene
 
+- Use `x.y.z` semantic versioning in `VERSION`.
+- Bump patch (`x.y.Z`) for fixes and refactors.
+- Bump minor (`x.Y.0`) for backward-compatible feature additions.
+- Bump major (`X.0.0`) for breaking changes.
 - Keep real vault config out of git
 - Keep product name aligned to `Memory Mason`
 - Keep repository URL aligned to `https://github.com/s-gryt/memory-mason`
