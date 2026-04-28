@@ -16,6 +16,7 @@ Edit these files directly:
 | `skills/mms/SKILL.md` | Status workflow |
 | `rules/kb-activate.md` | Always-on knowledge base rule text |
 | `hooks/` | Runtime capture behavior |
+| `VERSION` | Shared plugin/package version for releasable manifests |
 | `README.md` | Product front door |
 | `docs/README.md` | Platform details |
 | `.github/workflows/ci.yml` | Hook validation + generated artifact sync |
@@ -46,5 +47,6 @@ These are synced from the source files above and should not be edited manually:
 
 - Hook tests: `cd hooks && npm test`
 - Hook coverage gate: `cd hooks && npm run coverage`
+- Manifest version sync check: `node scripts/version-sync.mjs check`
 - Stale-name sweep: search for old ids or old repo names before release
 - Manifests to check before publish: `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.agents/plugins/marketplace.json`, `plugins/memory-mason/.codex-plugin/plugin.json`, `gemini-extension.json`

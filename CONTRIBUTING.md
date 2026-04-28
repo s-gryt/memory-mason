@@ -9,6 +9,7 @@ Memory Mason is a publishable multi-agent plugin and skills repo. Keep changes m
 - Edit root skills in `skills/`
 - Edit always-on rule text in `rules/kb-activate.md`
 - Edit runtime behavior in `hooks/`
+- Edit release version in `VERSION`
 - Edit product docs in `README.md` and `docs/README.md`
 
 Do not hand-edit generated copies under `.cursor/skills`, `.windsurf/skills`, `plugins/memory-mason/skills`, `.clinerules`, or `.github/copilot-instructions.md`.
@@ -18,12 +19,15 @@ Do not hand-edit generated copies under `.cursor/skills`, `.windsurf/skills`, `p
 Run these before publishing or merging behavior changes:
 
 ```bash
+node scripts/version-sync.mjs check
 cd hooks
 npm test
 npm run coverage
 ```
 
 Coverage gate applies to shared hook logic under `hooks/lib/`. Hook entry scripts are behavior-tested separately.
+
+Run `node scripts/version-sync.mjs sync` after changing `VERSION` to propagate new release version into tracked manifests.
 
 Also check manifest and naming consistency across:
 

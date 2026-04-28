@@ -8,6 +8,5 @@
   },
   "homepage": "https://github.com/s-gryt/memory-mason",
   "repository": "https://github.com/s-gryt/memory-mason",
-  "skills": "./skills/",
-  "hooks": "./hooks/hooks.json"
+  "skills": "./skills/"
 }

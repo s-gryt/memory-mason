@@ -9,12 +9,22 @@ on:
       - hooks/**
       - skills/**/SKILL.md
       - rules/kb-activate.md
+      - .claude-plugin/plugin.json
+      - VERSION
+      - gemini-extension.json
+      - plugins/memory-mason/.codex-plugin/plugin.json
+      - scripts/version-sync.mjs
   pull_request:
     paths:
       - .github/workflows/ci.yml
       - hooks/**
       - skills/**/SKILL.md
       - rules/kb-activate.md
+      - .claude-plugin/plugin.json
+      - VERSION
+      - gemini-extension.json
+      - plugins/memory-mason/.codex-plugin/plugin.json
+      - scripts/version-sync.mjs
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -33,6 +43,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+
+      - name: Check manifest version drift
+        run: node ../scripts/version-sync.mjs check
 
       - name: Install hook dependencies
         run: npm ci
