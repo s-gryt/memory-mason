@@ -1,0 +1,136 @@
+'use strict';
+
+const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
+const { assertNonEmptyString } = require('./config');
+
+const isObjectRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+
+const assertString = (name, value) => {
+  if (typeof value !== 'string') {
+    throw new Error(name + ' must be a string');
+  }
+  return value;
+};
+
+const assertPositiveInteger = (name, value) => {
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(name + ' must be a positive integer');
+  }
+  return value;
+};
+
+const defaultCaptureState = () => ({
+  lastCapture: null
+});
+
+const resolveCaptureStatePath = (vaultPath, subfolder) => {
+  const safeVaultPath = assertNonEmptyString('vaultPath', vaultPath);
+  const safeSubfolder = assertNonEmptyString('subfolder', subfolder);
+  return path.join(safeVaultPath, safeSubfolder, '.memory-mason-last-capture.json');
+};
+
+const sanitizeCaptureRecord = (record) => {
+  if (!isObjectRecord(record)) {
+    return null;
+  }
+
+  const sessionId = typeof record.sessionId === 'string' ? record.sessionId : '';
+  const source = typeof record.source === 'string' ? record.source : '';
+  const contentHash = typeof record.contentHash === 'string' ? record.contentHash : '';
+  const timestampMs = Number.isInteger(record.timestampMs) ? record.timestampMs : 0;
+
+  if (sessionId === '' || source === '' || contentHash === '' || timestampMs <= 0) {
+    return null;
+  }
+
+  return {
+    sessionId,
+    source,
+    contentHash,
+    timestampMs
+  };
+};
+
+const mergeWithDefaults = (state) => {
+  if (!isObjectRecord(state)) {
+    return defaultCaptureState();
+  }
+
+  return {
+    ...defaultCaptureState(),
+    ...state,
+    lastCapture: sanitizeCaptureRecord(state.lastCapture)
+  };
+};
+
+const loadCaptureState = (vaultPath, subfolder) => {
+  const statePath = resolveCaptureStatePath(vaultPath, subfolder);
+
+  if (!fs.existsSync(statePath)) {
+    return defaultCaptureState();
+  }
+
+  const rawState = fs.readFileSync(statePath, 'utf-8');
+
+  try {
+    const parsedState = JSON.parse(rawState);
+    return mergeWithDefaults(parsedState);
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      return defaultCaptureState();
+    }
+    throw error;
+  }
+};
+
+const saveCaptureState = (vaultPath, subfolder, state) => {
+  if (!isObjectRecord(state)) {
+    throw new Error('state must be an object');
+  }
+
+  const statePath = resolveCaptureStatePath(vaultPath, subfolder);
+  fs.mkdirSync(path.dirname(statePath), { recursive: true });
+  fs.writeFileSync(statePath, JSON.stringify(state, null, 2), 'utf-8');
+};
+
+const hashCaptureContent = (content) =>
+  crypto.createHash('sha256').update(assertString('content', content), 'utf-8').digest('hex').slice(0, 16);
+
+const buildCaptureRecord = (sessionId, source, content, timestampMs) => ({
+  sessionId: assertNonEmptyString('sessionId', sessionId),
+  source: assertNonEmptyString('source', source),
+  contentHash: hashCaptureContent(content),
+  timestampMs: assertPositiveInteger('timestampMs', timestampMs)
+});
+
+const isDuplicateCapture = (previousCapture, nextCapture, windowMs) => {
+  const safePreviousCapture = sanitizeCaptureRecord(previousCapture);
+  const safeNextCapture = sanitizeCaptureRecord(nextCapture);
+  const safeWindowMs = assertPositiveInteger('windowMs', windowMs);
+
+  if (safeNextCapture === null) {
+    throw new Error('nextCapture must be a valid capture record');
+  }
+
+  if (safePreviousCapture === null) {
+    return false;
+  }
+
+  return (
+    safePreviousCapture.sessionId === safeNextCapture.sessionId &&
+    safePreviousCapture.contentHash === safeNextCapture.contentHash &&
+    safeNextCapture.timestampMs >= safePreviousCapture.timestampMs &&
+    safeNextCapture.timestampMs - safePreviousCapture.timestampMs <= safeWindowMs
+  );
+};
+
+module.exports = {
+  defaultCaptureState,
+  resolveCaptureStatePath,
+  loadCaptureState,
+  saveCaptureState,
+  buildCaptureRecord,
+  isDuplicateCapture
+};

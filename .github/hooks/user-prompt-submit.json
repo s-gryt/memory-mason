@@ -1,0 +1,11 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "type": "command",
+        "command": "node hooks/user-prompt-submit.js",
+        "timeout": 5
+      }
+    ]
+  }
+}

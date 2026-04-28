@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "memory-mason",
+  "description": "Memory Mason syncs AI sessions into an Obsidian knowledge base with KB skills and hook-driven capture.",
+  "owner": {
+    "name": "Sergii Grytsaienko",
+    "url": "https://github.com/s-gryt"
+  },
+  "plugins": [
+    {
+      "name": "memory-mason",
+      "description": "Sync AI conversations to Obsidian and run Memory Mason KB workflows.",
+      "source": "./",
+      "category": "productivity"
+    }
+  ]
+}

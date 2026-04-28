@@ -1,0 +1,290 @@
+'use strict';
+
+const {
+  parseJsonlTranscript,
+  selectRecentTurns,
+  renderTurnsAsMarkdown,
+  buildTranscriptExcerpt
+} = require('../lib/transcript');
+
+describe('parseJsonlTranscript', () => {
+  it('parses Claude-style JSONL with message.role and string content', () => {
+    const input = [
+      JSON.stringify({ message: { role: 'user', content: 'hello' } }),
+      JSON.stringify({ message: { role: 'assistant', content: 'world' } })
+    ].join('\n');
+
+    expect(parseJsonlTranscript(input)).toEqual([
+      { role: 'user', content: 'hello' },
+      { role: 'assistant', content: 'world' }
+    ]);
+  });
+
+  it('parses block-array content and concatenates text blocks', () => {
+    const input = JSON.stringify({
+      message: {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'hello' },
+          { type: 'text', text: 'world' }
+        ]
+      }
+    });
+
+    expect(parseJsonlTranscript(input)).toEqual([{ role: 'user', content: 'hello\nworld' }]);
+  });
+
+  it('skips non-text blocks in block array', () => {
+    const input = JSON.stringify({
+      message: {
+        role: 'user',
+        content: [
+          { type: 'tool_use', name: 'something' },
+          { type: 'text', text: 'first' },
+          { type: 'tool_result', result: 'ignored' },
+          { type: 'text', text: 'second' }
+        ]
+      }
+    });
+
+    expect(parseJsonlTranscript(input)).toEqual([{ role: 'user', content: 'first\nsecond' }]);
+  });
+
+  it('parses flat format with top-level role and content', () => {
+    const input = JSON.stringify({ role: 'user', content: 'test' });
+
+    expect(parseJsonlTranscript(input)).toEqual([{ role: 'user', content: 'test' }]);
+  });
+
+  it('ignores blank lines', () => {
+    const input = [
+      '',
+      JSON.stringify({ message: { role: 'user', content: 'hello' } }),
+      '',
+      JSON.stringify({ message: { role: 'assistant', content: 'world' } }),
+      ''
+    ].join('\n');
+
+    expect(parseJsonlTranscript(input)).toEqual([
+      { role: 'user', content: 'hello' },
+      { role: 'assistant', content: 'world' }
+    ]);
+  });
+
+  it('ignores malformed JSON lines', () => {
+    const input = [
+      JSON.stringify({ message: { role: 'user', content: 'hello' } }),
+      '{not-json',
+      JSON.stringify({ message: { role: 'assistant', content: 'world' } })
+    ].join('\n');
+
+    expect(parseJsonlTranscript(input)).toEqual([
+      { role: 'user', content: 'hello' },
+      { role: 'assistant', content: 'world' }
+    ]);
+  });
+
+  it('ignores system and tool roles', () => {
+    const input = [
+      JSON.stringify({ message: { role: 'system', content: 'policy' } }),
+      JSON.stringify({ message: { role: 'tool', content: 'call' } }),
+      JSON.stringify({ message: { role: 'user', content: 'question' } })
+    ].join('\n');
+
+    expect(parseJsonlTranscript(input)).toEqual([{ role: 'user', content: 'question' }]);
+  });
+
+  it('ignores parsed JSON values that are not objects', () => {
+    const input = [
+      '123',
+      JSON.stringify({ message: { role: 'assistant', content: 'world' } })
+    ].join('\n');
+
+    expect(parseJsonlTranscript(input)).toEqual([{ role: 'assistant', content: 'world' }]);
+  });
+
+  it('ignores entries with empty content after trim', () => {
+    const input = [
+      JSON.stringify({ message: { role: 'user', content: '   ' } }),
+      JSON.stringify({ role: 'assistant', content: 'reply' }),
+      JSON.stringify({ message: { role: 'assistant', content: [{ type: 'text', text: '   ' }] } })
+    ].join('\n');
+
+    expect(parseJsonlTranscript(input)).toEqual([{ role: 'assistant', content: 'reply' }]);
+  });
+
+  it('preserves turn order', () => {
+    const input = [
+      JSON.stringify({ message: { role: 'user', content: 'u1' } }),
+      JSON.stringify({ message: { role: 'assistant', content: 'a1' } }),
+      JSON.stringify({ message: { role: 'user', content: 'u2' } }),
+      JSON.stringify({ message: { role: 'assistant', content: 'a2' } })
+    ].join('\n');
+
+    expect(parseJsonlTranscript(input)).toEqual([
+      { role: 'user', content: 'u1' },
+      { role: 'assistant', content: 'a1' },
+      { role: 'user', content: 'u2' },
+      { role: 'assistant', content: 'a2' }
+    ]);
+  });
+
+  it('throws when content is not a non-empty string', () => {
+    expect(() => parseJsonlTranscript('')).toThrow('content must be a non-empty string');
+    expect(() => parseJsonlTranscript(123)).toThrow('content must be a non-empty string');
+  });
+
+  it('returns empty array for content with no valid turns', () => {
+    const input = [
+      JSON.stringify({ message: { role: 'system', content: 'policy' } }),
+      JSON.stringify({ message: { role: 'tool', content: 'call' } })
+    ].join('\n');
+
+    expect(parseJsonlTranscript(input)).toEqual([]);
+  });
+
+  it('ignores entries with unsupported content shapes', () => {
+    const input = JSON.stringify({ message: { role: 'user', content: { text: 'ignored' } } });
+
+    expect(parseJsonlTranscript(input)).toEqual([]);
+  });
+});
+
+describe('selectRecentTurns', () => {
+  it('returns last N turns when length exceeds maxTurns', () => {
+    expect(selectRecentTurns([1, 2, 3, 4, 5], 2)).toEqual([4, 5]);
+  });
+
+  it('returns full copy when length is exactly maxTurns', () => {
+    const turns = [1, 2, 3];
+    const result = selectRecentTurns(turns, 3);
+
+    expect(result).toEqual([1, 2, 3]);
+    expect(result).not.toBe(turns);
+  });
+
+  it('returns full copy when length is less than maxTurns', () => {
+    const turns = [1, 2];
+    const result = selectRecentTurns(turns, 5);
+
+    expect(result).toEqual([1, 2]);
+    expect(result).not.toBe(turns);
+  });
+
+  it('does not mutate the input array', () => {
+    const turns = ['a', 'b', 'c'];
+    const snapshot = turns.slice();
+
+    selectRecentTurns(turns, 2);
+
+    expect(turns).toEqual(snapshot);
+  });
+
+  it('throws when turns is not an array', () => {
+    expect(() => selectRecentTurns('not-array', 2)).toThrow('turns must be an array');
+  });
+
+  it('throws when maxTurns is 0', () => {
+    expect(() => selectRecentTurns([1, 2], 0)).toThrow('maxTurns must be a positive integer');
+  });
+
+  it('throws when maxTurns is negative', () => {
+    expect(() => selectRecentTurns([1, 2], -1)).toThrow('maxTurns must be a positive integer');
+  });
+
+  it('throws when maxTurns is a float', () => {
+    expect(() => selectRecentTurns([1, 2], 1.5)).toThrow('maxTurns must be a positive integer');
+  });
+});
+
+describe('renderTurnsAsMarkdown', () => {
+  it('formats user turn with User label', () => {
+    expect(renderTurnsAsMarkdown([{ role: 'user', content: 'hello' }])).toBe('**User:** hello\n');
+  });
+
+  it('formats assistant turn with Assistant label', () => {
+    expect(renderTurnsAsMarkdown([{ role: 'assistant', content: 'world' }])).toBe('**Assistant:** world\n');
+  });
+
+  it('joins multiple turns with newline separator', () => {
+    const result = renderTurnsAsMarkdown([
+      { role: 'user', content: 'hello' },
+      { role: 'assistant', content: 'world' }
+    ]);
+
+    expect(result).toBe('**User:** hello\n\n**Assistant:** world\n');
+  });
+
+  it('throws on empty array', () => {
+    expect(() => renderTurnsAsMarkdown([])).toThrow('turns must be a non-empty array');
+  });
+
+  it('throws on invalid turn with missing role', () => {
+    expect(() => renderTurnsAsMarkdown([{ content: 'hello' }])).toThrow('turn at index 0 has invalid role');
+  });
+
+  it('throws on turn that is not an object', () => {
+    expect(() => renderTurnsAsMarkdown([null])).toThrow('turn at index 0 must be an object');
+  });
+
+  it('throws on invalid turn with empty content', () => {
+    expect(() => renderTurnsAsMarkdown([{ role: 'user', content: '' }])).toThrow(
+      'turn at index 0 must have non-empty content'
+    );
+  });
+});
+
+describe('buildTranscriptExcerpt', () => {
+  it('returns markdown and turn count for valid JSONL', () => {
+    const input = [
+      JSON.stringify({ message: { role: 'user', content: 'hello' } }),
+      JSON.stringify({ message: { role: 'assistant', content: 'world' } })
+    ].join('\n');
+
+    expect(buildTranscriptExcerpt(input, 10, 1000)).toEqual({
+      markdown: '**User:** hello\n\n**Assistant:** world\n',
+      turnCount: 2
+    });
+  });
+
+  it('returns empty markdown and 0 turn count for JSONL with no valid turns', () => {
+    const input = [
+      JSON.stringify({ message: { role: 'system', content: 'policy' } }),
+      JSON.stringify({ message: { role: 'tool', content: 'tool call' } })
+    ].join('\n');
+
+    expect(buildTranscriptExcerpt(input, 5, 500)).toEqual({ markdown: '', turnCount: 0 });
+  });
+
+  it('applies truncation when markdown exceeds maxChars', () => {
+    const marker = '\n\n...(truncated)';
+    const input = JSON.stringify({
+      message: {
+        role: 'user',
+        content: 'x'.repeat(200)
+      }
+    });
+
+    const result = buildTranscriptExcerpt(input, 5, 30);
+
+    expect(result.turnCount).toBe(1);
+    expect(result.markdown.endsWith(marker)).toBe(true);
+    expect(result.markdown.length).toBe(30 + marker.length);
+  });
+
+  it('applies selectRecentTurns before rendering', () => {
+    const lines = Array.from({ length: 10 }, (_, index) => {
+      const turnNumber = index + 1;
+      const role = turnNumber % 2 === 0 ? 'assistant' : 'user';
+      const label = 'turn-' + String(turnNumber).padStart(2, '0');
+      return JSON.stringify({ message: { role, content: label } });
+    });
+    const input = lines.join('\n');
+
+    const result = buildTranscriptExcerpt(input, 3, 1000);
+
+    expect(result.turnCount).toBe(3);
+    expect(result.markdown.includes('turn-10')).toBe(true);
+    expect(result.markdown.includes('turn-01')).toBe(false);
+  });
+});

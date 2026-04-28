@@ -1,0 +1,36 @@
+{
+  "name": "memory-mason",
+  "version": "0.1.0",
+  "description": "Sync AI conversations to an Obsidian knowledge base and run Memory Mason KB workflows.",
+  "author": {
+    "name": "Sergii Grytsaienko",
+    "url": "https://github.com/s-gryt"
+  },
+  "homepage": "https://github.com/s-gryt/memory-mason",
+  "repository": "https://github.com/s-gryt/memory-mason",
+  "license": "MIT",
+  "keywords": [
+    "obsidian",
+    "knowledge-base",
+    "memory",
+    "productivity"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Memory Mason",
+    "shortDescription": "Keep an Obsidian knowledge base in sync across AI coding tools.",
+    "longDescription": "Memory Mason adds KB compile, query, lint, and status workflows for Codex while the shared knowledge base lives in Obsidian.",
+    "developerName": "Sergii Grytsaienko",
+    "category": "Productivity",
+    "capabilities": [
+      "Write"
+    ],
+    "websiteURL": "https://github.com/s-gryt/memory-mason",
+    "privacyPolicyURL": "https://github.com/s-gryt/memory-mason/blob/main/README.md",
+    "defaultPrompt": [
+      "Use Memory Mason when the task is about compiling, querying, linting, or checking the Obsidian knowledge base."
+    ],
+    "screenshots": [],
+    "brandColor": "#4B5563"
+  }
+}

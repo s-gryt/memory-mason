@@ -1,0 +1,132 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/ci.yml
+      - hooks/**
+      - skills/**/SKILL.md
+      - rules/kb-activate.md
+  pull_request:
+    paths:
+      - .github/workflows/ci.yml
+      - hooks/**
+      - skills/**/SKILL.md
+      - rules/kb-activate.md
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test-hooks:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: hooks
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install hook dependencies
+        run: npm ci
+
+      - name: Run hook coverage
+        run: npm run coverage
+
+  sync-generated-artifacts:
+    needs: test-hooks
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Pull latest before making changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git pull --rebase origin main
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Sync SKILL.md copies
+        run: |
+          for skill in mmc mmq mml mms; do
+            mkdir -p ".cursor/skills/${skill}"
+            cp "skills/${skill}/SKILL.md" ".cursor/skills/${skill}/SKILL.md"
+
+            mkdir -p ".windsurf/skills/${skill}"
+            cp "skills/${skill}/SKILL.md" ".windsurf/skills/${skill}/SKILL.md"
+
+            mkdir -p "plugins/memory-mason/skills/${skill}"
+            cp "skills/${skill}/SKILL.md" "plugins/memory-mason/skills/${skill}/SKILL.md"
+          done
+
+      - name: Build .skill ZIP archives
+        run: |
+          cd skills/mmc && zip -r ../../mmc.skill . && cd ../..
+          cd skills/mmq && zip -r ../../mmq.skill . && cd ../..
+          cd skills/mml && zip -r ../../mml.skill . && cd ../..
+          cd skills/mms && zip -r ../../mms.skill . && cd ../..
+
+      - name: Sync auto-activation rules
+        run: |
+          mkdir -p .clinerules
+          cp rules/kb-activate.md .clinerules/memory-mason.md
+
+          mkdir -p .cursor/rules
+          printf '%s\n' '---' 'description: "Memory Mason knowledge base"' 'alwaysApply: true' '---' '' > .cursor/rules/memory-mason.mdc
+          cat rules/kb-activate.md >> .cursor/rules/memory-mason.mdc
+
+          mkdir -p .windsurf/rules
+          printf '%s\n' '---' 'trigger: always_on' '---' '' > .windsurf/rules/memory-mason.md
+          cat rules/kb-activate.md >> .windsurf/rules/memory-mason.md
+
+          python3 - <<'PYEOF'
+          import pathlib
+          import re
+
+          content = pathlib.Path('.github/copilot-instructions.md').read_text(encoding='utf-8')
+          body = pathlib.Path('rules/kb-activate.md').read_text(encoding='utf-8').rstrip('\n')
+          block = f'<!-- BEGIN memory-mason -->\n{body}\n<!-- END memory-mason -->'
+
+          if '<!-- BEGIN memory-mason -->' in content:
+              updated = re.sub(
+                  r'<!-- BEGIN memory-mason -->.*?<!-- END memory-mason -->',
+                  block,
+                  content,
+                  flags=re.DOTALL,
+              )
+          else:
+              updated = content.rstrip('\n') + '\n\n' + block + '\n'
+
+          pathlib.Path('.github/copilot-instructions.md').write_text(updated, encoding='utf-8')
+          PYEOF
+
+      - name: Commit and push if changed
+        run: |
+          git add \
+            .cursor/skills/ \
+            .windsurf/skills/ \
+            plugins/memory-mason/skills/ \
+            mmc.skill mmq.skill mml.skill mms.skill \
+            .clinerules/memory-mason.md \
+            .cursor/rules/memory-mason.mdc \
+            .windsurf/rules/memory-mason.md \
+            .github/copilot-instructions.md
+          git diff --staged --quiet && exit 0
+          git commit -m "chore: sync skills to agent locations [skip ci]"
+          git push

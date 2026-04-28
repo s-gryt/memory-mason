@@ -1,0 +1,27 @@
+# Coding conventions
+
+- React 19 + TypeScript 5.8, strict mode
+- FSD folder structure: `src/features/`, `src/app/`, `src/shared/`
+- MUI v9 + Tailwind 4 for UI
+- No `any` types
+- No inline comments
+- Pure functional - no mutations
+- All chrome.storage access via `src/features/settings/model/settingsRepository.ts`
+- All storage key constants in `src/shared/constants.ts`
+
+<!-- BEGIN memory-mason -->
+# Memory Mason Knowledge Base
+
+You have access to a persistent knowledge base that captures and organizes context
+from AI conversations. It is available via these commands:
+
+- `/mmc` — Process today's conversation log into knowledge articles
+- `/mmq [question]` — Search the knowledge base for relevant knowledge
+- `/mml` — Run health checks on the knowledge base
+- `/mms` — Show knowledge base statistics
+
+The knowledge base is located at the vault path configured in `memory-mason.json`.
+When a user asks about past decisions, patterns, or lessons, check the knowledge
+base with `/mmq` before answering from general knowledge.
+<!-- END memory-mason -->
+

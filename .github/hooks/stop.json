@@ -1,0 +1,11 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "type": "command",
+        "command": "node hooks/session-end.js",
+        "timeout": 15
+      }
+    ]
+  }
+}

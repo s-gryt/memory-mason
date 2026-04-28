@@ -1,0 +1,20 @@
+{
+  "name": "memory-mason",
+  "interface": {
+    "displayName": "Memory Mason"
+  },
+  "plugins": [
+    {
+      "name": "memory-mason",
+      "source": {
+        "source": "local",
+        "path": "./plugins/memory-mason"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
