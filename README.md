@@ -1,28 +1,16 @@
-<p align="center">
-  <img src="img/cover.png" alt="Memory Mason" width="480" />
-</p>
+# Memory Mason
 
-<h1 align="center">Memory Mason</h1>
+![Memory Mason](img/cover.png)
 
-<p align="center">
-  <strong>Capture AI conversations. Build an Obsidian knowledge base. One command.</strong>
-</p>
+**Capture AI conversations. Build an Obsidian knowledge base. One command.**
 
-<p align="center">
-  <a href="https://github.com/s-gryt/memory-mason/stargazers"><img src="https://img.shields.io/github/stars/s-gryt/memory-mason?style=flat&color=e8734a" alt="Stars"></a>
-  <a href="https://github.com/s-gryt/memory-mason/actions/workflows/ci.yml"><img src="https://github.com/s-gryt/memory-mason/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
-  <a href="https://github.com/s-gryt/memory-mason/actions"><img src="https://s-gryt.github.io/memory-mason/badges/coverage.svg" alt="Coverage"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="MIT"></a>
-  <a href="https://code.claude.com/docs/en/discover-plugins"><img src="https://img.shields.io/badge/Claude_Code-plugin-8B5CF6" alt="Claude Code"></a>
-</p>
+[![Stars](https://img.shields.io/github/stars/s-gryt/memory-mason?style=flat&color=e8734a)](https://github.com/s-gryt/memory-mason/stargazers)
+[![CI](https://github.com/s-gryt/memory-mason/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/s-gryt/memory-mason/actions/workflows/ci.yml)
+[![cov](https://we-cli.github.io/jayin/badges/coverage.svg)](https://s-gryt.github.io/memory-mason/actions)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Claude Code](https://img.shields.io/badge/Claude_Code-plugin-8B5CF6)](https://code.claude.com/docs/en/discover-plugins)
 
-<p align="center">
-  <a href="#install">Install</a> &bull;
-  <a href="#commands">Commands</a> &bull;
-  <a href="#configuration">Configuration</a> &bull;
-  <a href="#how-it-works">How It Works</a> &bull;
-  <a href="docs/README.md">Docs</a>
-</p>
+[Install](#install) • [Commands](#commands) • [Configuration](#configuration) • [How It Works](#how-it-works) • [Docs](docs/README.md)
 
 ---
 
