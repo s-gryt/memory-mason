@@ -40,6 +40,22 @@ function readConfigText(cwd) {
   return fs.readFileSync(configPath, 'utf-8');
 }
 
+function readDotEnvText(cwd) {
+  const envPath = path.join(cwd, '.env');
+  if (!fs.existsSync(envPath)) {
+    return '';
+  }
+  return fs.readFileSync(envPath, 'utf-8');
+}
+
+function readGlobalConfigText(homedir) {
+  const globalConfigPath = path.join(homedir, '.memory-mason', 'config.json');
+  if (!fs.existsSync(globalConfigPath)) {
+    return '';
+  }
+  return fs.readFileSync(globalConfigPath, 'utf-8');
+}
+
 function readFileOrEmpty(filePath) {
   try {
     return fs.readFileSync(filePath, 'utf-8');
@@ -71,7 +87,12 @@ function run(rawStdin, runtime = {}) {
     const input = parseJsonInput(rawStdin);
     const cwd = toStringOrEmpty(input.cwd) !== '' ? toStringOrEmpty(input.cwd) : fallbackCwd;
     const configText = readConfigText(cwd);
-    const resolvedConfig = resolveVaultConfig(cwd, toStringOrEmpty(env.MEMORY_MASON_VAULT_PATH), configText, homedir);
+    const dotEnvText = readDotEnvText(cwd);
+    const globalConfigText = readGlobalConfigText(homedir);
+    const resolvedConfig = resolveVaultConfig(cwd, toStringOrEmpty(env.MEMORY_MASON_VAULT_PATH), configText, homedir, {
+      dotEnvText,
+      globalConfigText
+    });
 
     const indexPath = buildKnowledgeIndexPath(resolvedConfig.vaultPath, resolvedConfig.subfolder);
     const indexText = readFileOrEmpty(indexPath);
@@ -125,6 +146,8 @@ if (require.main === module) {
 
 module.exports = {
   readStdin,
+  readDotEnvText,
+  readGlobalConfigText,
   run,
   main
 };

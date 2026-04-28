@@ -63,15 +63,93 @@ const parseMemoryMasonConfig = (rawText) => {
   return { vaultPath, subfolder };
 };
 
-const resolveVaultConfig = (cwd, envVaultPath, configText, homedir) => {
+const stripDotEnvComment = (valueText) => {
+  const trimmedValue = valueText.trim();
+  const isSingleQuoted = trimmedValue.startsWith("'");
+  const isDoubleQuoted = trimmedValue.startsWith('"');
+
+  if (!isSingleQuoted && !isDoubleQuoted) {
+    return trimmedValue.split('#')[0].trim();
+  }
+
+  const quote = isSingleQuoted ? "'" : '"';
+  const closingQuoteIndex = trimmedValue.indexOf(quote, 1);
+
+  if (closingQuoteIndex === -1) {
+    return trimmedValue;
+  }
+
+  return trimmedValue.slice(0, closingQuoteIndex + 1);
+};
+
+const stripSurroundingQuotes = (valueText) => {
+  const trimmedValue = valueText.trim();
+  const firstCharacter = trimmedValue[0];
+  const lastCharacter = trimmedValue[trimmedValue.length - 1];
+  const hasSurroundingQuotes =
+    trimmedValue.length >= 2 &&
+    ((firstCharacter === '"' && lastCharacter === '"') || (firstCharacter === "'" && lastCharacter === "'"));
+
+  return hasSurroundingQuotes ? trimmedValue.slice(1, -1) : trimmedValue;
+};
+
+const parseDotEnv = (rawText) => {
+  const safeRawText = typeof rawText === 'string' ? rawText : '';
+
+  if (safeRawText === '') {
+    return {};
+  }
+
+  return safeRawText
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line !== '' && !line.startsWith('#'))
+    .reduce((accumulator, line) => {
+      const equalsIndex = line.indexOf('=');
+      if (equalsIndex <= 0) {
+        return accumulator;
+      }
+
+      const key = line.slice(0, equalsIndex).trim();
+      const valueText = line.slice(equalsIndex + 1);
+      const withoutComment = stripDotEnvComment(valueText);
+      const value = stripSurroundingQuotes(withoutComment);
+
+      return {
+        ...accumulator,
+        [key]: value
+      };
+    }, {});
+};
+
+const resolveVaultConfig = (cwd, envVaultPath, configText, homedir, options = {}) => {
   const safeHomedir = assertNonEmptyString('homedir', homedir);
   const safeEnvVaultPath = typeof envVaultPath === 'string' ? envVaultPath : '';
   const safeConfigText = typeof configText === 'string' ? configText : '';
+  const safeOptions = options !== null && typeof options === 'object' ? options : {};
+  const safeDotEnvText = typeof safeOptions.dotEnvText === 'string' ? safeOptions.dotEnvText : '';
+  const safeGlobalConfigText = typeof safeOptions.globalConfigText === 'string' ? safeOptions.globalConfigText : '';
+  const parsedDotEnv = parseDotEnv(safeDotEnvText);
+  const dotEnvVaultPath = typeof parsedDotEnv.MEMORY_MASON_VAULT_PATH === 'string' ? parsedDotEnv.MEMORY_MASON_VAULT_PATH : '';
+  const dotEnvSubfolder =
+    typeof parsedDotEnv.MEMORY_MASON_SUBFOLDER === 'string' ? parsedDotEnv.MEMORY_MASON_SUBFOLDER : '';
 
   if (safeEnvVaultPath !== '') {
+    const subfolderFromConfig = (() => {
+      if (safeConfigText === '') {
+        return '';
+      }
+
+      try {
+        return parseMemoryMasonConfig(safeConfigText).subfolder;
+      } catch (error) {
+        return '';
+      }
+    })();
+
     return {
       vaultPath: expandHomePath(safeEnvVaultPath, safeHomedir),
-      subfolder: 'ai-knowledge'
+      subfolder: subfolderFromConfig !== '' ? subfolderFromConfig : dotEnvSubfolder !== '' ? dotEnvSubfolder : 'ai-knowledge'
     };
   }
 
@@ -80,6 +158,21 @@ const resolveVaultConfig = (cwd, envVaultPath, configText, homedir) => {
     return {
       vaultPath: expandHomePath(parsedConfig.vaultPath, safeHomedir),
       subfolder: parsedConfig.subfolder
+    };
+  }
+
+  if (dotEnvVaultPath !== '') {
+    return {
+      vaultPath: expandHomePath(dotEnvVaultPath, safeHomedir),
+      subfolder: dotEnvSubfolder !== '' ? dotEnvSubfolder : 'ai-knowledge'
+    };
+  }
+
+  if (safeGlobalConfigText !== '') {
+    const parsedGlobalConfig = parseMemoryMasonConfig(safeGlobalConfigText);
+    return {
+      vaultPath: expandHomePath(parsedGlobalConfig.vaultPath, safeHomedir),
+      subfolder: parsedGlobalConfig.subfolder
     };
   }
 
@@ -120,6 +213,7 @@ module.exports = {
   assertNonEmptyString,
   expandHomePath,
   parseMemoryMasonConfig,
+  parseDotEnv,
   resolveVaultConfig,
   detectPlatform
 };

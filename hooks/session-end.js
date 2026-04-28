@@ -47,6 +47,22 @@ function readConfigText(cwd) {
   return fs.readFileSync(configPath, 'utf-8');
 }
 
+function readDotEnvText(cwd) {
+  const envPath = path.join(cwd, '.env');
+  if (!fs.existsSync(envPath)) {
+    return '';
+  }
+  return fs.readFileSync(envPath, 'utf-8');
+}
+
+function readGlobalConfigText(homedir) {
+  const globalConfigPath = path.join(homedir, '.memory-mason', 'config.json');
+  if (!fs.existsSync(globalConfigPath)) {
+    return '';
+  }
+  return fs.readFileSync(globalConfigPath, 'utf-8');
+}
+
 function readTranscriptFromPath(transcriptPath) {
   if (transcriptPath === '' || !fs.existsSync(transcriptPath)) {
     return '';
@@ -166,7 +182,12 @@ function run(rawStdin, runtime = {}) {
     const platform = detectPlatform(input);
     const cwd = firstNonEmptyString([toStringOrEmpty(input.cwd), fallbackCwd]);
     const configText = readConfigText(cwd);
-    const resolvedConfig = resolveVaultConfig(cwd, toStringOrEmpty(env.MEMORY_MASON_VAULT_PATH), configText, homedir);
+    const dotEnvText = readDotEnvText(cwd);
+    const globalConfigText = readGlobalConfigText(homedir);
+    const resolvedConfig = resolveVaultConfig(cwd, toStringOrEmpty(env.MEMORY_MASON_VAULT_PATH), configText, homedir, {
+      dotEnvText,
+      globalConfigText
+    });
 
     const transcriptPath = firstNonEmptyString([
       toStringOrEmpty(input.transcript_path),
@@ -263,6 +284,8 @@ module.exports = {
   findCodexSessionContent,
   findCopilotCliSessionContent,
   findCopilotCliSessionContentOrEmpty,
+  readDotEnvText,
+  readGlobalConfigText,
   run,
   main
 };

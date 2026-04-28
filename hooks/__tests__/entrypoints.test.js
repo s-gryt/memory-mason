@@ -25,6 +25,20 @@ const scriptModules = {
   'install-copilot-hooks.js': installCopilotHooks,
   'uninstall-copilot-hooks.js': uninstallCopilotHooks
 };
+const entrypointConfigReaderModules = [
+  { scriptName: 'session-start.js', scriptModule: sessionStart },
+  { scriptName: 'user-prompt-submit.js', scriptModule: userPromptSubmit },
+  { scriptName: 'post-tool-use.js', scriptModule: postToolUse },
+  { scriptName: 'pre-compact.js', scriptModule: preCompact },
+  { scriptName: 'session-end.js', scriptModule: sessionEnd }
+];
+const copilotHookDefinitions = [
+  { fileName: 'session-start.json', eventName: 'SessionStart', scriptName: 'session-start.js', timeout: 10 },
+  { fileName: 'user-prompt-submit.json', eventName: 'UserPromptSubmit', scriptName: 'user-prompt-submit.js', timeout: 5 },
+  { fileName: 'post-tool-use.json', eventName: 'PostToolUse', scriptName: 'post-tool-use.js', timeout: 5 },
+  { fileName: 'pre-compact.json', eventName: 'PreCompact', scriptName: 'pre-compact.js', timeout: 15 },
+  { fileName: 'stop.json', eventName: 'Stop', scriptName: 'session-end.js', timeout: 15 }
+];
 
 const createTempDir = (prefix) => {
   const dirPath = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -51,10 +65,12 @@ const runScript = (scriptName, options = {}) => {
         : JSON.stringify(options.payload);
   const env = typeof options.env === 'object' && options.env !== null ? options.env : process.env;
   const homedir = typeof env.USERPROFILE === 'string' && env.USERPROFILE !== '' ? env.USERPROFILE : os.homedir();
+  const extraRuntime = typeof options.runtime === 'object' && options.runtime !== null ? options.runtime : {};
   const runtime = {
     cwd: typeof options.cwd === 'string' ? options.cwd : hooksRoot,
     env,
-    homedir
+    homedir,
+    ...extraRuntime
   };
 
   return scriptName === 'install-copilot-hooks.js' || scriptName === 'uninstall-copilot-hooks.js'
@@ -65,6 +81,18 @@ const runScript = (scriptName, options = {}) => {
 const writeText = (filePath, content) => {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, content, 'utf-8');
+};
+
+const assertInstalledCopilotHook = (hooksDirectory, hookRoot, definition) => {
+  const installedPath = path.join(hooksDirectory, definition.fileName);
+  const installed = JSON.parse(fs.readFileSync(installedPath, 'utf-8'));
+  const entries = installed.hooks[definition.eventName];
+
+  expect(Array.isArray(entries)).toBe(true);
+  expect(entries).toHaveLength(1);
+  expect(entries[0].type).toBe('command');
+  expect(entries[0].timeout).toBe(definition.timeout);
+  expect(entries[0].command).toBe(`node "${path.join(hookRoot, definition.scriptName).replace(/\\/g, '/')}"`);
 };
 
 const buildTranscript = (turnCount, firstUserContent = 'user turn') =>
@@ -83,6 +111,30 @@ afterEach(() => {
   while (tempDirs.length > 0) {
     fs.rmSync(tempDirs.pop(), { recursive: true, force: true });
   }
+});
+
+describe('entrypoint config readers', () => {
+  entrypointConfigReaderModules.forEach(({ scriptName, scriptModule }) => {
+    it(`reads .env text for ${scriptName}`, () => {
+      const cwd = createTempDir('memory-mason-cwd-');
+      const envText = 'MEMORY_MASON_VAULT_PATH=/vault/path\nMEMORY_MASON_SUBFOLDER=notes';
+
+      writeText(path.join(cwd, '.env'), envText);
+
+      expect(scriptModule.readDotEnvText(cwd)).toBe(envText);
+      expect(scriptModule.readDotEnvText(createTempDir('memory-mason-cwd-empty-'))).toBe('');
+    });
+
+    it(`reads global config text for ${scriptName}`, () => {
+      const homeDir = createTempDir('memory-mason-home-');
+      const configText = JSON.stringify({ vaultPath: '/vault', subfolder: 'notes' });
+
+      writeText(path.join(homeDir, '.memory-mason', 'config.json'), configText);
+
+      expect(scriptModule.readGlobalConfigText(homeDir)).toBe(configText);
+      expect(scriptModule.readGlobalConfigText(createTempDir('memory-mason-home-empty-'))).toBe('');
+    });
+  });
 });
 
 describe('session-start.js', () => {
@@ -139,6 +191,38 @@ describe('session-start.js', () => {
     expect(parsed.hookSpecificOutput.additionalContext).toContain('(no recent daily log)');
   });
 
+  it('uses global config fallback when project config and env var are absent', () => {
+    const cwd = createTempDir('memory-mason-cwd-');
+    const homeDir = createTempDir('memory-mason-home-');
+    const vaultPath = createTempDir('memory-mason-vault-');
+    const dailyPath = buildDailyFilePath(vaultPath, 'global-brain', today());
+
+    writeText(path.join(homeDir, '.memory-mason', 'config.json'), JSON.stringify({ vaultPath, subfolder: 'global-brain' }));
+    writeText(dailyPath, '# Daily Log\n\nfrom global config');
+
+    const result = runScript('session-start.js', { payload: { cwd }, cwd, env: buildEnv(homeDir) });
+    const parsed = JSON.parse(result.stdout);
+
+    expect(result.status).toBe(0);
+    expect(parsed.hookSpecificOutput.additionalContext).toContain('from global config');
+  });
+
+  it('uses .env fallback when project config and env var are absent', () => {
+    const cwd = createTempDir('memory-mason-cwd-');
+    const homeDir = createTempDir('memory-mason-home-');
+    const vaultPath = createTempDir('memory-mason-vault-');
+    const dailyPath = buildDailyFilePath(vaultPath, 'dotenv-brain', today());
+
+    writeText(path.join(cwd, '.env'), `MEMORY_MASON_VAULT_PATH=${vaultPath}\nMEMORY_MASON_SUBFOLDER=dotenv-brain`);
+    writeText(dailyPath, '# Daily Log\n\nfrom dotenv config');
+
+    const result = runScript('session-start.js', { payload: { cwd }, cwd, env: buildEnv(homeDir) });
+    const parsed = JSON.parse(result.stdout);
+
+    expect(result.status).toBe(0);
+    expect(parsed.hookSpecificOutput.additionalContext).toContain('from dotenv config');
+  });
+
   it('reports invalid stdin to stderr', () => {
     const homeDir = createTempDir('memory-mason-home-');
     const vaultPath = createTempDir('memory-mason-vault-');
@@ -166,6 +250,51 @@ describe('user-prompt-submit.js', () => {
     const dailyPath = buildDailyFilePath(vaultPath, 'ai-knowledge', today());
     expect(result.status).toBe(0);
     expect(fs.readFileSync(dailyPath, 'utf-8')).toContain('/mmq hooks');
+  });
+
+  it('writes rich slash-command metadata for Claude prompt expansion events', () => {
+    const homeDir = createTempDir('memory-mason-home-');
+    const vaultPath = createTempDir('memory-mason-vault-');
+
+    const result = runScript('user-prompt-submit.js', {
+      payload: {
+        hook_event_name: 'UserPromptExpansion',
+        cwd: hooksRoot,
+        prompt: '/caveman analyze attachments',
+        expansion_type: 'slash_command',
+        command_name: 'caveman:caveman',
+        command_args: 'analyze attachments',
+        command_source: 'plugin'
+      },
+      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath })
+    });
+
+    const dailyPath = buildDailyFilePath(vaultPath, 'ai-knowledge', today());
+    const dailyContent = fs.readFileSync(dailyPath, 'utf-8');
+
+    expect(result.status).toBe(0);
+    expect(dailyContent).toContain('UserPromptExpansion');
+    expect(dailyContent).toContain('/caveman analyze attachments');
+    expect(dailyContent).toContain('command: caveman:caveman');
+    expect(dailyContent).toContain('source: plugin');
+  });
+
+  it('uses custom subfolder from memory-mason.json when env vault path is set', () => {
+    const cwd = createTempDir('memory-mason-cwd-');
+    const homeDir = createTempDir('memory-mason-home-');
+    const vaultPath = createTempDir('memory-mason-vault-');
+
+    writeText(path.join(cwd, 'memory-mason.json'), JSON.stringify({ vaultPath: '/ignored', subfolder: 'my-brain' }));
+
+    const result = runScript('user-prompt-submit.js', {
+      payload: { hookEventName: 'user-prompt-submit', cwd, prompt: 'remember this' },
+      cwd,
+      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath })
+    });
+
+    expect(result.status).toBe(0);
+    expect(fs.readFileSync(buildDailyFilePath(vaultPath, 'my-brain', today()), 'utf-8')).toContain('remember this');
+    expect(fs.existsSync(buildDailyFilePath(vaultPath, 'ai-knowledge', today()))).toBe(false);
   });
 
   it('skips when prompt text is empty', () => {
@@ -211,6 +340,52 @@ describe('post-tool-use.js', () => {
 
     expect(result.status).toBe(0);
     expect(fs.readFileSync(buildDailyFilePath(vaultPath, 'ai-knowledge', today()), 'utf-8')).toContain('patched file');
+  });
+
+  it('writes structured tool output for claude payloads', () => {
+    const homeDir = createTempDir('memory-mason-home-');
+    const vaultPath = createTempDir('memory-mason-vault-');
+
+    const result = runScript('post-tool-use.js', {
+      payload: {
+        hook_event_name: 'PostToolUse',
+        cwd: hooksRoot,
+        tool_name: 'Bash',
+        tool_response: {
+          stdout: 'grep hit 1\ngrep hit 2',
+          stderr: '',
+          interrupted: false,
+          isImage: false
+        }
+      },
+      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath })
+    });
+
+    expect(result.status).toBe(0);
+    expect(fs.readFileSync(buildDailyFilePath(vaultPath, 'ai-knowledge', today()), 'utf-8')).toContain('grep hit 1');
+    expect(fs.readFileSync(buildDailyFilePath(vaultPath, 'ai-knowledge', today()), 'utf-8')).toContain('stdout');
+  });
+
+  it('writes text blocks for structured claude tool outputs', () => {
+    const homeDir = createTempDir('memory-mason-home-');
+    const vaultPath = createTempDir('memory-mason-vault-');
+
+    const result = runScript('post-tool-use.js', {
+      payload: {
+        hook_event_name: 'PostToolUse',
+        cwd: hooksRoot,
+        tool_name: 'mcp__plugin_claude-mem_mcp-search__search',
+        tool_response: [
+          { type: 'text', text: 'match 1' },
+          { type: 'text', text: 'match 2' }
+        ]
+      },
+      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath })
+    });
+
+    expect(result.status).toBe(0);
+    expect(fs.readFileSync(buildDailyFilePath(vaultPath, 'ai-knowledge', today()), 'utf-8')).toContain('match 1');
+    expect(fs.readFileSync(buildDailyFilePath(vaultPath, 'ai-knowledge', today()), 'utf-8')).toContain('match 2');
   });
 
   it('writes tool output for copilot cli payloads', () => {
@@ -526,7 +701,7 @@ describe('session-end.js', () => {
 });
 
 describe('Copilot hook installer scripts', () => {
-  it('installs user-level Copilot hook files with absolute commands', () => {
+  it('installs user-level Copilot hook files with absolute commands and hook metadata', () => {
     const homeDir = createTempDir('memory-mason-home-');
     const result = runScript('install-copilot-hooks.js', {
       stdinText: '',
@@ -534,12 +709,61 @@ describe('Copilot hook installer scripts', () => {
       env: buildEnv(homeDir)
     });
 
-    const installedPath = path.join(homeDir, '.copilot', 'hooks', 'session-start.json');
-    const installed = JSON.parse(fs.readFileSync(installedPath, 'utf-8'));
-    const command = installed.hooks.SessionStart[0].command;
+    const hooksDirectory = path.join(homeDir, '.copilot', 'hooks');
+    const hookRoot = path.join(repoRoot, 'hooks');
 
     expect(result.status).toBe(0);
-    expect(command).toBe(`node "${path.join(repoRoot, 'hooks', 'session-start.js').replace(/\\/g, '/')}"`);
+    copilotHookDefinitions.forEach((definition) => {
+      assertInstalledCopilotHook(hooksDirectory, hookRoot, definition);
+    });
+  });
+
+  it('installs workspace-level Copilot hook files with absolute commands and hook metadata', () => {
+    const homeDir = createTempDir('memory-mason-home-');
+    const workspaceDir = createTempDir('memory-mason-workspace-');
+    const writes = [];
+    const result = installCopilotHooks.main({
+      cwd: repoRoot,
+      env: buildEnv(homeDir),
+      homedir: homeDir,
+      argv: ['--workspace', workspaceDir],
+      io: {
+        stdout: (text) => writes.push(text),
+        stderr: () => {},
+        exit: () => {}
+      }
+    });
+
+    const hooksDirectory = path.join(workspaceDir, '.github', 'hooks');
+    const hookRoot = path.join(repoRoot, 'hooks');
+
+    expect(result.status).toBe(0);
+    expect(writes.join('')).toContain(path.join(workspaceDir, '.github', 'hooks'));
+    copilotHookDefinitions.forEach((definition) => {
+      assertInstalledCopilotHook(hooksDirectory, hookRoot, definition);
+    });
+  });
+
+  it('falls back to inline definitions when source hook files are not available', () => {
+    const homeDir = createTempDir('memory-mason-home-');
+    const targetDir = createTempDir('memory-mason-copilot-target-');
+    const missingSourceDir = path.join(createTempDir('memory-mason-missing-source-'), '.github', 'hooks');
+
+    const result = runScript('install-copilot-hooks.js', {
+      cwd: repoRoot,
+      env: buildEnv(homeDir),
+      runtime: {
+        targetDir,
+        sourceDir: missingSourceDir
+      }
+    });
+
+    const hookRoot = path.join(repoRoot, 'hooks');
+
+    expect(result.status).toBe(0);
+    copilotHookDefinitions.forEach((definition) => {
+      assertInstalledCopilotHook(targetDir, hookRoot, definition);
+    });
   });
 
   it('uninstalls user-level Copilot hook files', () => {
@@ -560,5 +784,38 @@ describe('Copilot hook installer scripts', () => {
     expect(result.status).toBe(0);
     expect(fs.existsSync(path.join(homeDir, '.copilot', 'hooks', 'session-start.json'))).toBe(false);
     expect(fs.existsSync(path.join(homeDir, '.copilot', 'hooks', 'stop.json'))).toBe(false);
+  });
+
+  it('uninstalls workspace-level Copilot hook files', () => {
+    const homeDir = createTempDir('memory-mason-home-');
+    const workspaceDir = createTempDir('memory-mason-workspace-');
+
+    installCopilotHooks.main({
+      cwd: repoRoot,
+      env: buildEnv(homeDir),
+      homedir: homeDir,
+      argv: ['--workspace', workspaceDir],
+      io: {
+        stdout: () => {},
+        stderr: () => {},
+        exit: () => {}
+      }
+    });
+
+    const result = uninstallCopilotHooks.main({
+      cwd: repoRoot,
+      env: buildEnv(homeDir),
+      homedir: homeDir,
+      argv: ['--workspace', workspaceDir],
+      io: {
+        stdout: () => {},
+        stderr: () => {},
+        exit: () => {}
+      }
+    });
+
+    expect(result.status).toBe(0);
+    expect(fs.existsSync(path.join(workspaceDir, '.github', 'hooks', 'session-start.json'))).toBe(false);
+    expect(fs.existsSync(path.join(workspaceDir, '.github', 'hooks', 'stop.json'))).toBe(false);
   });
 });

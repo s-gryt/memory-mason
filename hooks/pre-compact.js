@@ -47,6 +47,22 @@ function readConfigText(cwd) {
   return fs.readFileSync(configPath, 'utf-8');
 }
 
+function readDotEnvText(cwd) {
+  const envPath = path.join(cwd, '.env');
+  if (!fs.existsSync(envPath)) {
+    return '';
+  }
+  return fs.readFileSync(envPath, 'utf-8');
+}
+
+function readGlobalConfigText(homedir) {
+  const globalConfigPath = path.join(homedir, '.memory-mason', 'config.json');
+  if (!fs.existsSync(globalConfigPath)) {
+    return '';
+  }
+  return fs.readFileSync(globalConfigPath, 'utf-8');
+}
+
 function resolveTranscriptPath(input) {
   return firstNonEmptyString([toStringOrEmpty(input.transcript_path), toStringOrEmpty(input.transcriptPath)]);
 }
@@ -77,7 +93,12 @@ function run(rawStdin, runtime = {}) {
 
     const cwd = toStringOrEmpty(input.cwd) !== '' ? toStringOrEmpty(input.cwd) : fallbackCwd;
     const configText = readConfigText(cwd);
-    const resolvedConfig = resolveVaultConfig(cwd, toStringOrEmpty(env.MEMORY_MASON_VAULT_PATH), configText, homedir);
+    const dotEnvText = readDotEnvText(cwd);
+    const globalConfigText = readGlobalConfigText(homedir);
+    const resolvedConfig = resolveVaultConfig(cwd, toStringOrEmpty(env.MEMORY_MASON_VAULT_PATH), configText, homedir, {
+      dotEnvText,
+      globalConfigText
+    });
 
     const today = new Date().toISOString().slice(0, 10);
     const sessionId = firstNonEmptyString([
@@ -137,6 +158,8 @@ module.exports = {
   readStdin,
   firstNonEmptyString,
   resolveTranscriptPath,
+  readDotEnvText,
+  readGlobalConfigText,
   run,
   main
 };

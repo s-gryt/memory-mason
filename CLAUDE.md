@@ -14,6 +14,7 @@ Edit these files directly:
 | `skills/mmq/SKILL.md` | Query workflow |
 | `skills/mml/SKILL.md` | Lint workflow |
 | `skills/mms/SKILL.md` | Status workflow |
+| `skills/mmsetup/SKILL.md` | Setup / install workflow |
 | `rules/kb-activate.md` | Always-on knowledge base rule text |
 | `hooks/` | Runtime capture behavior |
 | `VERSION` | Shared plugin/package version for releasable manifests |
@@ -39,7 +40,9 @@ These are synced from the source files above and should not be edited manually:
 ## Important behavior notes
 
 - `npx skills add` reads source skills from `skills/` in this repo. It does not require checked-in `.github/skills/` copies.
-- Hooks fail fast if `memory-mason.json` is missing and `MEMORY_MASON_VAULT_PATH` is unset.
+- Hook config resolution order is: `MEMORY_MASON_VAULT_PATH` env var, `memory-mason.json` in project root, `.env` in project root, then `~/.memory-mason/config.json` global config. It throws if none are found.
+- Claude Code one-command install scripts are `hooks/install.sh` and `hooks/install.ps1`.
+- Claude Code install bootstraps `~/.memory-mason/config.json` for cross-project use.
 - Do not commit a real `memory-mason.json`. Keep only `memory-mason.example.json` in git.
 - Versioning policy: bump patch for fixes/refactors, minor for backward-compatible features, and major for breaking changes.
 - Keep repo/product naming aligned to `Memory Mason` and `https://github.com/s-gryt/memory-mason`.

@@ -1,11 +1,57 @@
 'use strict';
 
 const {
+  extractTagText,
+  stripAnsiEscapeSequences,
+  normalizeTranscriptText,
   parseJsonlTranscript,
   selectRecentTurns,
   renderTurnsAsMarkdown,
   buildTranscriptExcerpt
 } = require('../lib/transcript');
+
+describe('transcript normalization helpers', () => {
+  it('extracts text from a tagged block', () => {
+    expect(extractTagText('<command-name>/model</command-name>', 'command-name')).toBe('/model');
+  });
+
+  it('returns empty string when tag is absent', () => {
+    expect(extractTagText('plain text', 'command-name')).toBe('');
+  });
+
+  it('returns empty string for invalid tagged-content inputs', () => {
+    expect(extractTagText(null, 'command-name')).toBe('');
+    expect(extractTagText('<command-name>/model</command-name>', '')).toBe('');
+  });
+
+  it('strips ANSI escape sequences', () => {
+    expect(stripAnsiEscapeSequences('Set model to \u001b[1mOpus\u001b[22m')).toBe('Set model to Opus');
+  });
+
+  it('returns empty string when stripping ANSI from non-string input', () => {
+    expect(stripAnsiEscapeSequences(null)).toBe('');
+  });
+
+  it('normalizes slash-command transcript metadata into readable prompt text', () => {
+    const content = [
+      '<command-message>caveman:caveman</command-message>',
+      '<command-name>/caveman:caveman</command-name>',
+      '<command-args>ask a backed question</command-args>'
+    ].join('\n');
+
+    expect(normalizeTranscriptText(content)).toBe('/caveman:caveman ask a backed question');
+  });
+
+  it('normalizes local command stdout into readable text', () => {
+    const content = '<local-command-stdout>Set model to \u001b[1mOpus\u001b[22m</local-command-stdout>';
+
+    expect(normalizeTranscriptText(content)).toBe('Set model to Opus');
+  });
+
+  it('returns empty string when normalizing non-string transcript content', () => {
+    expect(normalizeTranscriptText(null)).toBe('');
+  });
+});
 
 describe('parseJsonlTranscript', () => {
   it('parses Claude-style JSONL with message.role and string content', () => {
@@ -126,6 +172,30 @@ describe('parseJsonlTranscript', () => {
       { role: 'assistant', content: 'a1' },
       { role: 'user', content: 'u2' },
       { role: 'assistant', content: 'a2' }
+    ]);
+  });
+
+  it('normalizes Claude slash-command transcript entries', () => {
+    const input = JSON.stringify({
+      message: {
+        role: 'user',
+        content: '<command-name>/model</command-name>\n<command-message>model</command-message>\n<command-args></command-args>'
+      }
+    });
+
+    expect(parseJsonlTranscript(input)).toEqual([{ role: 'user', content: '/model' }]);
+  });
+
+  it('normalizes Claude local command stdout transcript entries', () => {
+    const input = JSON.stringify({
+      message: {
+        role: 'user',
+        content: '<local-command-stdout>memory-mason is already at the latest version (0.1.2).</local-command-stdout>'
+      }
+    });
+
+    expect(parseJsonlTranscript(input)).toEqual([
+      { role: 'user', content: 'memory-mason is already at the latest version (0.1.2).' }
     ]);
   });
 

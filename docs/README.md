@@ -1,52 +1,141 @@
-# Memory Mason
+# Memory Mason — Technical Reference
 
-Memory Mason is a cross-LLM Obsidian sync package.
-It combines hook-based capture with reusable KB skills so you can keep one knowledge base across Claude Code, GitHub Copilot, Codex, Gemini CLI, Cursor, Windsurf, Cline, and other Agent Skills hosts.
+Cross-LLM Obsidian sync. Hook-based capture + reusable KB skills across Claude Code, GitHub Copilot, Codex, Gemini CLI, Cursor, Windsurf, Cline, and other Agent Skills hosts.
 
-## Install
+## Install by Platform
 
-- Claude Code: `claude plugin marketplace add s-gryt/memory-mason && claude plugin install memory-mason@memory-mason`
-- Codex: clone this repo into your Codex plugins directory, open `/plugins`, search `Memory Mason`, then install it.
-- Gemini CLI: `gemini extensions install https://github.com/s-gryt/memory-mason`
-- GitHub Copilot: `npx skills add s-gryt/memory-mason -a github-copilot -s '*' -y`
-- Cursor: `npx skills add s-gryt/memory-mason -a cursor -s '*' -y`
-- Windsurf: `npx skills add s-gryt/memory-mason -a windsurf -s '*' -y`
-- Cline: `npx skills add s-gryt/memory-mason -a cline -s '*' -y`
-- Any other Agent Skills host: `npx skills add s-gryt/memory-mason`
-
-`npx skills` installs skills only. It does not install GitHub Copilot hooks.
-
-Use `npx skills add s-gryt/memory-mason --all` only if you intentionally want every Memory Mason skill installed into every supported agent.
-
-It discovers source skills from [skills](skills) in this repository and installs them into agent-specific skill locations. The source repo itself does not need `.github/skills/` for `npx skills add` to work.
-
-For continuous capture in Copilot, keep [.github/hooks](.github/hooks) in the workspace or copy those hook files into `~/.copilot/hooks`.
-
-If you want a user-level install that points at this clone with absolute paths, run:
+### Claude Code
 
 ```bash
-node hooks/install-copilot-hooks.js
+bash <(curl -fsSL https://raw.githubusercontent.com/s-gryt/memory-mason/main/install.sh) --agent claude
 ```
 
-Remove it with:
+```powershell
+& ([scriptblock]::Create((iwr https://raw.githubusercontent.com/s-gryt/memory-mason/main/install.ps1 -UseBasicParsing).Content)) -Agent claude
+```
+
+Or from a local clone:
+
+```bash
+bash install.sh --agent claude        # or: bash hooks/install.sh
+powershell -File install.ps1 -Agent claude  # or: powershell -File hooks\install.ps1
+```
+
+Copies runtime to `~/.claude/hooks/memory-mason/`, wires 6 events in `~/.claude/settings.json`, creates `~/.memory-mason/config.json`. Restart Claude Code after install.
+
+### GitHub Copilot
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/s-gryt/memory-mason/main/install.sh) --agent copilot
+```
+
+```powershell
+& ([scriptblock]::Create((iwr https://raw.githubusercontent.com/s-gryt/memory-mason/main/install.ps1 -UseBasicParsing).Content)) -Agent copilot
+```
+
+Or from a local clone:
+
+```bash
+bash install.sh --agent copilot       # or: bash hooks/install-copilot-hooks.sh
+powershell -File install.ps1 -Agent copilot  # or: powershell -File hooks\install-copilot-hooks.ps1
+```
+
+Copies runtime to `~/.copilot/hooks/memory-mason/`, generates workspace hook JSON, creates `~/.memory-mason/config.json`.
+
+<details>
+<summary><strong>Workspace-level install</strong></summary>
+
+Target a specific project so hook JSON lives in that workspace:
+
+```bash
+bash install.sh --agent copilot --workspace /path/to/project
+```
+
+Remove workspace hooks:
+
+```bash
+node hooks/uninstall-copilot-hooks.js --workspace /path/to/project
+```
+
+</details>
+
+<details>
+<summary><strong>Direct Node installer (manual path)</strong></summary>
+
+The shell/PowerShell wrappers above are preferred. If you need lower-level control:
+
+```bash
+node hooks/install-copilot-hooks.js                            # user-level
+node hooks/install-copilot-hooks.js --workspace /path/to/repo  # workspace-level
+```
+
+Remove:
 
 ```bash
 node hooks/uninstall-copilot-hooks.js
 ```
 
+</details>
+
+> **Why Node?** Copilot hooks are JSON config entries that run shell commands. Memory Mason's hook JSON calls `node ".../session-start.js"` and related `.js` entrypoints. Node is a Memory Mason runtime dependency, not a Copilot requirement.
+
+### Codex
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/s-gryt/memory-mason/main/install.sh) --agent codex
+```
+
+Or from the Codex marketplace: open `/plugins`, search `Memory Mason`, install.
+
+### All agents at once
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/s-gryt/memory-mason/main/install.sh) --agent all
+```
+
+### Skills-only hosts
+
+Cursor, Windsurf, Cline, and other Agent Skills hosts get KB commands without hooks:
+
+```bash
+npx skills add s-gryt/memory-mason -a cursor -s '*' -y
+npx skills add s-gryt/memory-mason -a windsurf -s '*' -y
+npx skills add s-gryt/memory-mason -a cline -s '*' -y
+```
+
+`npx skills` discovers skills from [skills/](../skills) and installs them into the target agent. No `.github/skills/` copies needed.
+
+### Gemini CLI
+
+```bash
+gemini extensions install https://github.com/s-gryt/memory-mason
+```
+
 ## Runtime Model
 
-- Hooks append session activity into `{vault}/{subfolder}/daily/YYYY-MM-DD.md`.
-- `/mmc` turns daily logs into knowledge articles under `{vault}/{subfolder}/knowledge/`.
-- `/mmq` answers questions from the compiled KB with `[[wikilink]]` citations.
-- `/mml` reports KB quality issues.
-- `/mms` shows KB status and compilation coverage.
+Hooks append session activity into `{vault}/{subfolder}/daily/YYYY-MM-DD.md`. No API key required — hooks write directly to the filesystem.
 
-No separate API key is required. Hooks write through the Obsidian CLI when available and fall back to direct filesystem writes.
+| Command | Action |
+|:--------|:-------|
+| `/mmc` | Compile daily logs into knowledge articles under `knowledge/` |
+| `/mmq` | Answer from compiled KB with `[[wikilink]]` citations |
+| `/mml` | Report KB quality issues |
+| `/mms` | Show KB status and compilation coverage |
 
-## Config
+## Configuration
 
-Copy `memory-mason.example.json` to `memory-mason.json` at the project root:
+Config resolves in this order (first match wins):
+
+| Priority | Source | Location |
+|:--------:|:-------|:---------|
+| 1 | Env var | `MEMORY_MASON_VAULT_PATH` |
+| 2 | Project config | `memory-mason.json` in project root |
+| 3 | Project `.env` | `MEMORY_MASON_VAULT_PATH` + optional `MEMORY_MASON_SUBFOLDER` |
+| 4 | Global config | `~/.memory-mason/config.json` |
+
+If no source is found, hooks throw an explicit error.
+
+**`memory-mason.json`:**
 
 ```json
 {
@@ -55,15 +144,19 @@ Copy `memory-mason.example.json` to `memory-mason.json` at the project root:
 }
 ```
 
-You can also set `MEMORY_MASON_VAULT_PATH` to override `vaultPath`.
-If neither the config file nor the environment variable is present, hooks fail fast instead of writing into the repo directory.
+**`.env`:**
+
+```env
+MEMORY_MASON_VAULT_PATH=/path/to/your/obsidian/vault
+MEMORY_MASON_SUBFOLDER=memory-mason
+```
 
 ## Vault Layout
 
 ```text
 {vault}/{subfolder}/
 ├── daily/
-│   └── 2026-04-26.md
+│   └── 2026-04-28.md
 ├── knowledge/
 │   ├── index.md
 │   ├── log.md
@@ -73,29 +166,30 @@ If neither the config file nor the environment variable is present, hooks fail f
 └── state.json
 ```
 
-## Commands
-
-- `/mmc`
-- `/mmq [question]`
-- `/mml`
-- `/mms`
-
-## Platform Notes
-
-- Claude Code uses [.claude-plugin/plugin.json](.claude-plugin/plugin.json) and [.claude-plugin/marketplace.json](.claude-plugin/marketplace.json).
-- Codex uses [.agents/plugins/marketplace.json](.agents/plugins/marketplace.json) and [plugins/memory-mason](plugins/memory-mason).
-- Gemini CLI uses [gemini-extension.json](gemini-extension.json) and [GEMINI.md](GEMINI.md).
-- GitHub Copilot uses [AGENTS.md](AGENTS.md), [.github/hooks](.github/hooks), and [.github/copilot-instructions.md](.github/copilot-instructions.md). Skill installation for Copilot comes from `npx skills add`, not from checked-in `.github/skills/` copies.
-- Cursor, Windsurf, and other Agent Skills hosts read from [skills](skills) and the synced rule copies.
-
 ## Hook Coverage
 
-- Claude Code: session start, post-tool-use, pre-compact, session end.
-- GitHub Copilot VS Code: session start, post-tool-use, pre-compact, stop.
-- GitHub Copilot CLI: session start, post-tool-use, session end.
-- Codex: session start, post-tool-use, stop.
+| Event | Claude Code | Copilot | Codex |
+|:------|:-----------:|:-------:|:-----:|
+| SessionStart | Y | Y | Y |
+| UserPromptSubmit | Y | Y | Y |
+| UserPromptExpansion | Y | — | — |
+| PostToolUse | Y | Y | Y |
+| PreCompact | Y | Y | — |
+| SessionEnd / Stop | Y | Y | Y |
 
-Copilot CLI ignores session-start output, so KB context comes from [.github/copilot-instructions.md](.github/copilot-instructions.md) instead of hook-returned text.
+UserPromptExpansion is Claude Code only. It captures slash-command metadata (`expansion_type`, `command_name`, `command_args`, `command_source`) before the host expands the command. Both UserPromptSubmit and UserPromptExpansion reuse the same `user-prompt-submit.js` runtime.
+
+## Platform Manifests
+
+| Surface | Path | Purpose |
+|:--------|:-----|:--------|
+| Claude Code | [.claude-plugin/plugin.json](../.claude-plugin/plugin.json) | Plugin marketplace entry |
+| Codex | [plugins/memory-mason/.codex-plugin/plugin.json](../plugins/memory-mason/.codex-plugin/plugin.json) | Codex marketplace entry |
+| Codex agents | [.agents/plugins/marketplace.json](../.agents/plugins/marketplace.json) | Codex agent marketplace |
+| Gemini CLI | [gemini-extension.json](../gemini-extension.json) + [GEMINI.md](../GEMINI.md) | Extension metadata |
+| Copilot | [AGENTS.md](../AGENTS.md) | Skill references for Copilot |
+| Agent Skills | [skills/](../skills) | Cross-agent KB skills |
+| CI | [.github/workflows/ci.yml](../.github/workflows/ci.yml) | Hook coverage + artifact sync |
 
 ## Development
 
@@ -106,8 +200,8 @@ npm test
 npm run coverage
 ```
 
-`npm run coverage` enforces `100%` line, statement, function, and branch coverage for shared hook logic under `hooks/lib/`. Hook entry scripts are covered by direct behavior tests in `hooks/__tests__/entrypoints.test.js`.
+`npm run coverage` enforces 100% line, statement, function, and branch coverage for shared logic in `hooks/lib/`. Hook entry scripts are covered by behavior tests in `hooks/__tests__/entrypoints.test.js`.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](../LICENSE).

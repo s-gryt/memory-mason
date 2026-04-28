@@ -16,6 +16,42 @@ const assertPositiveInteger = (name, value) => {
   return value;
 };
 
+const extractTagText = (content, tagName) => {
+  if (typeof content !== 'string' || typeof tagName !== 'string' || tagName === '') {
+    return '';
+  }
+
+  const match = content.match(new RegExp('<' + tagName + '>([\\s\\S]*?)<\\/' + tagName + '>'));
+  return Array.isArray(match) && typeof match[1] === 'string' ? match[1] : '';
+};
+
+const stripAnsiEscapeSequences = (content) => {
+  if (typeof content !== 'string') {
+    return '';
+  }
+
+  return content.replace(/\u001b\[[0-9;]*m/g, '');
+};
+
+const normalizeTranscriptText = (content) => {
+  if (typeof content !== 'string') {
+    return '';
+  }
+
+  const localCommandStdout = extractTagText(content, 'local-command-stdout');
+  if (localCommandStdout !== '') {
+    return stripAnsiEscapeSequences(localCommandStdout).trim();
+  }
+
+  const commandName = extractTagText(content, 'command-name').trim();
+  if (commandName !== '') {
+    const commandArgs = extractTagText(content, 'command-args').trim();
+    return [commandName, commandArgs].filter((part) => part !== '').join(' ');
+  }
+
+  return content;
+};
+
 const extractEntryPayload = (entry) => {
   if (entry !== null && typeof entry === 'object' && !Array.isArray(entry)) {
     if (entry.message !== null && typeof entry.message === 'object' && !Array.isArray(entry.message)) {
@@ -39,11 +75,12 @@ const extractEntryPayload = (entry) => {
 
 const extractTextContent = (rawContent) => {
   if (typeof rawContent === 'string') {
-    return rawContent;
+    return normalizeTranscriptText(rawContent);
   }
 
   if (Array.isArray(rawContent)) {
-    return rawContent
+    return normalizeTranscriptText(
+      rawContent
       .filter(
         (block) =>
           block !== null &&
@@ -53,7 +90,8 @@ const extractTextContent = (rawContent) => {
           typeof block.text === 'string'
       )
       .map((block) => block.text)
-      .join('\n');
+      .join('\n')
+    );
   }
 
   return '';
@@ -153,6 +191,9 @@ const buildTranscriptExcerpt = (content, maxTurns, maxChars) => {
 };
 
 module.exports = {
+  extractTagText,
+  stripAnsiEscapeSequences,
+  normalizeTranscriptText,
   parseJsonlTranscript,
   selectRecentTurns,
   renderTurnsAsMarkdown,

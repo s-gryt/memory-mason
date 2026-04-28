@@ -35,11 +35,59 @@ function readConfigText(cwd) {
   return fs.readFileSync(configPath, 'utf-8');
 }
 
+function readDotEnvText(cwd) {
+  const envPath = path.join(cwd, '.env');
+  if (!fs.existsSync(envPath)) {
+    return '';
+  }
+  return fs.readFileSync(envPath, 'utf-8');
+}
+
+function readGlobalConfigText(homedir) {
+  const globalConfigPath = path.join(homedir, '.memory-mason', 'config.json');
+  if (!fs.existsSync(globalConfigPath)) {
+    return '';
+  }
+  return fs.readFileSync(globalConfigPath, 'utf-8');
+}
+
+function serializeToolResponse(toolResponse) {
+  if (typeof toolResponse === 'string') {
+    return toolResponse;
+  }
+
+  if (Array.isArray(toolResponse)) {
+    const textBlocks = toolResponse
+      .filter(
+        (block) =>
+          block !== null &&
+          typeof block === 'object' &&
+          !Array.isArray(block) &&
+          block.type === 'text' &&
+          typeof block.text === 'string' &&
+          block.text.trim() !== ''
+      )
+      .map((block) => block.text.trim());
+
+    if (textBlocks.length > 0) {
+      return textBlocks.join('\n');
+    }
+
+    return JSON.stringify(toolResponse, null, 2);
+  }
+
+  if (toolResponse !== null && typeof toolResponse === 'object') {
+    return JSON.stringify(toolResponse, null, 2);
+  }
+
+  return '';
+}
+
 function extractToolPayload(platform, input) {
   if (platform === 'claude-code' || platform === 'copilot-vscode') {
     return {
       toolName: toStringOrEmpty(input.tool_name),
-      resultText: toStringOrEmpty(input.tool_response)
+      resultText: serializeToolResponse(input.tool_response)
     };
   }
 
@@ -84,7 +132,12 @@ function run(rawStdin, runtime = {}) {
 
     const cwd = toStringOrEmpty(input.cwd) !== '' ? toStringOrEmpty(input.cwd) : fallbackCwd;
     const configText = readConfigText(cwd);
-    const resolvedConfig = resolveVaultConfig(cwd, toStringOrEmpty(env.MEMORY_MASON_VAULT_PATH), configText, homedir);
+    const dotEnvText = readDotEnvText(cwd);
+    const globalConfigText = readGlobalConfigText(homedir);
+    const resolvedConfig = resolveVaultConfig(cwd, toStringOrEmpty(env.MEMORY_MASON_VAULT_PATH), configText, homedir, {
+      dotEnvText,
+      globalConfigText
+    });
 
     const today = new Date().toISOString().slice(0, 10);
     const timestamp = new Date().toISOString().slice(11, 19);
@@ -127,7 +180,10 @@ if (require.main === module) {
 
 module.exports = {
   readStdin,
+  serializeToolResponse,
   extractToolPayload,
+  readDotEnvText,
+  readGlobalConfigText,
   run,
   main
 };

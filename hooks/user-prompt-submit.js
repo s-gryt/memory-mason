@@ -7,7 +7,7 @@ const os = require('os');
 const { parseJsonInput, detectPlatform, resolveVaultConfig } = require('./lib/config');
 const { buildDailyEntry } = require('./lib/vault');
 const { appendToDaily } = require('./lib/writer');
-const { extractPromptText } = require('./lib/prompt');
+const { extractPromptEntry } = require('./lib/prompt');
 
 function readStdin(fsApi = fs) {
   const fd = 0;
@@ -36,6 +36,22 @@ function readConfigText(cwd) {
   return fs.readFileSync(configPath, 'utf-8');
 }
 
+function readDotEnvText(cwd) {
+  const envPath = path.join(cwd, '.env');
+  if (!fs.existsSync(envPath)) {
+    return '';
+  }
+  return fs.readFileSync(envPath, 'utf-8');
+}
+
+function readGlobalConfigText(homedir) {
+  const globalConfigPath = path.join(homedir, '.memory-mason', 'config.json');
+  if (!fs.existsSync(globalConfigPath)) {
+    return '';
+  }
+  return fs.readFileSync(globalConfigPath, 'utf-8');
+}
+
 function run(rawStdin, runtime = {}) {
   const env = runtime.env !== null && typeof runtime.env === 'object' ? runtime.env : process.env;
   const fallbackCwd = typeof runtime.cwd === 'string' ? runtime.cwd : process.cwd();
@@ -44,19 +60,24 @@ function run(rawStdin, runtime = {}) {
   try {
     const input = parseJsonInput(rawStdin);
     const platform = detectPlatform(input);
-    const promptText = extractPromptText(platform, input);
+    const promptEntry = extractPromptEntry(platform, input);
 
-    if (promptText === '') {
+    if (promptEntry.text === '') {
       return { status: 0, stdout: '', stderr: '' };
     }
 
     const cwd = toStringOrEmpty(input.cwd) !== '' ? toStringOrEmpty(input.cwd) : fallbackCwd;
     const configText = readConfigText(cwd);
-    const resolvedConfig = resolveVaultConfig(cwd, toStringOrEmpty(env.MEMORY_MASON_VAULT_PATH), configText, homedir);
+    const dotEnvText = readDotEnvText(cwd);
+    const globalConfigText = readGlobalConfigText(homedir);
+    const resolvedConfig = resolveVaultConfig(cwd, toStringOrEmpty(env.MEMORY_MASON_VAULT_PATH), configText, homedir, {
+      dotEnvText,
+      globalConfigText
+    });
 
     const today = new Date().toISOString().slice(0, 10);
     const timestamp = new Date().toISOString().slice(11, 19);
-    const dailyEntry = buildDailyEntry('UserPrompt', promptText, timestamp);
+  const dailyEntry = buildDailyEntry(promptEntry.entryName, promptEntry.text, timestamp);
     appendToDaily(resolvedConfig.vaultPath, resolvedConfig.subfolder, today, dailyEntry);
     return { status: 0, stdout: '', stderr: '' };
   } catch (error) {
@@ -95,6 +116,8 @@ if (require.main === module) {
 
 module.exports = {
   readStdin,
+  readDotEnvText,
+  readGlobalConfigText,
   run,
   main
 };

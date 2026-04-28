@@ -1,6 +1,13 @@
 'use strict';
 
-const { detectPlatform, parseJsonInput, expandHomePath, parseMemoryMasonConfig, resolveVaultConfig } = require('../lib/config');
+const {
+  detectPlatform,
+  parseJsonInput,
+  expandHomePath,
+  parseMemoryMasonConfig,
+  parseDotEnv,
+  resolveVaultConfig
+} = require('../lib/config');
 
 describe('detectPlatform', () => {
   it('returns copilot-vscode for hookEventName payloads', () => {
@@ -129,20 +136,155 @@ describe('parseMemoryMasonConfig', () => {
   });
 });
 
+describe('parseDotEnv', () => {
+  it('parses simple KEY=VALUE', () => {
+    expect(parseDotEnv('MEMORY_MASON_VAULT_PATH=/vault/path')).toEqual({
+      MEMORY_MASON_VAULT_PATH: '/vault/path'
+    });
+  });
+
+  it('strips double quotes from values', () => {
+    expect(parseDotEnv('MEMORY_MASON_SUBFOLDER="my-brain"')).toEqual({
+      MEMORY_MASON_SUBFOLDER: 'my-brain'
+    });
+  });
+
+  it('strips single quotes from values', () => {
+    expect(parseDotEnv("MEMORY_MASON_SUBFOLDER='my-brain'"))
+      .toEqual({
+      MEMORY_MASON_SUBFOLDER: 'my-brain'
+    });
+  });
+
+  it('skips comment and empty lines', () => {
+    expect(parseDotEnv('\n# comment\nMEMORY_MASON_SUBFOLDER=my-brain\n\n')).toEqual({
+      MEMORY_MASON_SUBFOLDER: 'my-brain'
+    });
+  });
+
+  it('handles spaces around equals and quoted values with spaces', () => {
+    expect(parseDotEnv('MEMORY_MASON_SUBFOLDER = "my brain"')).toEqual({
+      MEMORY_MASON_SUBFOLDER: 'my brain'
+    });
+  });
+
+  it('strips inline comments and keeps hash symbols inside quotes', () => {
+    expect(
+      parseDotEnv('MEMORY_MASON_SUBFOLDER=my-brain # comment\nMEMORY_MASON_VAULT_PATH="/tmp/#vault" # comment')
+    ).toEqual({
+      MEMORY_MASON_SUBFOLDER: 'my-brain',
+      MEMORY_MASON_VAULT_PATH: '/tmp/#vault'
+    });
+  });
+
+  it('ignores malformed lines without key-value separator', () => {
+    expect(parseDotEnv('NOT_A_PAIR\n=missingKey\nMEMORY_MASON_SUBFOLDER=ok')).toEqual({
+      MEMORY_MASON_SUBFOLDER: 'ok'
+    });
+  });
+
+  it('returns empty object for empty string', () => {
+    expect(parseDotEnv('')).toEqual({});
+  });
+
+  it('returns empty object for non-string input', () => {
+    expect(parseDotEnv(null)).toEqual({});
+  });
+
+  it('keeps unterminated quoted values as-is', () => {
+    expect(parseDotEnv('MEMORY_MASON_SUBFOLDER="unterminated')).toEqual({
+      MEMORY_MASON_SUBFOLDER: '"unterminated'
+    });
+  });
+});
+
 describe('resolveVaultConfig', () => {
-  it('uses MEMORY_MASON_VAULT_PATH when provided', () => {
+  it('uses MEMORY_MASON_VAULT_PATH and config subfolder when env path is set', () => {
+    expect(
+      resolveVaultConfig('/repo', '~/vault', '{"vaultPath":"~/ignored","subfolder":"my-brain"}', '/home/tester')
+    ).toEqual({
+      vaultPath: '/home/tester/vault',
+      subfolder: 'my-brain'
+    });
+  });
+
+  it('falls back to dotEnv subfolder when env path is set and config text is invalid', () => {
+    expect(resolveVaultConfig('/repo', '~/vault', '{not-json', '/home/tester', { dotEnvText: 'MEMORY_MASON_SUBFOLDER=from-env-file' })).toEqual({
+      vaultPath: '/home/tester/vault',
+      subfolder: 'from-env-file'
+    });
+  });
+
+  it('falls back to ai-knowledge when env path is set and config text is invalid with no dotEnv subfolder', () => {
+    expect(resolveVaultConfig('/repo', '~/vault', '{not-json', '/home/tester')).toEqual({
+      vaultPath: '/home/tester/vault',
+      subfolder: 'ai-knowledge'
+    });
+  });
+
+  it('uses dotEnv subfolder when env path is set and config text is absent', () => {
+    expect(resolveVaultConfig('/repo', '~/vault', '', '/home/tester', { dotEnvText: 'MEMORY_MASON_SUBFOLDER=from-dotenv' })).toEqual({
+      vaultPath: '/home/tester/vault',
+      subfolder: 'from-dotenv'
+    });
+  });
+
+  it('uses ai-knowledge when env path is set and no subfolder sources exist', () => {
     expect(resolveVaultConfig('/repo', '~/vault', '', '/home/tester')).toEqual({
       vaultPath: '/home/tester/vault',
       subfolder: 'ai-knowledge'
     });
   });
 
-  it('uses memory-mason.json when provided', () => {
+  it('uses memory-mason.json when provided and env path is absent', () => {
     expect(
       resolveVaultConfig('/repo', '', '{"vaultPath":"~/vault","subfolder":"notes"}', '/home/tester')
     ).toEqual({
       vaultPath: '/home/tester/vault',
       subfolder: 'notes'
+    });
+  });
+
+  it('uses .env config when env path and memory-mason.json are absent', () => {
+    expect(
+      resolveVaultConfig('/repo', '', '', '/home/tester', {
+        dotEnvText: 'MEMORY_MASON_VAULT_PATH=~/vault\nMEMORY_MASON_SUBFOLDER=notes'
+      })
+    ).toEqual({
+      vaultPath: '/home/tester/vault',
+      subfolder: 'notes'
+    });
+  });
+
+  it('uses .env vault path with default subfolder when subfolder key is missing', () => {
+    expect(resolveVaultConfig('/repo', '', '', '/home/tester', { dotEnvText: 'MEMORY_MASON_VAULT_PATH=~/vault' })).toEqual(
+      {
+        vaultPath: '/home/tester/vault',
+        subfolder: 'ai-knowledge'
+      }
+    );
+  });
+
+  it('uses global config when env, memory-mason.json, and .env are absent', () => {
+    expect(
+      resolveVaultConfig('/repo', '', '', '/home/tester', {
+        globalConfigText: '{"vaultPath":"~/global-vault","subfolder":"global-brain"}'
+      })
+    ).toEqual({
+      vaultPath: '/home/tester/global-vault',
+      subfolder: 'global-brain'
+    });
+  });
+
+  it('uses global config when .env is present but missing vault path', () => {
+    expect(
+      resolveVaultConfig('/repo', '', '', '/home/tester', {
+        dotEnvText: 'MEMORY_MASON_SUBFOLDER=dotenv-only-subfolder',
+        globalConfigText: '{"vaultPath":"~/global-vault","subfolder":"global-brain"}'
+      })
+    ).toEqual({
+      vaultPath: '/home/tester/global-vault',
+      subfolder: 'global-brain'
     });
   });
 
@@ -157,7 +299,7 @@ describe('resolveVaultConfig', () => {
   });
 
   it('treats non-string env and config inputs as absent', () => {
-    expect(() => resolveVaultConfig('/repo', null, null, '/home/tester')).toThrow(
+    expect(() => resolveVaultConfig('/repo', null, null, '/home/tester', null)).toThrow(
       'memory-mason.json not found and MEMORY_MASON_VAULT_PATH is not set'
     );
   });
