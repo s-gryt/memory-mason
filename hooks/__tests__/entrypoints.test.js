@@ -321,6 +321,139 @@ describe('user-prompt-submit.js', () => {
     expect(result.status).toBe(0);
     expect(result.stderr).toContain('memory-mason.json not found and MEMORY_MASON_VAULT_PATH is not set');
   });
+
+  it('captures pending assistant turns from transcript before writing user prompt', () => {
+    const homeDir = createTempDir('memory-mason-home-');
+    const vaultPath = createTempDir('memory-mason-vault-');
+    const transcriptDir = createTempDir('memory-mason-transcript-');
+    const transcriptPath = path.join(transcriptDir, 'session.jsonl');
+
+    writeText(transcriptPath, buildTranscript(4));
+
+    const result = runScript('user-prompt-submit.js', {
+      payload: {
+        hookEventName: 'user-prompt-submit',
+        cwd: hooksRoot,
+        prompt: 'third user prompt',
+        transcript_path: transcriptPath,
+        session_id: 'session-abc'
+      },
+      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath })
+    });
+
+    const dailyPath = buildDailyFilePath(vaultPath, 'ai-knowledge', today());
+    const dailyContent = fs.readFileSync(dailyPath, 'utf-8');
+
+    expect(result.status).toBe(0);
+    expect(dailyContent).toContain('AssistantReply');
+    expect(dailyContent).toContain('assistant turn 1');
+    expect(dailyContent).toContain('assistant turn 3');
+    expect(dailyContent).toContain('third user prompt');
+  });
+
+  it('does not duplicate assistant turns on second user prompt in same session', () => {
+    const homeDir = createTempDir('memory-mason-home-');
+    const vaultPath = createTempDir('memory-mason-vault-');
+    const transcriptDir = createTempDir('memory-mason-transcript-');
+    const transcriptPath = path.join(transcriptDir, 'session.jsonl');
+
+    writeText(transcriptPath, buildTranscript(2));
+
+    runScript('user-prompt-submit.js', {
+      payload: {
+        hookEventName: 'user-prompt-submit',
+        cwd: hooksRoot,
+        prompt: 'second prompt',
+        transcript_path: transcriptPath,
+        session_id: 'session-dedup'
+      },
+      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath })
+    });
+
+    writeText(transcriptPath, buildTranscript(4));
+
+    runScript('user-prompt-submit.js', {
+      payload: {
+        hookEventName: 'user-prompt-submit',
+        cwd: hooksRoot,
+        prompt: 'third prompt',
+        transcript_path: transcriptPath,
+        session_id: 'session-dedup'
+      },
+      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath })
+    });
+
+    const dailyPath = buildDailyFilePath(vaultPath, 'ai-knowledge', today());
+    const dailyContent = fs.readFileSync(dailyPath, 'utf-8');
+
+    expect(dailyContent.split('assistant turn 1').length - 1).toBe(1);
+  });
+
+  it('skips assistant capture when transcript_path is absent', () => {
+    const homeDir = createTempDir('memory-mason-home-');
+    const vaultPath = createTempDir('memory-mason-vault-');
+
+    const result = runScript('user-prompt-submit.js', {
+      payload: {
+        hookEventName: 'user-prompt-submit',
+        cwd: hooksRoot,
+        prompt: 'no transcript here',
+        session_id: 'session-xyz'
+      },
+      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath })
+    });
+
+    const dailyContent = fs.readFileSync(buildDailyFilePath(vaultPath, 'ai-knowledge', today()), 'utf-8');
+
+    expect(result.status).toBe(0);
+    expect(dailyContent).not.toContain('AssistantReply');
+    expect(dailyContent).toContain('no transcript here');
+  });
+
+  it('skips assistant capture when session_id is absent', () => {
+    const homeDir = createTempDir('memory-mason-home-');
+    const vaultPath = createTempDir('memory-mason-vault-');
+    const transcriptDir = createTempDir('memory-mason-transcript-');
+    const transcriptPath = path.join(transcriptDir, 'session.jsonl');
+
+    writeText(transcriptPath, buildTranscript(2));
+
+    const result = runScript('user-prompt-submit.js', {
+      payload: {
+        hookEventName: 'user-prompt-submit',
+        cwd: hooksRoot,
+        prompt: 'no session id',
+        transcript_path: transcriptPath
+      },
+      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath })
+    });
+
+    const dailyContent = fs.readFileSync(buildDailyFilePath(vaultPath, 'ai-knowledge', today()), 'utf-8');
+
+    expect(result.status).toBe(0);
+    expect(dailyContent).not.toContain('AssistantReply');
+  });
+
+  it('skips assistant capture when transcript file does not exist', () => {
+    const homeDir = createTempDir('memory-mason-home-');
+    const vaultPath = createTempDir('memory-mason-vault-');
+
+    const result = runScript('user-prompt-submit.js', {
+      payload: {
+        hookEventName: 'user-prompt-submit',
+        cwd: hooksRoot,
+        prompt: 'missing transcript file',
+        transcript_path: path.join(hooksRoot, 'does-not-exist.jsonl'),
+        session_id: 'session-missing'
+      },
+      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath })
+    });
+
+    const dailyContent = fs.readFileSync(buildDailyFilePath(vaultPath, 'ai-knowledge', today()), 'utf-8');
+
+    expect(result.status).toBe(0);
+    expect(dailyContent).not.toContain('AssistantReply');
+  });
 });
 
 describe('post-tool-use.js', () => {
@@ -817,5 +950,116 @@ describe('Copilot hook installer scripts', () => {
     expect(result.status).toBe(0);
     expect(fs.existsSync(path.join(workspaceDir, '.github', 'hooks', 'session-start.json'))).toBe(false);
     expect(fs.existsSync(path.join(workspaceDir, '.github', 'hooks', 'stop.json'))).toBe(false);
+  });
+});
+
+describe('capture-state.js helpers', () => {
+  const {
+    getTranscriptTurnCount,
+    setTranscriptTurnCount,
+    defaultCaptureState,
+    loadCaptureState
+  } = require('../lib/capture-state');
+
+  it('getTranscriptTurnCount returns 0 when sessionId not found', () => {
+    const state = defaultCaptureState();
+    expect(getTranscriptTurnCount(state, 'unknown-session')).toBe(0);
+  });
+
+  it('getTranscriptTurnCount returns stored count', () => {
+    const state = { lastCapture: null, transcriptTurnCounts: { 'session-1': 5 } };
+    expect(getTranscriptTurnCount(state, 'session-1')).toBe(5);
+  });
+
+  it('getTranscriptTurnCount returns 0 for invalid/empty sessionId', () => {
+    const state = defaultCaptureState();
+    expect(getTranscriptTurnCount(state, '')).toBe(0);
+    expect(getTranscriptTurnCount(null, 'session-1')).toBe(0);
+  });
+
+  it('setTranscriptTurnCount stores count for sessionId', () => {
+    const state = defaultCaptureState();
+    const next = setTranscriptTurnCount(state, 'session-1', 4);
+    expect(next.transcriptTurnCounts['session-1']).toBe(4);
+    expect(next.lastCapture).toBe(null);
+  });
+
+  it('setTranscriptTurnCount preserves other session counts', () => {
+    const state = { lastCapture: null, transcriptTurnCounts: { 'session-1': 2 } };
+    const next = setTranscriptTurnCount(state, 'session-2', 6);
+    expect(next.transcriptTurnCounts['session-1']).toBe(2);
+    expect(next.transcriptTurnCounts['session-2']).toBe(6);
+  });
+
+  it('setTranscriptTurnCount throws on empty sessionId', () => {
+    expect(() => setTranscriptTurnCount(defaultCaptureState(), '', 1)).toThrow('sessionId must be a non-empty string');
+    expect(() => setTranscriptTurnCount(defaultCaptureState(), 123, 1)).toThrow('sessionId must be a non-empty string');
+  });
+
+  it('setTranscriptTurnCount throws on invalid count', () => {
+    expect(() => setTranscriptTurnCount(defaultCaptureState(), 'session-1', -1)).toThrow('count must be a non-negative integer');
+    expect(() => setTranscriptTurnCount(defaultCaptureState(), 'session-1', 1.5)).toThrow('count must be a non-negative integer');
+  });
+
+  it('setTranscriptTurnCount falls back to default state for non-object state', () => {
+    expect(setTranscriptTurnCount(null, 'session-1', 2)).toEqual({
+      lastCapture: null,
+      transcriptTurnCounts: {
+        'session-1': 2
+      }
+    });
+  });
+
+  it('loadCaptureState sanitizes transcriptTurnCounts and keeps only non-negative integers', () => {
+    const vaultPath = createTempDir('memory-mason-vault-');
+    const statePath = resolveCaptureStatePath(vaultPath, 'ai-knowledge');
+
+    writeText(
+      statePath,
+      JSON.stringify({
+        lastCapture: null,
+        transcriptTurnCounts: {
+          'session-1': 3,
+          'session-2': -1,
+          'session-3': 1.5,
+          'session-4': '4'
+        }
+      })
+    );
+
+    expect(loadCaptureState(vaultPath, 'ai-knowledge')).toEqual({
+      lastCapture: null,
+      transcriptTurnCounts: {
+        'session-1': 3
+      }
+    });
+  });
+});
+
+describe('vault.js buildAssistantReplyEntry', () => {
+  const { buildAssistantReplyEntry } = require('../lib/vault');
+
+  it('builds a labeled AssistantReply entry', () => {
+    const entry = buildAssistantReplyEntry('SELECT * FROM foo;', '14:22:31');
+    expect(entry).toContain('AssistantReply');
+    expect(entry).toContain('14:22:31');
+    expect(entry).toContain('SELECT * FROM foo;');
+  });
+
+  it('truncates content exceeding 5000 chars', () => {
+    const longContent = 'x'.repeat(6000);
+    const entry = buildAssistantReplyEntry(longContent, '09:00:00');
+    expect(entry).toContain('...(truncated)');
+    expect(entry.length).toBeLessThan(6100);
+  });
+
+  it('throws on invalid timestamp', () => {
+    expect(() => buildAssistantReplyEntry('hello', 'bad')).toThrow('timestamp must be in HH:MM:SS format');
+    expect(() => buildAssistantReplyEntry('hello', '')).toThrow();
+  });
+
+  it('throws on non-string content', () => {
+    expect(() => buildAssistantReplyEntry(null, '12:00:00')).toThrow('content must be a string');
+    expect(() => buildAssistantReplyEntry(42, '12:00:00')).toThrow('content must be a string');
   });
 });

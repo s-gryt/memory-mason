@@ -5,9 +5,16 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { parseJsonInput, detectPlatform, resolveVaultConfig } = require('./lib/config');
-const { buildDailyEntry } = require('./lib/vault');
+const { buildDailyEntry, buildAssistantReplyEntry } = require('./lib/vault');
 const { appendToDaily } = require('./lib/writer');
 const { extractPromptEntry } = require('./lib/prompt');
+const { parseJsonlTranscript } = require('./lib/transcript');
+const {
+  loadCaptureState,
+  saveCaptureState,
+  getTranscriptTurnCount,
+  setTranscriptTurnCount
+} = require('./lib/capture-state');
 
 function readStdin(fsApi = fs) {
   const fd = 0;
@@ -26,6 +33,11 @@ function readStdin(fsApi = fs) {
 
 function toStringOrEmpty(value) {
   return typeof value === 'string' ? value : '';
+}
+
+function firstNonEmptyString(values) {
+  const match = values.find((value) => typeof value === 'string' && value !== '');
+  return typeof match === 'string' ? match : '';
 }
 
 function readConfigText(cwd) {
@@ -77,7 +89,39 @@ function run(rawStdin, runtime = {}) {
 
     const today = new Date().toISOString().slice(0, 10);
     const timestamp = new Date().toISOString().slice(11, 19);
-  const dailyEntry = buildDailyEntry(promptEntry.entryName, promptEntry.text, timestamp);
+    const transcriptPath = firstNonEmptyString([
+      toStringOrEmpty(input.transcript_path),
+      toStringOrEmpty(input.transcriptPath)
+    ]);
+    const sessionId = firstNonEmptyString([
+      toStringOrEmpty(input.session_id),
+      toStringOrEmpty(input.sessionId)
+    ]);
+
+    if (transcriptPath !== '' && sessionId !== '' && fs.existsSync(transcriptPath)) {
+      const transcriptContent = fs.readFileSync(transcriptPath, 'utf-8');
+      const turns = parseJsonlTranscript(transcriptContent);
+      const captureState = loadCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder);
+      const lastCount = getTranscriptTurnCount(captureState, sessionId);
+      const newTurns = turns.slice(lastCount);
+      const assistantTurns = newTurns.filter((turn) => turn.role === 'assistant');
+
+      if (assistantTurns.length > 0) {
+        assistantTurns.forEach((turn) => {
+          appendToDaily(
+            resolvedConfig.vaultPath,
+            resolvedConfig.subfolder,
+            today,
+            buildAssistantReplyEntry(turn.content, timestamp)
+          );
+        });
+      }
+
+      const updatedState = setTranscriptTurnCount(captureState, sessionId, turns.length);
+      saveCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder, updatedState);
+    }
+
+    const dailyEntry = buildDailyEntry(promptEntry.entryName, promptEntry.text, timestamp);
     appendToDaily(resolvedConfig.vaultPath, resolvedConfig.subfolder, today, dailyEntry);
     return { status: 0, stdout: '', stderr: '' };
   } catch (error) {
@@ -116,6 +160,7 @@ if (require.main === module) {
 
 module.exports = {
   readStdin,
+  firstNonEmptyString,
   readDotEnvText,
   readGlobalConfigText,
   run,

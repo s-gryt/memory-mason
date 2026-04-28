@@ -53,16 +53,36 @@ const sanitizeCaptureRecord = (record) => {
   };
 };
 
+const sanitizeTranscriptTurnCounts = (raw) => {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    return {};
+  }
+  return Object.keys(raw).reduce((accumulator, key) => {
+    const val = raw[key];
+    if (Number.isInteger(val) && val >= 0) {
+      return { ...accumulator, [key]: val };
+    }
+    return accumulator;
+  }, {});
+};
+
 const mergeWithDefaults = (state) => {
   if (!isObjectRecord(state)) {
     return defaultCaptureState();
   }
 
-  return {
-    ...defaultCaptureState(),
+  const sanitizedState = {
     ...state,
     lastCapture: sanitizeCaptureRecord(state.lastCapture)
   };
+  const sanitizedTranscriptTurnCounts = sanitizeTranscriptTurnCounts(state.transcriptTurnCounts);
+
+  return Object.keys(sanitizedTranscriptTurnCounts).length > 0
+    ? {
+        ...sanitizedState,
+        transcriptTurnCounts: sanitizedTranscriptTurnCounts
+      }
+    : sanitizedState;
 };
 
 const loadCaptureState = (vaultPath, subfolder) => {
@@ -126,11 +146,38 @@ const isDuplicateCapture = (previousCapture, nextCapture, windowMs) => {
   );
 };
 
+const getTranscriptTurnCount = (state, sessionId) => {
+  const safeState = isObjectRecord(state) ? state : defaultCaptureState();
+  const counts = isObjectRecord(safeState.transcriptTurnCounts) ? safeState.transcriptTurnCounts : {};
+  const count = typeof sessionId === 'string' && sessionId !== '' ? counts[sessionId] : undefined;
+  return Number.isInteger(count) && count >= 0 ? count : 0;
+};
+
+const setTranscriptTurnCount = (state, sessionId, count) => {
+  if (typeof sessionId !== 'string' || sessionId === '') {
+    throw new Error('sessionId must be a non-empty string');
+  }
+  if (!Number.isInteger(count) || count < 0) {
+    throw new Error('count must be a non-negative integer');
+  }
+  const safeState = isObjectRecord(state) ? state : defaultCaptureState();
+  const counts = isObjectRecord(safeState.transcriptTurnCounts) ? safeState.transcriptTurnCounts : {};
+  return {
+    ...safeState,
+    transcriptTurnCounts: {
+      ...counts,
+      [sessionId]: count
+    }
+  };
+};
+
 module.exports = {
   defaultCaptureState,
   resolveCaptureStatePath,
   loadCaptureState,
   saveCaptureState,
   buildCaptureRecord,
-  isDuplicateCapture
+  isDuplicateCapture,
+  getTranscriptTurnCount,
+  setTranscriptTurnCount
 };

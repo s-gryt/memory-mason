@@ -36,6 +36,8 @@ jobs:
     defaults:
       run:
         working-directory: hooks
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -52,6 +54,10 @@ jobs:
 
       - name: Run hook coverage
         run: npm run coverage
+
+      - name: Update Coverage Badge
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: we-cli/coverage-badge-action@main
 
   sync-generated-artifacts:
     needs: test-hooks

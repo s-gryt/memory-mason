@@ -85,6 +85,21 @@ const buildDailyEntry = (toolName, resultText, timestamp) => {
   return '\n**[' + safeTimestamp + '] ' + safeToolName + '**\n' + truncatedResult + '\n';
 };
 
+const MAX_ASSISTANT_REPLY_CHARS = 5000;
+
+const buildAssistantReplyEntry = (content, timestamp) => {
+  const safeContent = assertString('content', content);
+  const safeTimestamp = assertNonEmptyString('timestamp', timestamp);
+  if (!/^\d{2}:\d{2}:\d{2}$/.test(safeTimestamp)) {
+    throw new Error('timestamp must be in HH:MM:SS format');
+  }
+  const truncated =
+    safeContent.length > MAX_ASSISTANT_REPLY_CHARS
+      ? safeContent.slice(0, MAX_ASSISTANT_REPLY_CHARS) + '\n...(truncated)'
+      : safeContent;
+  return '\n**[' + safeTimestamp + '] AssistantReply**\n' + truncated + '\n';
+};
+
 const buildSessionHeader = (sessionId, source, timestamp) => {
   const safeSessionId = assertString('sessionId', sessionId);
   const safeSource = assertString('source', source);
@@ -102,5 +117,6 @@ module.exports = {
   buildAdditionalContext,
   truncateContext,
   buildDailyEntry,
+  buildAssistantReplyEntry,
   buildSessionHeader
 };

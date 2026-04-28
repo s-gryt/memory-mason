@@ -1,6 +1,6 @@
 {
   "name": "memory-mason",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Sync AI conversations to an Obsidian knowledge base with Memory Mason KB skills.",
   "author": {
     "name": "Sergii Grytsaienko",
