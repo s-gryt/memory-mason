@@ -38,6 +38,7 @@ No API key needed. No cloud sync. Everything stays local in your Obsidian vault.
 | `/mmq` | Answer from the compiled KB with `[[wikilink]]` citations |
 | `/mml` | Run KB health checks |
 | `/mms` | Show KB status and compilation coverage |
+| `/mmsetup` | First-time vault configuration (or uninstall) |
 
 ## Install
 
@@ -108,11 +109,23 @@ bash <(curl -fsSL https://raw.githubusercontent.com/s-gryt/memory-mason/main/ins
 
 </details>
 
-See [docs/README.md](docs/README.md) for workspace-level installs, from-source builds, uninstall instructions, and advanced configuration.
+See [docs/README.md](docs/README.md) for workspace-level installs, from-source builds, and advanced configuration.
+
+## Uninstall
+
+To remove Memory Mason, run `/mmsetup` and say "uninstall". It will walk you through removing hooks and configuration. Your vault content is never deleted.
+
+For skills-only installs (Cursor, Windsurf, Cline):
+
+```bash
+npx skills remove s-gryt/memory-mason -a <agent>
+```
 
 ## Configuration
 
-The installer creates `~/.memory-mason/config.json` automatically. Point it at your Obsidian vault:
+Plugin and shell installs configure your vault automatically. If you installed via `npx skills add` only, run `/mmsetup` — it configures your vault path and installs capture hooks in one step.
+
+You can also create `~/.memory-mason/config.json` manually:
 
 ```json
 {

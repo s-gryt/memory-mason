@@ -143,33 +143,4 @@ describe('CLI direct execution', () => {
     expect(fs.readFileSync(buildDailyFilePath(vaultPath, 'ai-knowledge', today()), 'utf-8')).toContain('cli-session / stop');
   });
 
-  it('executes install-copilot-hooks.js directly', () => {
-    const homeDir = createTempDir('mm-home-');
-    const result = runCli('install-copilot-hooks.js', {
-      cwd: repoRoot,
-      env: buildEnv(homeDir)
-    });
-
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain('Installed Memory Mason Copilot hooks');
-    expect(fs.existsSync(path.join(homeDir, '.copilot', 'hooks', 'session-start.json'))).toBe(true);
-  });
-
-  it('executes uninstall-copilot-hooks.js directly', () => {
-    const homeDir = createTempDir('mm-home-');
-
-    runCli('install-copilot-hooks.js', {
-      cwd: repoRoot,
-      env: buildEnv(homeDir)
-    });
-
-    const result = runCli('uninstall-copilot-hooks.js', {
-      cwd: repoRoot,
-      env: buildEnv(homeDir)
-    });
-
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain('Removed Memory Mason Copilot hooks');
-    expect(fs.existsSync(path.join(homeDir, '.copilot', 'hooks', 'session-start.json'))).toBe(false);
-  });
 });

@@ -27,7 +27,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/s-gryt/memory-mason/main/ins
 & ([scriptblock]::Create((iwr https://raw.githubusercontent.com/s-gryt/memory-mason/main/install.ps1 -UseBasicParsing).Content)) -Agent claude
 ```
 
-The shell installer copies runtime to `~/.claude/hooks/memory-mason/`, wires 6 events in `~/.claude/settings.json`, and creates `~/.memory-mason/config.json`. Restart Claude Code after install.
+The shell installer copies runtime to `~/.claude/hooks/memory-mason/`, wires 6 events in `~/.claude/settings.json`, and creates `~/.memory-mason/config.json`. Restart Claude Code after install. Run `/mmsetup` to reconfigure the vault path at any time.
 
 **From a local clone:**
 
@@ -70,29 +70,6 @@ powershell -File install.ps1 -Agent copilot
 bash install.sh --agent copilot --workspace /path/to/project
 ```
 
-Remove workspace hooks:
-
-```bash
-node hooks/uninstall-copilot-hooks.js --workspace /path/to/project
-```
-
-#### Direct Node installer (manual path)
-
-Shell/PowerShell wrappers above are preferred. For lower-level control:
-
-```bash
-node hooks/install-copilot-hooks.js                            # user-level
-node hooks/install-copilot-hooks.js --workspace /path/to/repo  # workspace-level
-```
-
-Remove:
-
-```bash
-node hooks/uninstall-copilot-hooks.js
-```
-
-> **Why Node?** Copilot hooks are JSON config entries that run shell commands. Memory Mason's hook JSON calls `node ".../session-start.js"` and related `.js` entrypoints. Node is a Memory Mason runtime dependency, not a Copilot requirement.
-
 ### Codex
 
 **Marketplace:** Open `/plugins`, search `Memory Mason`, install.
@@ -132,6 +109,8 @@ npx skills add s-gryt/memory-mason              # any host
 
 `npx skills` discovers skills from [skills/](../skills) and installs them into the target agent. No `.github/skills/` copies needed.
 
+`npx skills add` installs KB commands but does **not** install hooks or configure your vault. Run `/mmsetup` after install — it will set your vault path and install capture hooks via the shell installer. These platforms don't have a native hook system, so `/mmsetup` bridges the gap by running the appropriate `install.sh` / `install.ps1` for your OS.
+
 ### Gemini CLI
 
 ```bash
@@ -169,6 +148,7 @@ Hooks append session activity into `{vault}/{subfolder}/daily/YYYY-MM-DD.md`. No
 | `/mmq` | Answer from compiled KB with `[[wikilink]]` citations |
 | `/mml` | Report KB quality issues |
 | `/mms` | Show KB status and compilation coverage |
+| `/mmsetup` | First-time vault configuration (or uninstall) |
 
 ## Configuration
 
@@ -226,6 +206,22 @@ MEMORY_MASON_SUBFOLDER=memory-mason
 | SessionEnd / Stop | Y | Y | Y |
 
 `user-prompt-submit.js` can parse `UserPromptExpansion`, but Memory Mason does not auto-register that Claude hook because current Claude plugin validation can reject the event key.
+
+## Uninstall
+
+Run `/mmsetup` and say "uninstall" for guided removal. It detects what's installed and walks you through cleanup. Your vault content (daily logs, knowledge articles) is never deleted.
+
+Platform-specific alternatives:
+
+| Agent | Uninstall method |
+|:------|:-----------------|
+| **Claude Code** (plugin) | `/plugin uninstall memory-mason` |
+| **Claude Code** (shell) | `bash hooks/uninstall.sh` or `powershell -File hooks\uninstall.ps1` |
+| **Copilot** | `/mmsetup` uninstall (removes hook files + workspace JSON) |
+| **Codex** | `/mmsetup` uninstall (removes hook files + `.codex/hooks.json` entries) |
+| **Cursor / Windsurf / Cline** | `npx skills remove s-gryt/memory-mason -a <agent>` |
+
+To also remove global config: delete `~/.memory-mason/config.json`.
 
 ## Platform Manifests
 

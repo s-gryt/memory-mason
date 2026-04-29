@@ -12,6 +12,10 @@ const trackedFiles = [
     fields: [['version']],
   },
   {
+    path: '.claude-plugin/marketplace.json',
+    fields: [['metadata', 'version'], ['plugins', 0, 'version']],
+  },
+  {
     path: 'gemini-extension.json',
     fields: [['version']],
   },

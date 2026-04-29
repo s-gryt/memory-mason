@@ -59,20 +59,6 @@ bash install.sh --agent copilot
 bash install.sh --agent all
 ```
 
-#### Direct Node installer (manual path)
-
-```bash
-node hooks/install-copilot-hooks.js                            # user-level ~/.copilot/hooks
-node hooks/install-copilot-hooks.js --workspace /path/to/repo  # workspace-level
-```
-
-Remove:
-
-```bash
-node hooks/uninstall-copilot-hooks.js
-node hooks/uninstall-copilot-hooks.js --workspace /path/to/repo
-```
-
 ### Codex
 
 ```bash

@@ -636,6 +636,14 @@ describe('session-end.js utility functions', () => {
     expect(() => sessionEnd.findCopilotCliSessionContent(sessionStateDir, '')).toThrow('no transcript content found in copilot session-state');
   });
 
+  it('findCopilotCliSessionContent falls back to first dir when targetCwd not found in any jsonl', () => {
+    const sessionStateDir = createTempDir('mm-copilot-state-');
+    const subDir = path.join(sessionStateDir, 'session-fb');
+    writeText(path.join(subDir, 'data.jsonl'), 'some real content here');
+    const result = sessionEnd.findCopilotCliSessionContent(sessionStateDir, '/nonexistent/path');
+    expect(result).toBe('some real content here');
+  });
+
   it('collectAssistantTurnContents filters and collects from start index', () => {
     const turns = [{ role: 'user', content: 'hi' }, { role: 'assistant', content: 'hello' }, { role: 'assistant', content: 'bye' }];
     expect(sessionEnd.collectAssistantTurnContents(turns, 0)).toEqual(['hello', 'bye']);
