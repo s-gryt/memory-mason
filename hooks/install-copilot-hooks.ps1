@@ -113,18 +113,43 @@ function Copy-OrDownloadFile {
     Write-Host "  Installed: $DestinationPath"
 }
 
+function Test-InteractiveSession {
+    return [Environment]::UserInteractive
+}
+
+function Confirm-Reinstall {
+    if (-not (Test-InteractiveSession)) {
+        return $false
+    }
+
+    $response = Read-Host "Memory Mason Copilot hooks already installed. Reinstall hooks now? [y/N]"
+    return $response -match '^(?i)y(?:es)?$'
+}
+
+function Show-ReinstallHelp {
+    Write-Host "  This installer manages Copilot hook capture + config only."
+    Write-Host "  Copilot skills install separately via: npx skills add s-gryt/memory-mason -a github-copilot"
+    Write-Host "  Remote PowerShell with parameters must use scriptblock form, not 'iwr ... | iex'."
+    Write-Host "  Reinstall command:"
+    Write-Host "    & ([scriptblock]::Create((iwr https://raw.githubusercontent.com/s-gryt/memory-mason/main/install.ps1 -UseBasicParsing).Content)) -Agent copilot -Force"
+}
+
 $SourceMode = if (Test-LocalSourcesAvailable) { "local" } else { "remote" }
 $RuntimePresent = Test-RuntimeFilesPresent
 $WorkspaceHooksPresent = Test-WorkspaceHookFilesPresent
 $ConfigPresent = Test-Path -LiteralPath $GlobalConfigPath
 
 if (-not $Force -and $RuntimePresent -and $WorkspaceHooksPresent -and $ConfigPresent) {
+    if (Confirm-Reinstall) {
+        $Force = $true
+    } else {
     Write-Host "Memory Mason Copilot hooks already installed."
     Write-Host "  Hook runtime: $HooksDir"
     Write-Host "  Workspace hooks: $WorkspaceHooksDir"
     Write-Host "  Config: $GlobalConfigPath"
-    Write-Host "  Re-run with -Force to reinstall."
-    exit 0
+        Show-ReinstallHelp
+        exit 0
+    }
 }
 
 if ($Force) {
@@ -268,3 +293,4 @@ Write-Host "Done!"
 Write-Host "  Hook runtime: $HooksDir"
 Write-Host "  Workspace hooks: $WorkspaceHooksDir"
 Write-Host "  Config: $GlobalConfigPath"
+Write-Host "  Copilot skills install separately via: npx skills add s-gryt/memory-mason -a github-copilot"

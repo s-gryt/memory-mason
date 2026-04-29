@@ -23,7 +23,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/s-gryt/memory-mason/main/ins
 ```
 
 ```powershell
-iwr https://raw.githubusercontent.com/s-gryt/memory-mason/main/install.ps1 -UseBasicParsing | iex
+& ([scriptblock]::Create((iwr https://raw.githubusercontent.com/s-gryt/memory-mason/main/install.ps1 -UseBasicParsing).Content))
 ```
 
 Pass `--agent` to skip the interactive prompt:
@@ -34,6 +34,15 @@ bash <(curl -fsSL https://raw.githubusercontent.com/s-gryt/memory-mason/main/ins
 bash <(curl -fsSL https://raw.githubusercontent.com/s-gryt/memory-mason/main/install.sh) --agent codex
 bash <(curl -fsSL https://raw.githubusercontent.com/s-gryt/memory-mason/main/install.sh) --agent all
 ```
+
+```powershell
+& ([scriptblock]::Create((iwr https://raw.githubusercontent.com/s-gryt/memory-mason/main/install.ps1 -UseBasicParsing).Content)) -Agent claude
+& ([scriptblock]::Create((iwr https://raw.githubusercontent.com/s-gryt/memory-mason/main/install.ps1 -UseBasicParsing).Content)) -Agent copilot
+& ([scriptblock]::Create((iwr https://raw.githubusercontent.com/s-gryt/memory-mason/main/install.ps1 -UseBasicParsing).Content)) -Agent codex
+& ([scriptblock]::Create((iwr https://raw.githubusercontent.com/s-gryt/memory-mason/main/install.ps1 -UseBasicParsing).Content)) -Agent all
+```
+
+Pass `-Force` to reinstall. Remote PowerShell parameters do not flow through `iwr ... | iex`; use the scriptblock form above.
 
 Restart your host after install.
 
@@ -61,6 +70,13 @@ npx skills add s-gryt/memory-mason              # any host
 ```
 
 `npx skills` installs KB commands only. For continuous capture, use the installer above.
+
+For GitHub Copilot, install is split:
+
+- `npx skills add s-gryt/memory-mason -a github-copilot` installs `/mm*` skills
+- Memory Mason installer installs hook capture + vault config
+
+Run both if you want both Copilot commands and automatic capture.
 
 ### Other hosts
 

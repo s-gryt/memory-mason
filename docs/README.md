@@ -31,6 +31,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/s-gryt/memory-mason/main/ins
 
 ```powershell
 & ([scriptblock]::Create((iwr https://raw.githubusercontent.com/s-gryt/memory-mason/main/install.ps1 -UseBasicParsing).Content)) -Agent copilot
+& ([scriptblock]::Create((iwr https://raw.githubusercontent.com/s-gryt/memory-mason/main/install.ps1 -UseBasicParsing).Content)) -Agent copilot -Force
 ```
 
 Or from a local clone:
@@ -41,6 +42,13 @@ powershell -File install.ps1 -Agent copilot  # or: powershell -File hooks\instal
 ```
 
 Copies runtime to `~/.copilot/hooks/memory-mason/`, generates workspace hook JSON, creates `~/.memory-mason/config.json`.
+
+GitHub Copilot install is split:
+
+- `npx skills add s-gryt/memory-mason -a github-copilot` installs `/mm*` skills
+- Memory Mason installer installs capture hooks + vault config
+
+Run both if you want both commands and automatic capture.
 
 #### Workspace-level install
 
