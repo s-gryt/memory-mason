@@ -10,7 +10,9 @@ const {
   buildDailyFilePath,
   takeLastLines,
   buildAdditionalContext,
-  truncateContext
+  truncateContext,
+  localNow,
+  localYesterday
 } = require('./lib/vault');
 
 function readStdin(fsApi = fs) {
@@ -56,6 +58,14 @@ function readGlobalConfigText(homedir) {
   return fs.readFileSync(globalConfigPath, 'utf-8');
 }
 
+function readGlobalDotEnvText(homedir) {
+  const globalEnvPath = path.join(homedir, '.memory-mason', '.env');
+  if (!fs.existsSync(globalEnvPath)) {
+    return '';
+  }
+  return fs.readFileSync(globalEnvPath, 'utf-8');
+}
+
 function readFileOrEmpty(filePath) {
   try {
     return fs.readFileSync(filePath, 'utf-8');
@@ -65,8 +75,8 @@ function readFileOrEmpty(filePath) {
 }
 
 function readRecentDailyLog(vaultPath, subfolder) {
-  const today = new Date().toISOString().slice(0, 10);
-  const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const today = localNow().date;
+  const yesterday = localYesterday();
   const todayPath = buildDailyFilePath(vaultPath, subfolder, today);
   if (fs.existsSync(todayPath)) {
     return takeLastLines(readFileOrEmpty(todayPath), 30);
@@ -99,7 +109,8 @@ function readConfigSources(cwd, homedir) {
   return {
     configText: readConfigText(cwd),
     dotEnvText: readDotEnvText(cwd),
-    globalConfigText: readGlobalConfigText(homedir)
+    globalConfigText: readGlobalConfigText(homedir),
+    globalDotEnvText: readGlobalDotEnvText(homedir)
   };
 }
 
@@ -107,7 +118,8 @@ function resolveRuntimeConfig(cwd, env, homedir) {
   const configSources = readConfigSources(cwd, homedir);
   return resolveVaultConfig(cwd, toStringOrEmpty(env.MEMORY_MASON_VAULT_PATH), configSources.configText, homedir, {
     dotEnvText: configSources.dotEnvText,
-    globalConfigText: configSources.globalConfigText
+    globalConfigText: configSources.globalConfigText,
+    globalDotEnvText: configSources.globalDotEnvText
   });
 }
 
@@ -190,6 +202,7 @@ module.exports = {
   readStdin,
   readDotEnvText,
   readGlobalConfigText,
+  readGlobalDotEnvText,
   run,
   main
 };

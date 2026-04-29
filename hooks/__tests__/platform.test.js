@@ -288,6 +288,40 @@ describe('resolveVaultConfig', () => {
     });
   });
 
+  it('uses global .env when env var, project config, project .env, and global JSON are absent', () => {
+    expect(
+      resolveVaultConfig('/repo', '', '', '/home/tester', {
+        globalDotEnvText: 'MEMORY_MASON_VAULT_PATH=~/global-env-vault\nMEMORY_MASON_SUBFOLDER=global-env-brain'
+      })
+    ).toEqual({
+      vaultPath: '/home/tester/global-env-vault',
+      subfolder: 'global-env-brain'
+    });
+  });
+
+  it('uses default subfolder when global .env has vault path but no subfolder', () => {
+    expect(
+      resolveVaultConfig('/repo', '', '', '/home/tester', {
+        globalDotEnvText: 'MEMORY_MASON_VAULT_PATH=~/global-env-vault'
+      })
+    ).toEqual({
+      vaultPath: '/home/tester/global-env-vault',
+      subfolder: 'ai-knowledge'
+    });
+  });
+
+  it('prefers global JSON over global .env', () => {
+    expect(
+      resolveVaultConfig('/repo', '', '', '/home/tester', {
+        globalConfigText: '{"vaultPath":"~/global-json-vault","subfolder":"json-brain"}',
+        globalDotEnvText: 'MEMORY_MASON_VAULT_PATH=~/global-env-vault\nMEMORY_MASON_SUBFOLDER=env-brain'
+      })
+    ).toEqual({
+      vaultPath: '/home/tester/global-json-vault',
+      subfolder: 'json-brain'
+    });
+  });
+
   it('fails fast when neither config source is provided', () => {
     expect(() => resolveVaultConfig('/repo', '', '', '/home/tester')).toThrow(
       'memory-mason.json not found and MEMORY_MASON_VAULT_PATH is not set'

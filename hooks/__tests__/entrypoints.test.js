@@ -190,6 +190,16 @@ describe('entrypoint config readers', () => {
       expect(scriptModule.readGlobalConfigText(homeDir)).toBe(configText);
       expect(scriptModule.readGlobalConfigText(createTempDir('memory-mason-home-empty-'))).toBe('');
     });
+
+    it(`reads global .env text for ${scriptName}`, () => {
+      const homeDir = createTempDir('memory-mason-home-');
+      const envText = 'MEMORY_MASON_VAULT_PATH=~/vault\nMEMORY_MASON_SUBFOLDER=global-brain';
+
+      writeText(path.join(homeDir, '.memory-mason', '.env'), envText);
+
+      expect(scriptModule.readGlobalDotEnvText(homeDir)).toBe(envText);
+      expect(scriptModule.readGlobalDotEnvText(createTempDir('memory-mason-home-empty-'))).toBe('');
+    });
   });
 });
 

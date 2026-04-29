@@ -111,6 +111,22 @@ const buildSessionHeader = (sessionId, source, timestamp) => {
   return '\n## Session [' + safeTimestamp + '] ' + renderedSessionId + ' / ' + renderedSource + '\n\n';
 };
 
+const localNow = () => {
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  return {
+    date: now.getFullYear() + '-' + pad(now.getMonth() + 1) + '-' + pad(now.getDate()),
+    time: pad(now.getHours()) + ':' + pad(now.getMinutes()) + ':' + pad(now.getSeconds())
+  };
+};
+
+const localYesterday = () => {
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  const pad = (n) => String(n).padStart(2, '0');
+  return yesterday.getFullYear() + '-' + pad(yesterday.getMonth() + 1) + '-' + pad(yesterday.getDate());
+};
+
 module.exports = {
   buildKnowledgeIndexPath,
   buildDailyFilePath,
@@ -120,5 +136,7 @@ module.exports = {
   truncateContext,
   buildDailyEntry,
   buildAssistantReplyEntry,
-  buildSessionHeader
+  buildSessionHeader,
+  localNow,
+  localYesterday
 };

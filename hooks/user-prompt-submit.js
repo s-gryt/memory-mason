@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { parseJsonInput, detectPlatform, resolveVaultConfig } = require('./lib/config');
-const { buildDailyEntry } = require('./lib/vault');
+const { buildDailyEntry, localNow } = require('./lib/vault');
 const { appendToDaily } = require('./lib/writer');
 const { extractPromptEntry } = require('./lib/prompt');
 const { parseJsonlTranscript } = require('./lib/transcript');
@@ -63,6 +63,14 @@ function readGlobalConfigText(homedir) {
   return fs.readFileSync(globalConfigPath, 'utf-8');
 }
 
+function readGlobalDotEnvText(homedir) {
+  const globalEnvPath = path.join(homedir, '.memory-mason', '.env');
+  if (!fs.existsSync(globalEnvPath)) {
+    return '';
+  }
+  return fs.readFileSync(globalEnvPath, 'utf-8');
+}
+
 function resolveRuntimeEnv(runtime) {
   return runtime.env !== null && typeof runtime.env === 'object' ? runtime.env : process.env;
 }
@@ -84,7 +92,8 @@ function readConfigSources(cwd, homedir) {
   return {
     configText: readConfigText(cwd),
     dotEnvText: readDotEnvText(cwd),
-    globalConfigText: readGlobalConfigText(homedir)
+    globalConfigText: readGlobalConfigText(homedir),
+    globalDotEnvText: readGlobalDotEnvText(homedir)
   };
 }
 
@@ -92,7 +101,8 @@ function resolveRuntimeConfig(cwd, env, homedir) {
   const configSources = readConfigSources(cwd, homedir);
   return resolveVaultConfig(cwd, toStringOrEmpty(env.MEMORY_MASON_VAULT_PATH), configSources.configText, homedir, {
     dotEnvText: configSources.dotEnvText,
-    globalConfigText: configSources.globalConfigText
+    globalConfigText: configSources.globalConfigText,
+    globalDotEnvText: configSources.globalDotEnvText
   });
 }
 
@@ -114,9 +124,10 @@ function buildPromptStateAnchors(input) {
 }
 
 function buildCaptureTimestamp() {
+  const now = localNow();
   return {
-    today: new Date().toISOString().slice(0, 10),
-    timestamp: new Date().toISOString().slice(11, 19)
+    today: now.date,
+    timestamp: now.time
   };
 }
 
@@ -217,6 +228,7 @@ module.exports = {
   firstNonEmptyString,
   readDotEnvText,
   readGlobalConfigText,
+  readGlobalDotEnvText,
   run,
   main
 };

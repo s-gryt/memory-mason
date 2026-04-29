@@ -189,12 +189,24 @@ const resolveFromGlobalConfigText = (resolutionInput) => {
   };
 };
 
+const resolveFromGlobalDotEnv = (resolutionInput) => {
+  if (resolutionInput.globalDotEnvVaultPath === '') {
+    return null;
+  }
+
+  return {
+    vaultPath: expandHomePath(resolutionInput.globalDotEnvVaultPath, resolutionInput.homedir),
+    subfolder: pickFirstNonEmptyString([resolutionInput.globalDotEnvSubfolder], 'ai-knowledge')
+  };
+};
+
 const resolveVaultConfigFromAlternatives = (resolutionInput) => {
   const alternatives = [
     resolveFromEnvVaultPath,
     resolveFromConfigText,
     resolveFromDotEnvVaultPath,
-    resolveFromGlobalConfigText
+    resolveFromGlobalConfigText,
+    resolveFromGlobalDotEnv
   ];
 
   return alternatives.reduce((resolvedConfig, resolveAlternative) => {
@@ -213,10 +225,16 @@ const resolveVaultConfig = (cwd, envVaultPath, configText, homedir, options = {}
   const safeOptions = options !== null && typeof options === 'object' ? options : {};
   const safeDotEnvText = typeof safeOptions.dotEnvText === 'string' ? safeOptions.dotEnvText : '';
   const safeGlobalConfigText = typeof safeOptions.globalConfigText === 'string' ? safeOptions.globalConfigText : '';
+  const safeGlobalDotEnvText = typeof safeOptions.globalDotEnvText === 'string' ? safeOptions.globalDotEnvText : '';
   const parsedDotEnv = parseDotEnv(safeDotEnvText);
   const dotEnvVaultPath = typeof parsedDotEnv.MEMORY_MASON_VAULT_PATH === 'string' ? parsedDotEnv.MEMORY_MASON_VAULT_PATH : '';
   const dotEnvSubfolder =
     typeof parsedDotEnv.MEMORY_MASON_SUBFOLDER === 'string' ? parsedDotEnv.MEMORY_MASON_SUBFOLDER : '';
+  const parsedGlobalDotEnv = parseDotEnv(safeGlobalDotEnvText);
+  const globalDotEnvVaultPath =
+    typeof parsedGlobalDotEnv.MEMORY_MASON_VAULT_PATH === 'string' ? parsedGlobalDotEnv.MEMORY_MASON_VAULT_PATH : '';
+  const globalDotEnvSubfolder =
+    typeof parsedGlobalDotEnv.MEMORY_MASON_SUBFOLDER === 'string' ? parsedGlobalDotEnv.MEMORY_MASON_SUBFOLDER : '';
 
   const resolutionInput = {
     homedir: safeHomedir,
@@ -224,7 +242,9 @@ const resolveVaultConfig = (cwd, envVaultPath, configText, homedir, options = {}
     configText: safeConfigText,
     dotEnvVaultPath,
     dotEnvSubfolder,
-    globalConfigText: safeGlobalConfigText
+    globalConfigText: safeGlobalConfigText,
+    globalDotEnvVaultPath,
+    globalDotEnvSubfolder
   };
 
   const resolvedConfig = resolveVaultConfigFromAlternatives(resolutionInput);

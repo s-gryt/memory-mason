@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { parseJsonInput, detectPlatform, resolveVaultConfig } = require('./lib/config');
-const { buildDailyEntry } = require('./lib/vault');
+const { buildDailyEntry, localNow } = require('./lib/vault');
 const { appendToDaily } = require('./lib/writer');
 
 function readStdin(fsApi = fs) {
@@ -49,6 +49,14 @@ function readGlobalConfigText(homedir) {
     return '';
   }
   return fs.readFileSync(globalConfigPath, 'utf-8');
+}
+
+function readGlobalDotEnvText(homedir) {
+  const globalEnvPath = path.join(homedir, '.memory-mason', '.env');
+  if (!fs.existsSync(globalEnvPath)) {
+    return '';
+  }
+  return fs.readFileSync(globalEnvPath, 'utf-8');
 }
 
 function serializeToolResponse(toolResponse) {
@@ -147,7 +155,8 @@ function readConfigSources(cwd, homedir) {
   return {
     configText: readConfigText(cwd),
     dotEnvText: readDotEnvText(cwd),
-    globalConfigText: readGlobalConfigText(homedir)
+    globalConfigText: readGlobalConfigText(homedir),
+    globalDotEnvText: readGlobalDotEnvText(homedir)
   };
 }
 
@@ -155,14 +164,16 @@ function resolveRuntimeConfig(cwd, env, homedir) {
   const configSources = readConfigSources(cwd, homedir);
   return resolveVaultConfig(cwd, toStringOrEmpty(env.MEMORY_MASON_VAULT_PATH), configSources.configText, homedir, {
     dotEnvText: configSources.dotEnvText,
-    globalConfigText: configSources.globalConfigText
+    globalConfigText: configSources.globalConfigText,
+    globalDotEnvText: configSources.globalDotEnvText
   });
 }
 
 function buildCaptureTimestamp() {
+  const now = localNow();
   return {
-    today: new Date().toISOString().slice(0, 10),
-    timestamp: new Date().toISOString().slice(11, 19)
+    today: now.date,
+    timestamp: now.time
   };
 }
 
@@ -210,6 +221,12 @@ function buildErrorResult(error) {
 }
 
 function run(rawStdin, runtime = {}) {
+  const env = runtime.env !== null && typeof runtime.env === 'object' ? runtime.env : process.env;
+
+  if (toStringOrEmpty(env.MEMORY_MASON_INVOKED_BY) !== '') {
+    return { status: 0, stdout: '', stderr: '' };
+  }
+
   try {
     const plan = buildRunPlan(rawStdin, runtime);
 
@@ -254,6 +271,7 @@ module.exports = {
   extractToolPayload,
   readDotEnvText,
   readGlobalConfigText,
+  readGlobalDotEnvText,
   run,
   main
 };

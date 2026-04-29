@@ -6,7 +6,7 @@ const path = require('path');
 const os = require('os');
 const { parseJsonInput, resolveVaultConfig } = require('./lib/config');
 const { buildFullTranscript } = require('./lib/transcript');
-const { buildSessionHeader } = require('./lib/vault');
+const { buildSessionHeader, localNow } = require('./lib/vault');
 const { appendToDaily } = require('./lib/writer');
 const { loadCaptureState, saveCaptureState, buildCaptureRecord, isDuplicateCapture } = require('./lib/capture-state');
 
@@ -63,6 +63,14 @@ function readGlobalConfigText(homedir) {
   return fs.readFileSync(globalConfigPath, 'utf-8');
 }
 
+function readGlobalDotEnvText(homedir) {
+  const globalEnvPath = path.join(homedir, '.memory-mason', '.env');
+  if (!fs.existsSync(globalEnvPath)) {
+    return '';
+  }
+  return fs.readFileSync(globalEnvPath, 'utf-8');
+}
+
 function resolveTranscriptPath(input) {
   return firstNonEmptyString([toStringOrEmpty(input.transcript_path), toStringOrEmpty(input.transcriptPath)]);
 }
@@ -88,7 +96,8 @@ function readConfigSources(cwd, homedir) {
   return {
     configText: readConfigText(cwd),
     dotEnvText: readDotEnvText(cwd),
-    globalConfigText: readGlobalConfigText(homedir)
+    globalConfigText: readGlobalConfigText(homedir),
+    globalDotEnvText: readGlobalDotEnvText(homedir)
   };
 }
 
@@ -96,7 +105,8 @@ function resolveRuntimeConfig(cwd, env, homedir) {
   const configSources = readConfigSources(cwd, homedir);
   return resolveVaultConfig(cwd, toStringOrEmpty(env.MEMORY_MASON_VAULT_PATH), configSources.configText, homedir, {
     dotEnvText: configSources.dotEnvText,
-    globalConfigText: configSources.globalConfigText
+    globalConfigText: configSources.globalConfigText,
+    globalDotEnvText: configSources.globalDotEnvText
   });
 }
 
@@ -117,9 +127,10 @@ function resolveSessionId(input) {
 }
 
 function buildCaptureTimestamp() {
+  const now = localNow();
   return {
-    iso: new Date().toISOString(),
-    today: new Date().toISOString().slice(0, 10)
+    iso: now.date + 'T' + now.time,
+    today: now.date
   };
 }
 
@@ -217,6 +228,7 @@ module.exports = {
   resolveTranscriptPath,
   readDotEnvText,
   readGlobalConfigText,
+  readGlobalDotEnvText,
   run,
   main
 };

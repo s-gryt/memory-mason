@@ -6,7 +6,7 @@ const path = require('path');
 const os = require('os');
 const { parseJsonInput, detectPlatform, resolveVaultConfig } = require('./lib/config');
 const { buildFullTranscript, parseJsonlTranscript } = require('./lib/transcript');
-const { buildSessionHeader, buildAssistantReplyEntry } = require('./lib/vault');
+const { buildSessionHeader, buildAssistantReplyEntry, localNow } = require('./lib/vault');
 const { appendToDaily } = require('./lib/writer');
 const {
   loadCaptureState,
@@ -74,6 +74,14 @@ function readGlobalConfigText(homedir) {
     return '';
   }
   return fs.readFileSync(globalConfigPath, 'utf-8');
+}
+
+function readGlobalDotEnvText(homedir) {
+  const globalEnvPath = path.join(homedir, '.memory-mason', '.env');
+  if (!fs.existsSync(globalEnvPath)) {
+    return '';
+  }
+  return fs.readFileSync(globalEnvPath, 'utf-8');
 }
 
 function readTranscriptFromPath(transcriptPath) {
@@ -303,11 +311,10 @@ function writeAssistantTurns(vaultPath, subfolder, assistantContents) {
     return;
   }
 
-  const today = new Date().toISOString().slice(0, 10);
-  const timestamp = new Date().toISOString().slice(11, 19);
+  const now = localNow();
 
   assistantContents.forEach((content) => {
-    appendToDaily(vaultPath, subfolder, today, buildAssistantReplyEntry(content, timestamp));
+    appendToDaily(vaultPath, subfolder, now.date, buildAssistantReplyEntry(content, now.time));
   });
 }
 
@@ -332,9 +339,11 @@ function run(rawStdin, runtime = {}) {
     const configText = readConfigText(cwd);
     const dotEnvText = readDotEnvText(cwd);
     const globalConfigText = readGlobalConfigText(homedir);
+    const globalDotEnvText = readGlobalDotEnvText(homedir);
     const resolvedConfig = resolveVaultConfig(cwd, toStringOrEmpty(env.MEMORY_MASON_VAULT_PATH), configText, homedir, {
       dotEnvText,
-      globalConfigText
+      globalConfigText,
+      globalDotEnvText
     });
 
     const transcriptPath = resolveTranscriptPath(input);
@@ -377,7 +386,7 @@ function run(rawStdin, runtime = {}) {
       return { status: 0, stdout: '', stderr: '' };
     }
 
-    const today = new Date().toISOString().slice(0, 10);
+    const today = localNow().date;
     const sessionId = firstNonEmptyString([sessionIdRaw, 'unknown']);
     const source = firstNonEmptyString([toStringOrEmpty(input.source), platform]);
     const captureState = loadCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder);
@@ -387,7 +396,8 @@ function run(rawStdin, runtime = {}) {
       return { status: 0, stdout: '', stderr: '' };
     }
 
-    const sessionHeader = buildSessionHeader(sessionId, source, new Date().toISOString());
+    const now = localNow();
+    const sessionHeader = buildSessionHeader(sessionId, source, now.date + 'T' + now.time);
     appendToDaily(resolvedConfig.vaultPath, resolvedConfig.subfolder, today, sessionHeader + fullTranscript.markdown);
     saveCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder, {
       ...captureState,
@@ -440,6 +450,7 @@ module.exports = {
   getLastAssistantTurnContent,
   readDotEnvText,
   readGlobalConfigText,
+  readGlobalDotEnvText,
   run,
   main
 };
