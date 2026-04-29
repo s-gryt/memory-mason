@@ -63,58 +63,128 @@ function readGlobalConfigText(homedir) {
   return fs.readFileSync(globalConfigPath, 'utf-8');
 }
 
+function resolveRuntimeEnv(runtime) {
+  return runtime.env !== null && typeof runtime.env === 'object' ? runtime.env : process.env;
+}
+
+function resolveFallbackCwd(runtime) {
+  return typeof runtime.cwd === 'string' ? runtime.cwd : process.cwd();
+}
+
+function resolveRuntimeHomedir(runtime) {
+  return typeof runtime.homedir === 'string' ? runtime.homedir : os.homedir();
+}
+
+function resolveInputCwd(input, fallbackCwd) {
+  const inputCwd = toStringOrEmpty(input.cwd);
+  return inputCwd !== '' ? inputCwd : fallbackCwd;
+}
+
+function readConfigSources(cwd, homedir) {
+  return {
+    configText: readConfigText(cwd),
+    dotEnvText: readDotEnvText(cwd),
+    globalConfigText: readGlobalConfigText(homedir)
+  };
+}
+
+function resolveRuntimeConfig(cwd, env, homedir) {
+  const configSources = readConfigSources(cwd, homedir);
+  return resolveVaultConfig(cwd, toStringOrEmpty(env.MEMORY_MASON_VAULT_PATH), configSources.configText, homedir, {
+    dotEnvText: configSources.dotEnvText,
+    globalConfigText: configSources.globalConfigText
+  });
+}
+
+function resolvePromptPayload(rawStdin) {
+  const input = parseJsonInput(rawStdin);
+  const platform = detectPlatform(input);
+  const promptEntry = extractPromptEntry(platform, input);
+  return {
+    input,
+    promptEntry
+  };
+}
+
+function buildPromptStateAnchors(input) {
+  return {
+    transcriptPath: firstNonEmptyString([toStringOrEmpty(input.transcript_path), toStringOrEmpty(input.transcriptPath)]),
+    sessionId: firstNonEmptyString([toStringOrEmpty(input.session_id), toStringOrEmpty(input.sessionId)])
+  };
+}
+
+function buildCaptureTimestamp() {
+  return {
+    today: new Date().toISOString().slice(0, 10),
+    timestamp: new Date().toISOString().slice(11, 19)
+  };
+}
+
+function buildRunPlan(rawStdin, runtime = {}) {
+  const env = resolveRuntimeEnv(runtime);
+  const fallbackCwd = resolveFallbackCwd(runtime);
+  const homedir = resolveRuntimeHomedir(runtime);
+  const payload = resolvePromptPayload(rawStdin);
+  const cwd = resolveInputCwd(payload.input, fallbackCwd);
+  const anchors = buildPromptStateAnchors(payload.input);
+  const captureTimestamp = buildCaptureTimestamp();
+  return {
+    env,
+    homedir,
+    cwd,
+    input: payload.input,
+    promptEntry: payload.promptEntry,
+    transcriptPath: anchors.transcriptPath,
+    sessionId: anchors.sessionId,
+    today: captureTimestamp.today,
+    timestamp: captureTimestamp.timestamp
+  };
+}
+
+function shouldUpdateTranscriptState(transcriptPath, sessionId) {
+  return transcriptPath !== '' && sessionId !== '' && fs.existsSync(transcriptPath);
+}
+
+function updateTranscriptState(resolvedConfig, transcriptPath, sessionId) {
+  const transcriptContent = fs.readFileSync(transcriptPath, 'utf-8');
+  const turns = parseJsonlTranscript(transcriptContent);
+  const captureState = loadCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder);
+  const updatedState = setTranscriptTurnCount(captureState, sessionId, turns.length);
+  saveCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder, updatedState);
+}
+
+function persistPromptSubmission(plan) {
+  const resolvedConfig = resolveRuntimeConfig(plan.cwd, plan.env, plan.homedir);
+
+  if (shouldUpdateTranscriptState(plan.transcriptPath, plan.sessionId)) {
+    updateTranscriptState(resolvedConfig, plan.transcriptPath, plan.sessionId);
+  }
+
+  const dailyEntry = buildDailyEntry(plan.promptEntry.entryName, plan.promptEntry.text, plan.timestamp);
+  appendToDaily(resolvedConfig.vaultPath, resolvedConfig.subfolder, plan.today, dailyEntry);
+}
+
+function buildErrorResult(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  return {
+    status: 0,
+    stdout: '',
+    stderr: message + '\n'
+  };
+}
+
 function run(rawStdin, runtime = {}) {
-  const env = runtime.env !== null && typeof runtime.env === 'object' ? runtime.env : process.env;
-  const fallbackCwd = typeof runtime.cwd === 'string' ? runtime.cwd : process.cwd();
-  const homedir = typeof runtime.homedir === 'string' ? runtime.homedir : os.homedir();
-
   try {
-    const input = parseJsonInput(rawStdin);
-    const platform = detectPlatform(input);
-    const promptEntry = extractPromptEntry(platform, input);
+    const plan = buildRunPlan(rawStdin, runtime);
 
-    if (promptEntry.text === '') {
+    if (plan.promptEntry.text === '') {
       return { status: 0, stdout: '', stderr: '' };
     }
 
-    const cwd = toStringOrEmpty(input.cwd) !== '' ? toStringOrEmpty(input.cwd) : fallbackCwd;
-    const configText = readConfigText(cwd);
-    const dotEnvText = readDotEnvText(cwd);
-    const globalConfigText = readGlobalConfigText(homedir);
-    const resolvedConfig = resolveVaultConfig(cwd, toStringOrEmpty(env.MEMORY_MASON_VAULT_PATH), configText, homedir, {
-      dotEnvText,
-      globalConfigText
-    });
-
-    const today = new Date().toISOString().slice(0, 10);
-    const timestamp = new Date().toISOString().slice(11, 19);
-    const transcriptPath = firstNonEmptyString([
-      toStringOrEmpty(input.transcript_path),
-      toStringOrEmpty(input.transcriptPath)
-    ]);
-    const sessionId = firstNonEmptyString([
-      toStringOrEmpty(input.session_id),
-      toStringOrEmpty(input.sessionId)
-    ]);
-
-    if (transcriptPath !== '' && sessionId !== '' && fs.existsSync(transcriptPath)) {
-      const transcriptContent = fs.readFileSync(transcriptPath, 'utf-8');
-      const turns = parseJsonlTranscript(transcriptContent);
-      const captureState = loadCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder);
-      const updatedState = setTranscriptTurnCount(captureState, sessionId, turns.length);
-      saveCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder, updatedState);
-    }
-
-    const dailyEntry = buildDailyEntry(promptEntry.entryName, promptEntry.text, timestamp);
-    appendToDaily(resolvedConfig.vaultPath, resolvedConfig.subfolder, today, dailyEntry);
+    persistPromptSubmission(plan);
     return { status: 0, stdout: '', stderr: '' };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return {
-      status: 0,
-      stdout: '',
-      stderr: message + '\n'
-    };
+    return buildErrorResult(error);
   }
 }
 

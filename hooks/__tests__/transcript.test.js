@@ -103,6 +103,63 @@ describe('parseJsonlTranscript', () => {
     expect(parseJsonlTranscript(input)).toEqual([{ role: 'user', content: 'test' }]);
   });
 
+  it('parses VS Code transcript entries with type and data content', () => {
+    const input = [
+      JSON.stringify({
+        id: 'entry-0',
+        timestamp: '2025-01-01T00:00:00.000Z',
+        parentId: null,
+        type: 'session.start',
+        data: { sessionId: 'session-1' }
+      }),
+      JSON.stringify({
+        id: 'entry-1',
+        timestamp: '2025-01-01T00:00:01.000Z',
+        parentId: 'entry-0',
+        type: 'user.message',
+        data: { content: 'hello', attachments: [] }
+      }),
+      JSON.stringify({
+        id: 'entry-2',
+        timestamp: '2025-01-01T00:00:02.000Z',
+        parentId: 'entry-1',
+        type: 'assistant.turn_start',
+        data: { turnId: '0.0' }
+      }),
+      JSON.stringify({
+        id: 'entry-3',
+        timestamp: '2025-01-01T00:00:03.000Z',
+        parentId: 'entry-2',
+        type: 'assistant.message',
+        data: { messageId: 'message-1', content: 'world', toolRequests: [] }
+      }),
+      JSON.stringify({
+        id: 'entry-4',
+        timestamp: '2025-01-01T00:00:04.000Z',
+        parentId: 'entry-3',
+        type: 'assistant.turn_end',
+        data: { turnId: '0.0' }
+      })
+    ].join('\n');
+
+    expect(parseJsonlTranscript(input)).toEqual([
+      { role: 'user', content: 'hello' },
+      { role: 'assistant', content: 'world' }
+    ]);
+  });
+
+  it('ignores VS Code transcript message entries with malformed data payloads', () => {
+    const input = JSON.stringify({
+      id: 'entry-1',
+      timestamp: '2025-01-01T00:00:01.000Z',
+      parentId: null,
+      type: 'assistant.message',
+      data: 'invalid'
+    });
+
+    expect(parseJsonlTranscript(input)).toEqual([]);
+  });
+
   it('ignores blank lines', () => {
     const input = [
       '',

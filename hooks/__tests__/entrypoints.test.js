@@ -103,6 +103,62 @@ const buildTranscript = (turnCount, firstUserContent = 'user turn') =>
     return JSON.stringify({ message: { role, content } });
   }).join('\n');
 
+const buildVsCodeTranscript = (turns) => {
+  const entries = [
+    {
+      type: 'session.start',
+      data: {
+        sessionId: 'session-1',
+        version: 1,
+        producer: 'copilot-agent',
+        copilotVersion: '0.0.0',
+        vscodeVersion: '1.0.0',
+        startTime: '2025-01-01T00:00:00.000Z',
+        context: { cwd: hooksRoot }
+      }
+    }
+  ].concat(
+    turns.flatMap((turn, turnIndex) => {
+      const userEntries = [
+        {
+          type: 'user.message',
+          data: { content: turn.user, attachments: [] }
+        }
+      ];
+
+      if (typeof turn.assistant !== 'string') {
+        return userEntries;
+      }
+
+      return userEntries.concat([
+        {
+          type: 'assistant.turn_start',
+          data: { turnId: turnIndex + '.0' }
+        },
+        {
+          type: 'assistant.message',
+          data: { messageId: 'message-' + turnIndex, content: turn.assistant, toolRequests: [] }
+        },
+        {
+          type: 'assistant.turn_end',
+          data: { turnId: turnIndex + '.0' }
+        }
+      ]);
+    })
+  );
+
+  return entries
+    .map((entry, index) =>
+      JSON.stringify({
+        ...entry,
+        id: 'entry-' + index,
+        timestamp: '2025-01-01T00:00:' + String(index).padStart(2, '0') + '.000Z',
+        parentId: index === 0 ? null : 'entry-' + (index - 1)
+      })
+    )
+    .join('\n');
+};
+
 const today = () => new Date().toISOString().slice(0, 10);
 
 const yesterday = () => new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
@@ -860,6 +916,151 @@ describe('session-end.js', () => {
     const afterDuplicateStop = fs.readFileSync(dailyPath, 'utf-8');
     expect(afterDuplicateStop).toBe(afterSecondStop);
     expect(afterDuplicateStop.split('assistant turn 3').length - 1).toBe(1);
+  });
+
+  it('captures first assistant reply on Stop when prompt submit could not anchor transcript count', () => {
+    const homeDir = createTempDir('memory-mason-home-');
+    const vaultPath = createTempDir('memory-mason-vault-');
+    const transcriptPath = path.join(createTempDir('memory-mason-transcript-'), 'session.jsonl');
+
+    runScript('user-prompt-submit.js', {
+      payload: {
+        hook_event_name: 'UserPromptSubmit',
+        cwd: hooksRoot,
+        prompt: 'first prompt',
+        transcript_path: transcriptPath,
+        session_id: 'session-stop-first-turn'
+      },
+      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath })
+    });
+
+    writeText(transcriptPath, buildTranscript(2, 'first prompt turn'));
+
+    const result = runScript('session-end.js', {
+      payload: {
+        hook_event_name: 'Stop',
+        cwd: hooksRoot,
+        transcript_path: transcriptPath,
+        session_id: 'session-stop-first-turn'
+      },
+      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath })
+    });
+
+    const dailyContent = fs.readFileSync(buildDailyFilePath(vaultPath, 'ai-knowledge', today()), 'utf-8');
+
+    expect(result.status).toBe(0);
+    expect(dailyContent).toContain('first prompt');
+    expect(dailyContent).toContain('assistant turn 1');
+    expect(dailyContent.indexOf('first prompt')).toBeLessThan(dailyContent.indexOf('assistant turn 1'));
+  });
+
+  it('uses last_assistant_message fallback on Stop without replaying duplicate assistant replies later', () => {
+    const homeDir = createTempDir('memory-mason-home-');
+    const vaultPath = createTempDir('memory-mason-vault-');
+    const transcriptPath = path.join(createTempDir('memory-mason-transcript-'), 'session.jsonl');
+
+    writeText(transcriptPath, buildTranscript(1, 'first prompt turn'));
+
+    runScript('user-prompt-submit.js', {
+      payload: {
+        hook_event_name: 'UserPromptSubmit',
+        cwd: hooksRoot,
+        prompt: 'first prompt',
+        transcript_path: transcriptPath,
+        session_id: 'session-stop-payload-fallback'
+      },
+      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath })
+    });
+
+    runScript('session-end.js', {
+      payload: {
+        hook_event_name: 'Stop',
+        cwd: hooksRoot,
+        transcript_path: transcriptPath,
+        session_id: 'session-stop-payload-fallback',
+        last_assistant_message: 'assistant turn 1'
+      },
+      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath })
+    });
+
+    writeText(transcriptPath, buildTranscript(2, 'first prompt turn'));
+
+    const result = runScript('session-end.js', {
+      payload: {
+        hook_event_name: 'Stop',
+        cwd: hooksRoot,
+        transcript_path: transcriptPath,
+        session_id: 'session-stop-payload-fallback',
+        last_assistant_message: 'assistant turn 1'
+      },
+      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath })
+    });
+
+    const dailyContent = fs.readFileSync(buildDailyFilePath(vaultPath, 'ai-knowledge', today()), 'utf-8');
+
+    expect(result.status).toBe(0);
+    expect(dailyContent.split('assistant turn 1').length - 1).toBe(1);
+  });
+
+  it('is a no-op on first Stop when transcript is empty and payload has no assistant message', () => {
+    const homeDir = createTempDir('memory-mason-home-');
+    const vaultPath = createTempDir('memory-mason-vault-');
+    const transcriptPath = path.join(createTempDir('memory-mason-transcript-'), 'session.jsonl');
+
+    writeText(transcriptPath, '');
+
+    const result = runScript('session-end.js', {
+      payload: {
+        hook_event_name: 'Stop',
+        cwd: hooksRoot,
+        transcript_path: transcriptPath,
+        session_id: 'session-stop-empty-first'
+      },
+      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath })
+    });
+
+    expect(result.status).toBe(0);
+    expect(fs.existsSync(buildDailyFilePath(vaultPath, 'ai-knowledge', today()))).toBe(false);
+  });
+
+  it('captures assistant reply from VS Code transcript entries on Stop', () => {
+    const homeDir = createTempDir('memory-mason-home-');
+    const vaultPath = createTempDir('memory-mason-vault-');
+    const transcriptPath = path.join(createTempDir('memory-mason-transcript-'), 'session.jsonl');
+
+    writeText(transcriptPath, buildVsCodeTranscript([{ user: 'first prompt' }]));
+
+    runScript('user-prompt-submit.js', {
+      payload: {
+        hook_event_name: 'UserPromptSubmit',
+        cwd: hooksRoot,
+        prompt: 'first prompt',
+        transcript_path: transcriptPath,
+        session_id: 'session-stop-vscode-transcript'
+      },
+      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath })
+    });
+
+    writeText(
+      transcriptPath,
+      buildVsCodeTranscript([{ user: 'first prompt', assistant: 'assistant turn 1' }])
+    );
+
+    const result = runScript('session-end.js', {
+      payload: {
+        hook_event_name: 'Stop',
+        cwd: hooksRoot,
+        transcript_path: transcriptPath,
+        session_id: 'session-stop-vscode-transcript'
+      },
+      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath })
+    });
+
+    const dailyContent = fs.readFileSync(buildDailyFilePath(vaultPath, 'ai-knowledge', today()), 'utf-8');
+
+    expect(result.status).toBe(0);
+    expect(dailyContent).toContain('first prompt');
+    expect(dailyContent).toContain('assistant turn 1');
   });
 
   it('writes transcript from explicit transcript path', () => {

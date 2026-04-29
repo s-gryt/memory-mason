@@ -73,28 +73,44 @@ const HOOK_DEFINITIONS = {
   }
 };
 
+function reduceArgState(state, arg, index, args, safeCwd) {
+  if (state.skipNext) {
+    return {
+      parsed: state.parsed,
+      skipNext: false
+    };
+  }
+
+  if (arg === '--workspace' || arg === '-w') {
+    const workspacePath = args[index + 1];
+    if (typeof workspacePath !== 'string' || workspacePath === '') {
+      throw new Error(arg + ' requires a workspace path');
+    }
+
+    return {
+      parsed: {
+        ...state.parsed,
+        workspacePath: path.resolve(safeCwd, workspacePath)
+      },
+      skipNext: true
+    };
+  }
+
+  throw new Error('unknown argument: ' + arg);
+}
+
 function parseArgs(argv, cwd) {
   const safeArgv = Array.isArray(argv) ? argv : [];
   const safeCwd = typeof cwd === 'string' && cwd !== '' ? cwd : process.cwd();
-  const parsed = {};
-
-  for (let index = 0; index < safeArgv.length; index += 1) {
-    const arg = safeArgv[index];
-
-    if (arg === '--workspace' || arg === '-w') {
-      const workspacePath = safeArgv[index + 1];
-      if (typeof workspacePath !== 'string' || workspacePath === '') {
-        throw new Error(arg + ' requires a workspace path');
-      }
-      parsed.workspacePath = path.resolve(safeCwd, workspacePath);
-      index += 1;
-      continue;
+  const finalState = safeArgv.reduce(
+    (state, arg, index, args) => reduceArgState(state, arg, index, args, safeCwd),
+    {
+      parsed: {},
+      skipNext: false
     }
+  );
 
-    throw new Error('unknown argument: ' + arg);
-  }
-
-  return parsed;
+  return finalState.parsed;
 }
 
 function resolveTargetDir(runtime = {}) {
@@ -146,25 +162,26 @@ function buildHookDocument(fileName, runtime = {}) {
   return sourceDefinition !== null ? sourceDefinition : buildInlineHookFile(fileName);
 }
 
+function rewriteCommand(command, hookRoot, hookScriptName) {
+  const directCommand = `node "${hookRoot}/${hookScriptName}"`;
+  return command === 'PLACEHOLDER' ? directCommand : command.replace(/^node hooks\/(.+)$/u, `node "${hookRoot}/$1"`);
+}
+
 function rewriteEntry(entry, hookRoot, hookScriptName) {
   if (entry === null || typeof entry !== 'object') {
     return entry;
   }
 
-  const nextEntry = { ...entry };
+  const rewrittenCommand =
+    typeof entry.command === 'string' ? rewriteCommand(entry.command, hookRoot, hookScriptName) : entry.command;
+  const rewrittenHooks =
+    Array.isArray(entry.hooks) ? entry.hooks.map((childEntry) => rewriteEntry(childEntry, hookRoot, hookScriptName)) : entry.hooks;
 
-  if (typeof entry.command === 'string') {
-    const directCommand = `node "${hookRoot}/${hookScriptName}"`;
-    nextEntry.command = entry.command === 'PLACEHOLDER'
-      ? directCommand
-      : entry.command.replace(/^node hooks\/(.+)$/u, `node "${hookRoot}/$1"`);
-  }
-
-  if (Array.isArray(entry.hooks)) {
-    nextEntry.hooks = entry.hooks.map((childEntry) => rewriteEntry(childEntry, hookRoot, hookScriptName));
-  }
-
-  return nextEntry;
+  return {
+    ...entry,
+    ...(typeof entry.command === 'string' ? { command: rewrittenCommand } : {}),
+    ...(Array.isArray(entry.hooks) ? { hooks: rewrittenHooks } : {})
+  };
 }
 
 function rewriteHookFile(fileName, hookRoot, runtime = {}) {
@@ -198,16 +215,32 @@ function rewriteHookFile(fileName, hookRoot, runtime = {}) {
   return JSON.stringify(nextDocument, null, 2) + '\n';
 }
 
+function buildHookWriteOperation(fileName, targetDir, hookRoot, runtime = {}) {
+  return {
+    targetPath: path.join(targetDir, fileName),
+    content: rewriteHookFile(fileName, hookRoot, runtime)
+  };
+}
+
+function buildHookWriteOperations(targetDir, hookRoot, runtime = {}) {
+  return hookFiles.map((fileName) => buildHookWriteOperation(fileName, targetDir, hookRoot, runtime));
+}
+
+function writeHookOperation(operation) {
+  fs.writeFileSync(operation.targetPath, operation.content, 'utf-8');
+}
+
+function writeHookOperations(operations) {
+  operations.forEach((operation) => writeHookOperation(operation));
+}
+
 function run(runtime = {}) {
   const targetDir = resolveTargetDir(runtime);
   const hookRoot = path.join(repoRoot, 'hooks').replace(/\\/g, '/');
 
   fs.mkdirSync(targetDir, { recursive: true });
-
-  hookFiles.forEach((fileName) => {
-    const targetPath = path.join(targetDir, fileName);
-    fs.writeFileSync(targetPath, rewriteHookFile(fileName, hookRoot, runtime), 'utf-8');
-  });
+  const operations = buildHookWriteOperations(targetDir, hookRoot, runtime);
+  writeHookOperations(operations);
 
   return {
     status: 0,

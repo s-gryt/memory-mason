@@ -78,45 +78,87 @@ function readRecentDailyLog(vaultPath, subfolder) {
   return '';
 }
 
+function resolveRuntimeEnv(runtime) {
+  return runtime.env !== null && typeof runtime.env === 'object' ? runtime.env : process.env;
+}
+
+function resolveFallbackCwd(runtime) {
+  return typeof runtime.cwd === 'string' ? runtime.cwd : process.cwd();
+}
+
+function resolveRuntimeHomedir(runtime) {
+  return typeof runtime.homedir === 'string' ? runtime.homedir : os.homedir();
+}
+
+function resolveInputCwd(input, fallbackCwd) {
+  const inputCwd = toStringOrEmpty(input.cwd);
+  return inputCwd !== '' ? inputCwd : fallbackCwd;
+}
+
+function readConfigSources(cwd, homedir) {
+  return {
+    configText: readConfigText(cwd),
+    dotEnvText: readDotEnvText(cwd),
+    globalConfigText: readGlobalConfigText(homedir)
+  };
+}
+
+function resolveRuntimeConfig(cwd, env, homedir) {
+  const configSources = readConfigSources(cwd, homedir);
+  return resolveVaultConfig(cwd, toStringOrEmpty(env.MEMORY_MASON_VAULT_PATH), configSources.configText, homedir, {
+    dotEnvText: configSources.dotEnvText,
+    globalConfigText: configSources.globalConfigText
+  });
+}
+
+function buildSessionAdditionalContext(resolvedConfig) {
+  const indexPath = buildKnowledgeIndexPath(resolvedConfig.vaultPath, resolvedConfig.subfolder);
+  const indexText = readFileOrEmpty(indexPath);
+  const recentLogText = readRecentDailyLog(resolvedConfig.vaultPath, resolvedConfig.subfolder);
+  return truncateContext(buildAdditionalContext(indexText, recentLogText), 10000);
+}
+
+function buildSessionStartStdout(additionalContext) {
+  return (
+    JSON.stringify({
+      hookSpecificOutput: {
+        hookEventName: 'SessionStart',
+        additionalContext
+      }
+    }) + '\n'
+  );
+}
+
+function buildSuccessResult(additionalContext) {
+  return {
+    status: 0,
+    stdout: buildSessionStartStdout(additionalContext),
+    stderr: ''
+  };
+}
+
+function buildErrorResult(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  return {
+    status: 0,
+    stdout: '',
+    stderr: message + '\n'
+  };
+}
+
 function run(rawStdin, runtime = {}) {
-  const env = runtime.env !== null && typeof runtime.env === 'object' ? runtime.env : process.env;
-  const fallbackCwd = typeof runtime.cwd === 'string' ? runtime.cwd : process.cwd();
-  const homedir = typeof runtime.homedir === 'string' ? runtime.homedir : os.homedir();
+  const env = resolveRuntimeEnv(runtime);
+  const fallbackCwd = resolveFallbackCwd(runtime);
+  const homedir = resolveRuntimeHomedir(runtime);
 
   try {
     const input = parseJsonInput(rawStdin);
-    const cwd = toStringOrEmpty(input.cwd) !== '' ? toStringOrEmpty(input.cwd) : fallbackCwd;
-    const configText = readConfigText(cwd);
-    const dotEnvText = readDotEnvText(cwd);
-    const globalConfigText = readGlobalConfigText(homedir);
-    const resolvedConfig = resolveVaultConfig(cwd, toStringOrEmpty(env.MEMORY_MASON_VAULT_PATH), configText, homedir, {
-      dotEnvText,
-      globalConfigText
-    });
-
-    const indexPath = buildKnowledgeIndexPath(resolvedConfig.vaultPath, resolvedConfig.subfolder);
-    const indexText = readFileOrEmpty(indexPath);
-    const recentLogText = readRecentDailyLog(resolvedConfig.vaultPath, resolvedConfig.subfolder);
-    const additionalContext = truncateContext(buildAdditionalContext(indexText, recentLogText), 10000);
-
-    return {
-      status: 0,
-      stdout:
-        JSON.stringify({
-          hookSpecificOutput: {
-            hookEventName: 'SessionStart',
-            additionalContext
-          }
-        }) + '\n',
-      stderr: ''
-    };
+    const cwd = resolveInputCwd(input, fallbackCwd);
+    const resolvedConfig = resolveRuntimeConfig(cwd, env, homedir);
+    const additionalContext = buildSessionAdditionalContext(resolvedConfig);
+    return buildSuccessResult(additionalContext);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return {
-      status: 0,
-      stdout: '',
-      stderr: message + '\n'
-    };
+    return buildErrorResult(error);
   }
 }
 

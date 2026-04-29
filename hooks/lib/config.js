@@ -122,6 +122,90 @@ const parseDotEnv = (rawText) => {
     }, {});
 };
 
+const pickFirstNonEmptyString = (values, fallbackValue) => {
+  const firstMatch = values.find((value) => typeof value === 'string' && value !== '');
+  if (typeof firstMatch === 'string') {
+    return firstMatch;
+  }
+  return fallbackValue;
+};
+
+const parseConfigSubfolderOrEmpty = (configText) => {
+  if (configText === '') {
+    return '';
+  }
+
+  try {
+    return parseMemoryMasonConfig(configText).subfolder;
+  } catch (error) {
+    return '';
+  }
+};
+
+const resolveFromEnvVaultPath = (resolutionInput) => {
+  if (resolutionInput.envVaultPath === '') {
+    return null;
+  }
+
+  const subfolderFromConfig = parseConfigSubfolderOrEmpty(resolutionInput.configText);
+  return {
+    vaultPath: expandHomePath(resolutionInput.envVaultPath, resolutionInput.homedir),
+    subfolder: pickFirstNonEmptyString([subfolderFromConfig, resolutionInput.dotEnvSubfolder], 'ai-knowledge')
+  };
+};
+
+const resolveFromConfigText = (resolutionInput) => {
+  if (resolutionInput.configText === '') {
+    return null;
+  }
+
+  const parsedConfig = parseMemoryMasonConfig(resolutionInput.configText);
+  return {
+    vaultPath: expandHomePath(parsedConfig.vaultPath, resolutionInput.homedir),
+    subfolder: parsedConfig.subfolder
+  };
+};
+
+const resolveFromDotEnvVaultPath = (resolutionInput) => {
+  if (resolutionInput.dotEnvVaultPath === '') {
+    return null;
+  }
+
+  return {
+    vaultPath: expandHomePath(resolutionInput.dotEnvVaultPath, resolutionInput.homedir),
+    subfolder: pickFirstNonEmptyString([resolutionInput.dotEnvSubfolder], 'ai-knowledge')
+  };
+};
+
+const resolveFromGlobalConfigText = (resolutionInput) => {
+  if (resolutionInput.globalConfigText === '') {
+    return null;
+  }
+
+  const parsedGlobalConfig = parseMemoryMasonConfig(resolutionInput.globalConfigText);
+  return {
+    vaultPath: expandHomePath(parsedGlobalConfig.vaultPath, resolutionInput.homedir),
+    subfolder: parsedGlobalConfig.subfolder
+  };
+};
+
+const resolveVaultConfigFromAlternatives = (resolutionInput) => {
+  const alternatives = [
+    resolveFromEnvVaultPath,
+    resolveFromConfigText,
+    resolveFromDotEnvVaultPath,
+    resolveFromGlobalConfigText
+  ];
+
+  return alternatives.reduce((resolvedConfig, resolveAlternative) => {
+    if (resolvedConfig !== null) {
+      return resolvedConfig;
+    }
+
+    return resolveAlternative(resolutionInput);
+  }, null);
+};
+
 const resolveVaultConfig = (cwd, envVaultPath, configText, homedir, options = {}) => {
   const safeHomedir = assertNonEmptyString('homedir', homedir);
   const safeEnvVaultPath = typeof envVaultPath === 'string' ? envVaultPath : '';
@@ -134,46 +218,18 @@ const resolveVaultConfig = (cwd, envVaultPath, configText, homedir, options = {}
   const dotEnvSubfolder =
     typeof parsedDotEnv.MEMORY_MASON_SUBFOLDER === 'string' ? parsedDotEnv.MEMORY_MASON_SUBFOLDER : '';
 
-  if (safeEnvVaultPath !== '') {
-    const subfolderFromConfig = (() => {
-      if (safeConfigText === '') {
-        return '';
-      }
+  const resolutionInput = {
+    homedir: safeHomedir,
+    envVaultPath: safeEnvVaultPath,
+    configText: safeConfigText,
+    dotEnvVaultPath,
+    dotEnvSubfolder,
+    globalConfigText: safeGlobalConfigText
+  };
 
-      try {
-        return parseMemoryMasonConfig(safeConfigText).subfolder;
-      } catch (error) {
-        return '';
-      }
-    })();
-
-    return {
-      vaultPath: expandHomePath(safeEnvVaultPath, safeHomedir),
-      subfolder: subfolderFromConfig !== '' ? subfolderFromConfig : dotEnvSubfolder !== '' ? dotEnvSubfolder : 'ai-knowledge'
-    };
-  }
-
-  if (safeConfigText !== '') {
-    const parsedConfig = parseMemoryMasonConfig(safeConfigText);
-    return {
-      vaultPath: expandHomePath(parsedConfig.vaultPath, safeHomedir),
-      subfolder: parsedConfig.subfolder
-    };
-  }
-
-  if (dotEnvVaultPath !== '') {
-    return {
-      vaultPath: expandHomePath(dotEnvVaultPath, safeHomedir),
-      subfolder: dotEnvSubfolder !== '' ? dotEnvSubfolder : 'ai-knowledge'
-    };
-  }
-
-  if (safeGlobalConfigText !== '') {
-    const parsedGlobalConfig = parseMemoryMasonConfig(safeGlobalConfigText);
-    return {
-      vaultPath: expandHomePath(parsedGlobalConfig.vaultPath, safeHomedir),
-      subfolder: parsedGlobalConfig.subfolder
-    };
+  const resolvedConfig = resolveVaultConfigFromAlternatives(resolutionInput);
+  if (resolvedConfig !== null) {
+    return resolvedConfig;
   }
 
   assertNonEmptyString('cwd', cwd);

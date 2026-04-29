@@ -53,79 +53,120 @@ const normalizeTranscriptText = (content) => {
 };
 
 const extractEntryPayload = (entry) => {
-  if (entry !== null && typeof entry === 'object' && !Array.isArray(entry)) {
-    if (entry.message !== null && typeof entry.message === 'object' && !Array.isArray(entry.message)) {
-      return {
-        role: entry.message.role,
-        content: entry.message.content
-      };
-    }
+  const emptyPayload = {
+    role: '',
+    content: ''
+  };
 
+  if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) {
+    return emptyPayload;
+  }
+
+  if (entry.message !== null && typeof entry.message === 'object' && !Array.isArray(entry.message)) {
     return {
-      role: entry.role,
-      content: entry.content
+      role: entry.message.role,
+      content: entry.message.content
+    };
+  }
+
+  if (entry.type === 'user.message' || entry.type === 'assistant.message') {
+    const role = entry.type === 'user.message' ? 'user' : 'assistant';
+    const data = entry.data;
+    return {
+      role,
+      content:
+        data !== null && typeof data === 'object' && !Array.isArray(data)
+          ? data.content
+          : ''
     };
   }
 
   return {
-    role: '',
-    content: ''
+    role: entry.role,
+    content: entry.content
   };
 };
 
-const extractTextContent = (rawContent) => {
-  if (typeof rawContent === 'string') {
-    return normalizeTranscriptText(rawContent);
+const isTranscriptTextBlock = (block) =>
+  block !== null &&
+  typeof block === 'object' &&
+  !Array.isArray(block) &&
+  block.type === 'text' &&
+  typeof block.text === 'string';
+
+const extractTextContentFromString = (rawContent) => {
+  if (typeof rawContent !== 'string') {
+    return '';
   }
 
-  if (Array.isArray(rawContent)) {
-    return normalizeTranscriptText(
-      rawContent
-      .filter(
-        (block) =>
-          block !== null &&
-          typeof block === 'object' &&
-          !Array.isArray(block) &&
-          block.type === 'text' &&
-          typeof block.text === 'string'
-      )
+  return normalizeTranscriptText(rawContent);
+};
+
+const extractTextContentFromBlockArray = (rawContent) => {
+  if (!Array.isArray(rawContent)) {
+    return '';
+  }
+
+  return normalizeTranscriptText(
+    rawContent
+      .filter((block) => isTranscriptTextBlock(block))
       .map((block) => block.text)
       .join('\n')
-    );
+  );
+};
+
+const extractTextContent = (rawContent) => {
+  const extractionStrategies = [extractTextContentFromString, extractTextContentFromBlockArray];
+  const extractedContent = extractionStrategies
+    .map((extractContent) => extractContent(rawContent))
+    .find((content) => content !== '');
+
+  if (typeof extractedContent === 'string') {
+    return extractedContent;
   }
 
   return '';
 };
 
+const parseJsonlLine = (line) => {
+  try {
+    return JSON.parse(line);
+  } catch (error) {
+    return null;
+  }
+};
+
+const isSupportedTranscriptRole = (role) => role === 'user' || role === 'assistant';
+
+const mapEntryToTranscriptTurn = (entry) => {
+  const payload = extractEntryPayload(entry);
+  if (!isSupportedTranscriptRole(payload.role)) {
+    return null;
+  }
+
+  const textContent = extractTextContent(payload.content);
+  if (textContent.trim() === '') {
+    return null;
+  }
+
+  return {
+    role: payload.role,
+    content: textContent
+  };
+};
+
+const isNotNull = (value) => value !== null;
+
 const parseJsonlTranscript = (content) => {
   assertNonEmptyString('content', content);
 
-  const lines = content.split('\n').filter((line) => line.trim() !== '');
-  return lines.reduce((accumulator, line) => {
-    try {
-      const parsedEntry = JSON.parse(line);
-      const payload = extractEntryPayload(parsedEntry);
-      const role = payload.role;
-
-      if (role !== 'user' && role !== 'assistant') {
-        return accumulator;
-      }
-
-      const textContent = extractTextContent(payload.content);
-      if (textContent.trim() === '') {
-        return accumulator;
-      }
-
-      return accumulator.concat([
-        {
-          role,
-          content: textContent
-        }
-      ]);
-    } catch (error) {
-      return accumulator;
-    }
-  }, []);
+  return content
+    .split('\n')
+    .filter((line) => line.trim() !== '')
+    .map((line) => parseJsonlLine(line))
+    .filter((entry) => isNotNull(entry))
+    .map((entry) => mapEntryToTranscriptTurn(entry))
+    .filter((turn) => isNotNull(turn));
 };
 
 const selectRecentTurns = (turns, maxTurns) => {

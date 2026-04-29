@@ -83,74 +83,144 @@ function serializeToolResponse(toolResponse) {
   return '';
 }
 
+function extractClaudeOrCopilotVscodePayload(input) {
+  return {
+    toolName: toStringOrEmpty(input.tool_name),
+    resultText: serializeToolResponse(input.tool_response)
+  };
+}
+
+function extractCopilotCliPayload(input) {
+  const toolResult =
+    input.toolResult !== null && typeof input.toolResult === 'object' && !Array.isArray(input.toolResult)
+      ? input.toolResult
+      : {};
+  const textResultForLlm = typeof toolResult.textResultForLlm === 'string' ? toolResult.textResultForLlm : '';
+
+  return {
+    toolName: toStringOrEmpty(input.toolName),
+    resultText: textResultForLlm
+  };
+}
+
+function extractCodexPayload(input) {
+  return {
+    toolName: toStringOrEmpty(input.tool_name),
+    resultText: toStringOrEmpty(input.tool_result)
+  };
+}
+
 function extractToolPayload(platform, input) {
-  if (platform === 'claude-code' || platform === 'copilot-vscode') {
-    return {
-      toolName: toStringOrEmpty(input.tool_name),
-      resultText: serializeToolResponse(input.tool_response)
-    };
-  }
+  const extractorByPlatform = {
+    'claude-code': extractClaudeOrCopilotVscodePayload,
+    'copilot-vscode': extractClaudeOrCopilotVscodePayload,
+    'copilot-cli': extractCopilotCliPayload,
+    codex: extractCodexPayload
+  };
+  const extractor = extractorByPlatform[platform];
 
-  if (platform === 'copilot-cli') {
-    const toolResult =
-      input.toolResult !== null && typeof input.toolResult === 'object' && !Array.isArray(input.toolResult)
-        ? input.toolResult
-        : {};
-    const textResultForLlm =
-      typeof toolResult.textResultForLlm === 'string' ? toolResult.textResultForLlm : '';
-
-    return {
-      toolName: toStringOrEmpty(input.toolName),
-      resultText: textResultForLlm
-    };
-  }
-
-  if (platform === 'codex') {
-    return {
-      toolName: toStringOrEmpty(input.tool_name),
-      resultText: toStringOrEmpty(input.tool_result)
-    };
+  if (typeof extractor === 'function') {
+    return extractor(input);
   }
 
   throw new Error('unsupported platform: ' + platform);
 }
 
+function resolveRuntimeEnv(runtime) {
+  return runtime.env !== null && typeof runtime.env === 'object' ? runtime.env : process.env;
+}
+
+function resolveFallbackCwd(runtime) {
+  return typeof runtime.cwd === 'string' ? runtime.cwd : process.cwd();
+}
+
+function resolveRuntimeHomedir(runtime) {
+  return typeof runtime.homedir === 'string' ? runtime.homedir : os.homedir();
+}
+
+function resolveInputCwd(input, fallbackCwd) {
+  const inputCwd = toStringOrEmpty(input.cwd);
+  return inputCwd !== '' ? inputCwd : fallbackCwd;
+}
+
+function readConfigSources(cwd, homedir) {
+  return {
+    configText: readConfigText(cwd),
+    dotEnvText: readDotEnvText(cwd),
+    globalConfigText: readGlobalConfigText(homedir)
+  };
+}
+
+function resolveRuntimeConfig(cwd, env, homedir) {
+  const configSources = readConfigSources(cwd, homedir);
+  return resolveVaultConfig(cwd, toStringOrEmpty(env.MEMORY_MASON_VAULT_PATH), configSources.configText, homedir, {
+    dotEnvText: configSources.dotEnvText,
+    globalConfigText: configSources.globalConfigText
+  });
+}
+
+function buildCaptureTimestamp() {
+  return {
+    today: new Date().toISOString().slice(0, 10),
+    timestamp: new Date().toISOString().slice(11, 19)
+  };
+}
+
+function buildNoisyToolList() {
+  return ['Read', 'Glob', 'LS', 'List', 'ls', 'read', 'glob'];
+}
+
+function shouldSkipToolPayload(payload, noisyTools) {
+  return payload.toolName === '' || noisyTools.includes(payload.toolName);
+}
+
+function buildRunPlan(rawStdin, runtime = {}) {
+  const env = resolveRuntimeEnv(runtime);
+  const fallbackCwd = resolveFallbackCwd(runtime);
+  const homedir = resolveRuntimeHomedir(runtime);
+  const input = parseJsonInput(rawStdin);
+  const platform = detectPlatform(input);
+  const payload = extractToolPayload(platform, input);
+  const captureTimestamp = buildCaptureTimestamp();
+
+  return {
+    env,
+    homedir,
+    cwd: resolveInputCwd(input, fallbackCwd),
+    payload,
+    today: captureTimestamp.today,
+    timestamp: captureTimestamp.timestamp,
+    noisyTools: buildNoisyToolList()
+  };
+}
+
+function persistToolUsage(plan) {
+  const resolvedConfig = resolveRuntimeConfig(plan.cwd, plan.env, plan.homedir);
+  const dailyEntry = buildDailyEntry(plan.payload.toolName, plan.payload.resultText, plan.timestamp);
+  appendToDaily(resolvedConfig.vaultPath, resolvedConfig.subfolder, plan.today, dailyEntry);
+}
+
+function buildErrorResult(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  return {
+    status: 0,
+    stdout: '',
+    stderr: message + '\n'
+  };
+}
+
 function run(rawStdin, runtime = {}) {
-  const env = runtime.env !== null && typeof runtime.env === 'object' ? runtime.env : process.env;
-  const fallbackCwd = typeof runtime.cwd === 'string' ? runtime.cwd : process.cwd();
-  const homedir = typeof runtime.homedir === 'string' ? runtime.homedir : os.homedir();
-
   try {
-    const input = parseJsonInput(rawStdin);
-    const platform = detectPlatform(input);
-    const payload = extractToolPayload(platform, input);
-    const noisyTools = ['Read', 'Glob', 'LS', 'List', 'ls', 'read', 'glob'];
+    const plan = buildRunPlan(rawStdin, runtime);
 
-    if (payload.toolName === '' || noisyTools.includes(payload.toolName)) {
+    if (shouldSkipToolPayload(plan.payload, plan.noisyTools)) {
       return { status: 0, stdout: '', stderr: '' };
     }
 
-    const cwd = toStringOrEmpty(input.cwd) !== '' ? toStringOrEmpty(input.cwd) : fallbackCwd;
-    const configText = readConfigText(cwd);
-    const dotEnvText = readDotEnvText(cwd);
-    const globalConfigText = readGlobalConfigText(homedir);
-    const resolvedConfig = resolveVaultConfig(cwd, toStringOrEmpty(env.MEMORY_MASON_VAULT_PATH), configText, homedir, {
-      dotEnvText,
-      globalConfigText
-    });
-
-    const today = new Date().toISOString().slice(0, 10);
-    const timestamp = new Date().toISOString().slice(11, 19);
-    const dailyEntry = buildDailyEntry(payload.toolName, payload.resultText, timestamp);
-    appendToDaily(resolvedConfig.vaultPath, resolvedConfig.subfolder, today, dailyEntry);
+    persistToolUsage(plan);
     return { status: 0, stdout: '', stderr: '' };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return {
-      status: 0,
-      stdout: '',
-      stderr: message + '\n'
-    };
+    return buildErrorResult(error);
   }
 }
 

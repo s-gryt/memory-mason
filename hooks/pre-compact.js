@@ -67,12 +67,89 @@ function resolveTranscriptPath(input) {
   return firstNonEmptyString([toStringOrEmpty(input.transcript_path), toStringOrEmpty(input.transcriptPath)]);
 }
 
-function run(rawStdin, runtime = {}) {
-  const env = runtime.env !== null && typeof runtime.env === 'object' ? runtime.env : process.env;
-  const fallbackCwd = typeof runtime.cwd === 'string' ? runtime.cwd : process.cwd();
-  const homedir = typeof runtime.homedir === 'string' ? runtime.homedir : os.homedir();
+function resolveRuntimeEnv(runtime) {
+  return runtime.env !== null && typeof runtime.env === 'object' ? runtime.env : process.env;
+}
 
-  if (toStringOrEmpty(env.MEMORY_MASON_INVOKED_BY) !== '') {
+function resolveFallbackCwd(runtime) {
+  return typeof runtime.cwd === 'string' ? runtime.cwd : process.cwd();
+}
+
+function resolveRuntimeHomedir(runtime) {
+  return typeof runtime.homedir === 'string' ? runtime.homedir : os.homedir();
+}
+
+function resolveInputCwd(input, fallbackCwd) {
+  const inputCwd = toStringOrEmpty(input.cwd);
+  return inputCwd !== '' ? inputCwd : fallbackCwd;
+}
+
+function readConfigSources(cwd, homedir) {
+  return {
+    configText: readConfigText(cwd),
+    dotEnvText: readDotEnvText(cwd),
+    globalConfigText: readGlobalConfigText(homedir)
+  };
+}
+
+function resolveRuntimeConfig(cwd, env, homedir) {
+  const configSources = readConfigSources(cwd, homedir);
+  return resolveVaultConfig(cwd, toStringOrEmpty(env.MEMORY_MASON_VAULT_PATH), configSources.configText, homedir, {
+    dotEnvText: configSources.dotEnvText,
+    globalConfigText: configSources.globalConfigText
+  });
+}
+
+function shouldSkipForInvoker(env) {
+  return toStringOrEmpty(env.MEMORY_MASON_INVOKED_BY) !== '';
+}
+
+function shouldSkipMissingTranscript(transcriptPath) {
+  return transcriptPath === '' || !fs.existsSync(transcriptPath);
+}
+
+function shouldSkipShortTranscript(fullTranscript) {
+  return fullTranscript.turnCount < 5;
+}
+
+function resolveSessionId(input) {
+  return firstNonEmptyString([toStringOrEmpty(input.session_id), toStringOrEmpty(input.sessionId), 'unknown']);
+}
+
+function buildCaptureTimestamp() {
+  return {
+    iso: new Date().toISOString(),
+    today: new Date().toISOString().slice(0, 10)
+  };
+}
+
+function buildDuplicateDecision(captureState, captureRecord) {
+  return isDuplicateCapture(captureState.lastCapture, captureRecord, DUPLICATE_CAPTURE_WINDOW_MS);
+}
+
+function persistCapture(resolvedConfig, today, sessionHeader, fullTranscript, captureState, captureRecord) {
+  appendToDaily(resolvedConfig.vaultPath, resolvedConfig.subfolder, today, sessionHeader + fullTranscript.markdown);
+  saveCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder, {
+    ...captureState,
+    lastCapture: captureRecord
+  });
+}
+
+function buildErrorResult(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  return {
+    status: 0,
+    stdout: '',
+    stderr: message + '\n'
+  };
+}
+
+function run(rawStdin, runtime = {}) {
+  const env = resolveRuntimeEnv(runtime);
+  const fallbackCwd = resolveFallbackCwd(runtime);
+  const homedir = resolveRuntimeHomedir(runtime);
+
+  if (shouldSkipForInvoker(env)) {
     return { status: 0, stdout: '', stderr: '' };
   }
 
@@ -80,53 +157,33 @@ function run(rawStdin, runtime = {}) {
     const input = parseJsonInput(rawStdin);
     const transcriptPath = resolveTranscriptPath(input);
 
-    if (transcriptPath === '' || !fs.existsSync(transcriptPath)) {
+    if (shouldSkipMissingTranscript(transcriptPath)) {
       return { status: 0, stdout: '', stderr: '' };
     }
 
     const transcriptContent = fs.readFileSync(transcriptPath, 'utf-8');
     const fullTranscript = buildFullTranscript(transcriptContent);
 
-    if (fullTranscript.turnCount < 5) {
+    if (shouldSkipShortTranscript(fullTranscript)) {
       return { status: 0, stdout: '', stderr: '' };
     }
 
-    const cwd = toStringOrEmpty(input.cwd) !== '' ? toStringOrEmpty(input.cwd) : fallbackCwd;
-    const configText = readConfigText(cwd);
-    const dotEnvText = readDotEnvText(cwd);
-    const globalConfigText = readGlobalConfigText(homedir);
-    const resolvedConfig = resolveVaultConfig(cwd, toStringOrEmpty(env.MEMORY_MASON_VAULT_PATH), configText, homedir, {
-      dotEnvText,
-      globalConfigText
-    });
-
-    const today = new Date().toISOString().slice(0, 10);
-    const sessionId = firstNonEmptyString([
-      toStringOrEmpty(input.session_id),
-      toStringOrEmpty(input.sessionId),
-      'unknown'
-    ]);
+    const cwd = resolveInputCwd(input, fallbackCwd);
+    const resolvedConfig = resolveRuntimeConfig(cwd, env, homedir);
+    const captureTimestamp = buildCaptureTimestamp();
+    const sessionId = resolveSessionId(input);
     const captureState = loadCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder);
     const captureRecord = buildCaptureRecord(sessionId, 'pre-compact', fullTranscript.markdown, Date.now());
 
-    if (isDuplicateCapture(captureState.lastCapture, captureRecord, DUPLICATE_CAPTURE_WINDOW_MS)) {
+    if (buildDuplicateDecision(captureState, captureRecord)) {
       return { status: 0, stdout: '', stderr: '' };
     }
 
-    const sessionHeader = buildSessionHeader(sessionId, 'pre-compact', new Date().toISOString());
-    appendToDaily(resolvedConfig.vaultPath, resolvedConfig.subfolder, today, sessionHeader + fullTranscript.markdown);
-    saveCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder, {
-      ...captureState,
-      lastCapture: captureRecord
-    });
+    const sessionHeader = buildSessionHeader(sessionId, 'pre-compact', captureTimestamp.iso);
+    persistCapture(resolvedConfig, captureTimestamp.today, sessionHeader, fullTranscript, captureState, captureRecord);
     return { status: 0, stdout: '', stderr: '' };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return {
-      status: 0,
-      stdout: '',
-      stderr: message + '\n'
-    };
+    return buildErrorResult(error);
   }
 }
 

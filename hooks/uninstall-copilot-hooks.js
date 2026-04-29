@@ -7,28 +7,44 @@ const path = require('path');
 
 const hookFiles = ['session-start.json', 'user-prompt-submit.json', 'post-tool-use.json', 'pre-compact.json', 'stop.json'];
 
+function reduceArgState(state, arg, index, args, safeCwd) {
+  if (state.skipNext) {
+    return {
+      parsed: state.parsed,
+      skipNext: false
+    };
+  }
+
+  if (arg === '--workspace' || arg === '-w') {
+    const workspacePath = args[index + 1];
+    if (typeof workspacePath !== 'string' || workspacePath === '') {
+      throw new Error(arg + ' requires a workspace path');
+    }
+
+    return {
+      parsed: {
+        ...state.parsed,
+        workspacePath: path.resolve(safeCwd, workspacePath)
+      },
+      skipNext: true
+    };
+  }
+
+  throw new Error('unknown argument: ' + arg);
+}
+
 function parseArgs(argv, cwd) {
   const safeArgv = Array.isArray(argv) ? argv : [];
   const safeCwd = typeof cwd === 'string' && cwd !== '' ? cwd : process.cwd();
-  const parsed = {};
-
-  for (let index = 0; index < safeArgv.length; index += 1) {
-    const arg = safeArgv[index];
-
-    if (arg === '--workspace' || arg === '-w') {
-      const workspacePath = safeArgv[index + 1];
-      if (typeof workspacePath !== 'string' || workspacePath === '') {
-        throw new Error(arg + ' requires a workspace path');
-      }
-      parsed.workspacePath = path.resolve(safeCwd, workspacePath);
-      index += 1;
-      continue;
+  const finalState = safeArgv.reduce(
+    (state, arg, index, args) => reduceArgState(state, arg, index, args, safeCwd),
+    {
+      parsed: {},
+      skipNext: false
     }
+  );
 
-    throw new Error('unknown argument: ' + arg);
-  }
-
-  return parsed;
+  return finalState.parsed;
 }
 
 function resolveTargetDir(runtime = {}) {

@@ -181,6 +181,136 @@ function findCopilotCliSessionContentOrEmpty(sessionStateDir, targetCwd) {
   }
 }
 
+function collectAssistantTurnContents(turns, startIndex) {
+  return turns
+    .slice(Math.max(0, startIndex))
+    .filter(
+      (turn) =>
+        turn !== null &&
+        typeof turn === 'object' &&
+        turn.role === 'assistant' &&
+        typeof turn.content === 'string' &&
+        turn.content !== ''
+    )
+    .map((turn) => turn.content);
+}
+
+function getLastAssistantTurnContent(turns) {
+  const assistantContents = collectAssistantTurnContents(turns, 0);
+  return assistantContents.length > 0 ? assistantContents[assistantContents.length - 1] : '';
+}
+
+function resolveTranscriptPath(input) {
+  return firstNonEmptyString([
+    toStringOrEmpty(input.transcript_path),
+    toStringOrEmpty(input.transcriptPath)
+  ]);
+}
+
+function resolveSessionId(input) {
+  return firstNonEmptyString([toStringOrEmpty(input.session_id), toStringOrEmpty(input.sessionId)]);
+}
+
+function resolveLastAssistantMessage(input) {
+  return firstNonEmptyString([
+    toStringOrEmpty(input.last_assistant_message),
+    toStringOrEmpty(input.lastAssistantMessage)
+  ]);
+}
+
+function resolveCodexTranscriptPath(homedir) {
+  return path.join(homedir, '.codex', 'sessions');
+}
+
+function resolveCopilotTranscriptPath(homedir) {
+  return path.join(homedir, '.copilot', 'session-state');
+}
+
+function resolveCodexTranscriptContent(platform, transcriptFromPath, homedir, sessionIdRaw) {
+  if (platform !== 'codex' || transcriptFromPath !== '') {
+    return '';
+  }
+
+  return findCodexSessionContent(resolveCodexTranscriptPath(homedir), sessionIdRaw);
+}
+
+function resolveCopilotTranscriptContent(platform, homedir, cwd) {
+  if (platform !== 'copilot-cli') {
+    return '';
+  }
+
+  return findCopilotCliSessionContentOrEmpty(resolveCopilotTranscriptPath(homedir), cwd);
+}
+
+function resolveTranscriptContent(platform, transcriptFromPath, codexContent, copilotCliContent) {
+  if (platform === 'copilot-cli') {
+    return copilotCliContent;
+  }
+
+  if (transcriptFromPath !== '') {
+    return transcriptFromPath;
+  }
+
+  return codexContent;
+}
+
+function discoverTranscriptContent(platform, transcriptFromPath, homedir, sessionIdRaw, cwd) {
+  const codexContent = resolveCodexTranscriptContent(platform, transcriptFromPath, homedir, sessionIdRaw);
+  const copilotCliContent = resolveCopilotTranscriptContent(platform, homedir, cwd);
+  return resolveTranscriptContent(platform, transcriptFromPath, codexContent, copilotCliContent);
+}
+
+function parseTranscriptTurns(transcriptContent) {
+  if (transcriptContent === '') {
+    return [];
+  }
+
+  return parseJsonlTranscript(transcriptContent);
+}
+
+function buildStopAssistantSelection(turns, lastCount, lastAssistantMessage) {
+  const stopStartIndex = lastCount > 0 ? lastCount : Math.max(0, turns.length - 1);
+  const assistantContents = collectAssistantTurnContents(turns, stopStartIndex);
+  const lastTranscriptAssistantContent = getLastAssistantTurnContent(turns);
+  const shouldAppendPayloadAssistant =
+    lastAssistantMessage !== '' &&
+    !assistantContents.includes(lastAssistantMessage) &&
+    lastTranscriptAssistantContent !== lastAssistantMessage;
+  const selectedTurns = shouldAppendPayloadAssistant
+    ? assistantContents.concat([lastAssistantMessage])
+    : assistantContents;
+
+  return {
+    selectedTurns,
+    shouldAppendPayloadAssistant
+  };
+}
+
+function calculateNextTurnCount(shouldAppendPayloadAssistant, turns, lastCount) {
+  if (!shouldAppendPayloadAssistant) {
+    return Math.max(lastCount, turns.length);
+  }
+
+  if (turns.length > 0) {
+    return Math.max(turns.length + 1, lastCount + 1);
+  }
+
+  return Math.max(lastCount + 1, 2);
+}
+
+function writeAssistantTurns(vaultPath, subfolder, assistantContents) {
+  if (assistantContents.length < 1) {
+    return;
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
+  const timestamp = new Date().toISOString().slice(11, 19);
+
+  assistantContents.forEach((content) => {
+    appendToDaily(vaultPath, subfolder, today, buildAssistantReplyEntry(content, timestamp));
+  });
+}
+
 function run(rawStdin, runtime = {}) {
   const env = runtime.env !== null && typeof runtime.env === 'object' ? runtime.env : process.env;
   const fallbackCwd = typeof runtime.cwd === 'string' ? runtime.cwd : process.cwd();
@@ -207,63 +337,38 @@ function run(rawStdin, runtime = {}) {
       globalConfigText
     });
 
-    const transcriptPath = firstNonEmptyString([
-      toStringOrEmpty(input.transcript_path),
-      toStringOrEmpty(input.transcriptPath)
-    ]);
+    const transcriptPath = resolveTranscriptPath(input);
     const transcriptFromPath = readTranscriptFromPath(transcriptPath);
-    const sessionIdRaw = firstNonEmptyString([
-      toStringOrEmpty(input.session_id),
-      toStringOrEmpty(input.sessionId)
-    ]);
-
-    const codexContent =
-      platform === 'codex' && transcriptFromPath === ''
-        ? findCodexSessionContent(path.join(homedir, '.codex', 'sessions'), sessionIdRaw)
-        : '';
-
-    const copilotCliContent =
-      platform === 'copilot-cli'
-        ? findCopilotCliSessionContentOrEmpty(path.join(homedir, '.copilot', 'session-state'), cwd)
-        : '';
-
-    const transcriptContent =
-      platform === 'copilot-cli'
-        ? copilotCliContent
-        : transcriptFromPath !== ''
-          ? transcriptFromPath
-          : codexContent;
-
-    if (transcriptContent === '') {
-      return { status: 0, stdout: '', stderr: '' };
-    }
+    const sessionIdRaw = resolveSessionId(input);
+    const transcriptContent = discoverTranscriptContent(
+      platform,
+      transcriptFromPath,
+      homedir,
+      sessionIdRaw,
+      cwd
+    );
 
     if (normalizedHookEventName === 'stop') {
       if (sessionIdRaw === '') {
         return { status: 0, stdout: '', stderr: '' };
       }
 
-      const turns = parseJsonlTranscript(transcriptContent);
+      const turns = parseTranscriptTurns(transcriptContent);
       const captureState = loadCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder);
       const lastCount = getTranscriptTurnCount(captureState, sessionIdRaw);
+      const lastAssistantMessage = resolveLastAssistantMessage(input);
+      const stopSelection = buildStopAssistantSelection(turns, lastCount, lastAssistantMessage);
+      const stopAssistantContents = stopSelection.selectedTurns;
 
-      if (lastCount > 0) {
-        const assistantTurns = turns.slice(lastCount).filter((turn) => turn.role === 'assistant');
-        const today = new Date().toISOString().slice(0, 10);
-        const timestamp = new Date().toISOString().slice(11, 19);
+      writeAssistantTurns(resolvedConfig.vaultPath, resolvedConfig.subfolder, stopAssistantContents);
 
-        assistantTurns.forEach((turn) => {
-          appendToDaily(
-            resolvedConfig.vaultPath,
-            resolvedConfig.subfolder,
-            today,
-            buildAssistantReplyEntry(turn.content, timestamp)
-          );
-        });
-      }
-
-      const updatedState = setTranscriptTurnCount(captureState, sessionIdRaw, turns.length);
+      const nextTurnCount = calculateNextTurnCount(stopSelection.shouldAppendPayloadAssistant, turns, lastCount);
+      const updatedState = setTranscriptTurnCount(captureState, sessionIdRaw, nextTurnCount);
       saveCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder, updatedState);
+      return { status: 0, stdout: '', stderr: '' };
+    }
+
+    if (transcriptContent === '') {
       return { status: 0, stdout: '', stderr: '' };
     }
 
@@ -331,6 +436,8 @@ module.exports = {
   findCodexSessionContent,
   findCopilotCliSessionContent,
   findCopilotCliSessionContentOrEmpty,
+  collectAssistantTurnContents,
+  getLastAssistantTurnContent,
   readDotEnvText,
   readGlobalConfigText,
   run,

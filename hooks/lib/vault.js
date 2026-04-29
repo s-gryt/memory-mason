@@ -44,6 +44,15 @@ const takeLastLines = (text, maxLines) => {
   return safeText.split('\n').slice(-maxLines).join('\n');
 };
 
+const renderWithPlaceholder = (valueText, placeholderText) => {
+  const safeValueText = assertString('valueText', valueText);
+  const safePlaceholderText = assertNonEmptyString('placeholderText', placeholderText);
+  if (safeValueText === '') {
+    return safePlaceholderText;
+  }
+  return safeValueText;
+};
+
 const buildAdditionalContext = (indexText, recentLogText) => {
   const safeIndexText = assertString('indexText', indexText);
   const safeRecentLogText = assertString('recentLogText', recentLogText);
@@ -53,8 +62,8 @@ const buildAdditionalContext = (indexText, recentLogText) => {
     day: 'numeric',
     year: 'numeric'
   });
-  const renderedIndex = safeIndexText === '' ? '(empty - no articles compiled yet)' : safeIndexText;
-  const renderedRecentLog = safeRecentLogText === '' ? '(no recent daily log)' : safeRecentLogText;
+  const renderedIndex = renderWithPlaceholder(safeIndexText, '(empty - no articles compiled yet)');
+  const renderedRecentLog = renderWithPlaceholder(safeRecentLogText, '(no recent daily log)');
   return (
     '## Today\n' +
     today +
