@@ -27,12 +27,12 @@ If no source is found, hooks throw. Default subfolder is `ai-knowledge` when onl
 | File | Event | What it does |
 |:-----|:------|:-------------|
 | `session-start.js` | SessionStart | Injects KB context from compiled index + recent daily log |
-| `user-prompt-submit.js` | UserPromptSubmit, UserPromptExpansion | Appends user prompts and slash-command metadata to daily logs |
+| `user-prompt-submit.js` | UserPromptSubmit | Appends user prompts to daily logs |
 | `post-tool-use.js` | PostToolUse | Appends tool results after meaningful tool calls |
 | `pre-compact.js` | PreCompact | Captures transcript excerpt before context compaction |
-| `session-end.js` | SessionEnd / Stop | Captures transcript excerpt at session end |
+| `session-end.js` | SessionEnd / Stop | Captures full transcript at session end |
 
-UserPromptExpansion (Claude Code only) reuses `user-prompt-submit.js` and adds `expansion_type`, `command_name`, `command_args`, `command_source`.
+`user-prompt-submit.js` still understands `UserPromptExpansion` input, but Memory Mason does not auto-register that event in Claude plugin or installer configs because current Claude builds can reject the key during plugin validation.
 
 ## Install
 
@@ -59,8 +59,7 @@ bash install.sh --agent copilot
 bash install.sh --agent all
 ```
 
-<details>
-<summary><strong>Direct Node installer (manual path)</strong></summary>
+#### Direct Node installer (manual path)
 
 ```bash
 node hooks/install-copilot-hooks.js                            # user-level ~/.copilot/hooks
@@ -73,8 +72,6 @@ Remove:
 node hooks/uninstall-copilot-hooks.js
 node hooks/uninstall-copilot-hooks.js --workspace /path/to/repo
 ```
-
-</details>
 
 ### Codex
 

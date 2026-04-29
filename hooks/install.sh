@@ -36,7 +36,7 @@ REPO_URL="https://raw.githubusercontent.com/s-gryt/memory-mason/main/hooks"
 
 HOOK_RUNTIME_FILES=("session-start.js" "user-prompt-submit.js" "post-tool-use.js" "pre-compact.js" "session-end.js")
 LIB_FILES=("config.js" "writer.js" "vault.js" "prompt.js" "transcript.js" "capture-state.js")
-HOOK_EVENTS=("SessionStart" "UserPromptSubmit" "UserPromptExpansion" "PostToolUse" "PreCompact" "SessionEnd" "Stop")
+HOOK_EVENTS=("SessionStart" "UserPromptSubmit" "PostToolUse" "PreCompact" "SessionEnd" "Stop")
 
 SCRIPT_DIR=""
 if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
@@ -84,7 +84,7 @@ hooks_wired() {
     const settingsPath = process.env.MEMORY_MASON_SETTINGS;
     const rawSettings = fs.readFileSync(settingsPath, 'utf8').replace(/^\\uFEFF/, '');
     const settings = JSON.parse(rawSettings);
-    const requiredEvents = ['SessionStart', 'UserPromptSubmit', 'UserPromptExpansion', 'PostToolUse', 'PreCompact', 'SessionEnd', 'Stop'];
+    const requiredEvents = ['SessionStart', 'UserPromptSubmit', 'PostToolUse', 'PreCompact', 'SessionEnd', 'Stop'];
     const hasHook = (eventName) =>
       Array.isArray(settings.hooks && settings.hooks[eventName]) &&
       settings.hooks[eventName].some((entry) =>
@@ -244,7 +244,6 @@ MEMORY_MASON_SETTINGS="$SETTINGS" MEMORY_MASON_HOOKS_DIR="$HOOKS_DIR" node -e "
   const definitions = [
     { eventName: 'SessionStart', fileName: 'session-start.js', timeout: 10 },
     { eventName: 'UserPromptSubmit', fileName: 'user-prompt-submit.js', timeout: 5 },
-    { eventName: 'UserPromptExpansion', fileName: 'user-prompt-submit.js', timeout: 5 },
     { eventName: 'PostToolUse', fileName: 'post-tool-use.js', timeout: 5 },
     { eventName: 'PreCompact', fileName: 'pre-compact.js', timeout: 15 },
     { eventName: 'SessionEnd', fileName: 'session-end.js', timeout: 15 },
@@ -304,7 +303,6 @@ echo ""
 echo "What's installed:"
 echo "  - SessionStart hook: restores knowledge base context every session"
 echo "  - UserPromptSubmit hook: captures every prompt to daily log"
-echo "  - UserPromptExpansion hook: captures slash-command metadata before expansion"
 echo "  - PostToolUse hook: captures tool results to daily log"
 echo "  - PreCompact hook: saves conversation transcript before compaction"
 echo "  - SessionEnd hook: saves conversation transcript at session end"

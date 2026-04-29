@@ -42,10 +42,7 @@ powershell -File install.ps1 -Agent copilot  # or: powershell -File hooks\instal
 
 Copies runtime to `~/.copilot/hooks/memory-mason/`, generates workspace hook JSON, creates `~/.memory-mason/config.json`.
 
-<details>
-<summary><strong>Workspace-level install</strong></summary>
-
-Target a specific project so hook JSON lives in that workspace:
+#### Workspace-level install
 
 ```bash
 bash install.sh --agent copilot --workspace /path/to/project
@@ -57,12 +54,9 @@ Remove workspace hooks:
 node hooks/uninstall-copilot-hooks.js --workspace /path/to/project
 ```
 
-</details>
+#### Direct Node installer (manual path)
 
-<details>
-<summary><strong>Direct Node installer (manual path)</strong></summary>
-
-The shell/PowerShell wrappers above are preferred. If you need lower-level control:
+Shell/PowerShell wrappers above are preferred. For lower-level control:
 
 ```bash
 node hooks/install-copilot-hooks.js                            # user-level
@@ -74,8 +68,6 @@ Remove:
 ```bash
 node hooks/uninstall-copilot-hooks.js
 ```
-
-</details>
 
 > **Why Node?** Copilot hooks are JSON config entries that run shell commands. Memory Mason's hook JSON calls `node ".../session-start.js"` and related `.js` entrypoints. Node is a Memory Mason runtime dependency, not a Copilot requirement.
 
@@ -172,12 +164,12 @@ MEMORY_MASON_SUBFOLDER=memory-mason
 |:------|:-----------:|:-------:|:-----:|
 | SessionStart | Y | Y | Y |
 | UserPromptSubmit | Y | Y | Y |
-| UserPromptExpansion | Y | — | — |
+| UserPromptExpansion | — | — | — |
 | PostToolUse | Y | Y | Y |
 | PreCompact | Y | Y | — |
 | SessionEnd / Stop | Y | Y | Y |
 
-UserPromptExpansion is Claude Code only. It captures slash-command metadata (`expansion_type`, `command_name`, `command_args`, `command_source`) before the host expands the command. Both UserPromptSubmit and UserPromptExpansion reuse the same `user-prompt-submit.js` runtime.
+`user-prompt-submit.js` can parse `UserPromptExpansion`, but Memory Mason does not auto-register that Claude hook because current Claude plugin validation can reject the event key.
 
 ## Platform Manifests
 

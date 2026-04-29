@@ -69,7 +69,7 @@ const fs = require('fs');
 const settingsPath = process.env.MEMORY_MASON_SETTINGS;
 const rawSettings = fs.readFileSync(settingsPath, 'utf8').replace(/^\uFEFF/, '');
 const settings = JSON.parse(rawSettings);
-const requiredEvents = ['SessionStart', 'UserPromptSubmit', 'UserPromptExpansion', 'PostToolUse', 'PreCompact', 'SessionEnd', 'Stop'];
+const requiredEvents = ['SessionStart', 'UserPromptSubmit', 'PostToolUse', 'PreCompact', 'SessionEnd', 'Stop'];
 const hasHook = (eventName) =>
   Array.isArray(settings.hooks && settings.hooks[eventName]) &&
   settings.hooks[eventName].some((entry) =>
@@ -235,7 +235,6 @@ const existingHooks =
 const definitions = [
   { eventName: 'SessionStart', fileName: 'session-start.js', timeout: 10 },
   { eventName: 'UserPromptSubmit', fileName: 'user-prompt-submit.js', timeout: 5 },
-  { eventName: 'UserPromptExpansion', fileName: 'user-prompt-submit.js', timeout: 5 },
   { eventName: 'PostToolUse', fileName: 'post-tool-use.js', timeout: 5 },
   { eventName: 'PreCompact', fileName: 'pre-compact.js', timeout: 15 },
   { eventName: 'SessionEnd', fileName: 'session-end.js', timeout: 15 },
@@ -300,7 +299,6 @@ Write-Host ""
 Write-Host "What's installed:"
 Write-Host "  - SessionStart hook: restores knowledge base context every session"
 Write-Host "  - UserPromptSubmit hook: captures every prompt to daily log"
-Write-Host "  - UserPromptExpansion hook: captures slash-command metadata before expansion"
 Write-Host "  - PostToolUse hook: captures tool results to daily log"
 Write-Host "  - PreCompact hook: saves conversation transcript before compaction"
 Write-Host "  - SessionEnd hook: saves conversation transcript at session end"

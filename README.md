@@ -69,8 +69,7 @@ npx skills add s-gryt/memory-mason              # any host
 | **Codex marketplace** | Open `/plugins`, search `Memory Mason`, install |
 | **Gemini CLI** | `gemini extensions install https://github.com/s-gryt/memory-mason` |
 
-<details>
-<summary><strong>From source / development</strong></summary>
+### From source / development
 
 ```bash
 bash install.sh --agent claude
@@ -98,8 +97,6 @@ Uninstall Copilot hooks:
 node hooks/uninstall-copilot-hooks.js
 node hooks/uninstall-copilot-hooks.js --workspace /path/to/project
 ```
-
-</details>
 
 ## Commands
 
@@ -156,12 +153,12 @@ Hooks fire on every tool call, prompt, and session event. They append to `daily/
 |:------|:-----------:|:-------:|:-----:|
 | SessionStart | Y | Y | Y |
 | UserPromptSubmit | Y | Y | Y |
-| UserPromptExpansion | Y | — | — |
+| UserPromptExpansion | — | — | — |
 | PostToolUse | Y | Y | Y |
 | PreCompact | Y | Y | — |
 | SessionEnd / Stop | Y | Y | Y |
 
-UserPromptExpansion is Claude Code only. It captures slash-command metadata (`expansion_type`, `command_name`, `command_args`, `command_source`) before the host expands slash commands.
+`user-prompt-submit.js` can parse `UserPromptExpansion`, but Memory Mason does not auto-register that Claude hook because current Claude plugin validation can reject the event key.
 
 ## Packaging
 
