@@ -6,39 +6,46 @@ Cross-LLM Obsidian sync. Hook-based capture + reusable KB skills across Claude C
 
 ### Claude Code
 
+**Plugin marketplace (recommended):**
+
+```
+/plugin marketplace add s-gryt/memory-mason
+/plugin install memory-mason@memory-mason
+```
+
+Restart Claude Code. Runtime installs to `~/.claude/plugins/marketplaces/memory-mason/`.
+
+**Shell installer (alternative):**
+
 ```bash
+# macOS / Linux
 bash <(curl -fsSL https://raw.githubusercontent.com/s-gryt/memory-mason/main/install.sh) --agent claude
 ```
 
 ```powershell
+# Windows PowerShell
 & ([scriptblock]::Create((iwr https://raw.githubusercontent.com/s-gryt/memory-mason/main/install.ps1 -UseBasicParsing).Content)) -Agent claude
 ```
 
-Or from a local clone:
+The shell installer copies runtime to `~/.claude/hooks/memory-mason/`, wires 6 events in `~/.claude/settings.json`, and creates `~/.memory-mason/config.json`. Restart Claude Code after install.
+
+**From a local clone:**
 
 ```bash
-bash install.sh --agent claude        # or: bash hooks/install.sh
-powershell -File install.ps1 -Agent claude  # or: powershell -File hooks\install.ps1
+bash install.sh --agent claude
+powershell -File install.ps1 -Agent claude
 ```
-
-Copies runtime to `~/.claude/hooks/memory-mason/`, wires 6 events in `~/.claude/settings.json`, creates `~/.memory-mason/config.json`. Restart Claude Code after install.
 
 ### GitHub Copilot
 
 ```bash
+# macOS / Linux
 bash <(curl -fsSL https://raw.githubusercontent.com/s-gryt/memory-mason/main/install.sh) --agent copilot
 ```
 
 ```powershell
+# Windows PowerShell
 & ([scriptblock]::Create((iwr https://raw.githubusercontent.com/s-gryt/memory-mason/main/install.ps1 -UseBasicParsing).Content)) -Agent copilot
-& ([scriptblock]::Create((iwr https://raw.githubusercontent.com/s-gryt/memory-mason/main/install.ps1 -UseBasicParsing).Content)) -Agent copilot -Force
-```
-
-Or from a local clone:
-
-```bash
-bash install.sh --agent copilot       # or: bash hooks/install-copilot-hooks.sh
-powershell -File install.ps1 -Agent copilot  # or: powershell -File hooks\install-copilot-hooks.ps1
 ```
 
 Copies runtime to `~/.copilot/hooks/memory-mason/`, generates workspace hook JSON, creates `~/.memory-mason/config.json`.
@@ -49,6 +56,13 @@ GitHub Copilot install is split:
 - Memory Mason installer installs capture hooks + vault config
 
 Run both if you want both commands and automatic capture.
+
+**From a local clone:**
+
+```bash
+bash install.sh --agent copilot
+powershell -File install.ps1 -Agent copilot
+```
 
 #### Workspace-level install
 
@@ -81,26 +95,39 @@ node hooks/uninstall-copilot-hooks.js
 
 ### Codex
 
+**Marketplace:** Open `/plugins`, search `Memory Mason`, install.
+
+**Shell installer:**
+
 ```bash
+# macOS / Linux
 bash <(curl -fsSL https://raw.githubusercontent.com/s-gryt/memory-mason/main/install.sh) --agent codex
 ```
 
-Or from the Codex marketplace: open `/plugins`, search `Memory Mason`, install.
+```powershell
+# Windows PowerShell
+& ([scriptblock]::Create((iwr https://raw.githubusercontent.com/s-gryt/memory-mason/main/install.ps1 -UseBasicParsing).Content)) -Agent codex
+```
 
-### All agents at once
+### All Agents at Once
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/s-gryt/memory-mason/main/install.sh) --agent all
 ```
 
-### Skills-only hosts
+```powershell
+& ([scriptblock]::Create((iwr https://raw.githubusercontent.com/s-gryt/memory-mason/main/install.ps1 -UseBasicParsing).Content)) -Agent all
+```
 
-Cursor, Windsurf, Cline, and other Agent Skills hosts get KB commands without hooks:
+### Skills-Only Hosts
+
+Cursor, Windsurf, Cline, and other [Agent Skills](https://agentskills.io) hosts get KB commands without hooks:
 
 ```bash
 npx skills add s-gryt/memory-mason -a cursor -s '*' -y
 npx skills add s-gryt/memory-mason -a windsurf -s '*' -y
 npx skills add s-gryt/memory-mason -a cline -s '*' -y
+npx skills add s-gryt/memory-mason              # any host
 ```
 
 `npx skills` discovers skills from [skills/](../skills) and installs them into the target agent. No `.github/skills/` copies needed.
@@ -110,6 +137,27 @@ npx skills add s-gryt/memory-mason -a cline -s '*' -y
 ```bash
 gemini extensions install https://github.com/s-gryt/memory-mason
 ```
+
+### Installer Flags
+
+| Flag | Effect |
+|:-----|:-------|
+| `--agent <name>` | Skip interactive prompt (`claude`, `copilot`, `codex`, `all`) |
+| `--workspace <path>` | Install Copilot/Codex hooks at workspace level |
+| `-Force` (PowerShell) | Reinstall even if already installed |
+
+> Remote PowerShell parameters do not flow through `iwr ... | iex`; use the `scriptblock` form shown above.
+
+### What Gets Installed
+
+| Agent | What the installer does | Runtime location |
+|:------|:------------------------|:-----------------|
+| **Claude Code** (plugin) | Registers in plugin marketplace | `~/.claude/plugins/marketplaces/memory-mason/` |
+| **Claude Code** (shell) | Wires 6 hook events in `~/.claude/settings.json` | `~/.claude/hooks/memory-mason/` |
+| **GitHub Copilot** | Generates workspace hook JSON + copies runtime | `~/.copilot/hooks/memory-mason/` |
+| **Codex** | Writes `.codex/hooks.json` + copies runtime | `~/.codex/hooks/memory-mason/` |
+| **Cursor** | Skills only (no hook system) | `npx skills add` |
+| **Windsurf** | Skills only (no hook system) | `npx skills add` |
 
 ## Runtime Model
 
