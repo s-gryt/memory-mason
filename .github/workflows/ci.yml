@@ -46,7 +46,12 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Sync manifest versions
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: node ../scripts/version-sync.mjs sync
+
       - name: Check manifest version drift
+        if: github.event_name == 'pull_request'
         run: node ../scripts/version-sync.mjs check
 
       - name: Install hook dependencies
@@ -135,6 +140,9 @@ jobs:
           pathlib.Path('.github/copilot-instructions.md').write_text(updated, encoding='utf-8')
           PYEOF
 
+      - name: Sync manifest versions
+        run: node scripts/version-sync.mjs sync
+
       - name: Commit and push if changed
         run: |
           git add \
@@ -145,7 +153,12 @@ jobs:
             .clinerules/memory-mason.md \
             .cursor/rules/memory-mason.mdc \
             .windsurf/rules/memory-mason.md \
-            .github/copilot-instructions.md
+            .github/copilot-instructions.md \
+            .claude-plugin/plugin.json \
+            gemini-extension.json \
+            plugins/memory-mason/.codex-plugin/plugin.json \
+            hooks/package.json \
+            hooks/package-lock.json
           git diff --staged --quiet && exit 0
           git commit -m "chore: sync skills to agent locations [skip ci]"
           git push

@@ -5,10 +5,17 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { parseJsonInput, detectPlatform, resolveVaultConfig } = require('./lib/config');
-const { buildTranscriptExcerpt } = require('./lib/transcript');
-const { buildSessionHeader } = require('./lib/vault');
+const { buildFullTranscript, parseJsonlTranscript } = require('./lib/transcript');
+const { buildSessionHeader, buildAssistantReplyEntry } = require('./lib/vault');
 const { appendToDaily } = require('./lib/writer');
-const { loadCaptureState, saveCaptureState, buildCaptureRecord, isDuplicateCapture } = require('./lib/capture-state');
+const {
+  loadCaptureState,
+  saveCaptureState,
+  buildCaptureRecord,
+  isDuplicateCapture,
+  getTranscriptTurnCount,
+  setTranscriptTurnCount
+} = require('./lib/capture-state');
 
 const DUPLICATE_CAPTURE_WINDOW_MS = 60000;
 
@@ -37,6 +44,12 @@ function firstNonEmptyString(values) {
   }
   const match = values.find((value) => typeof value === 'string' && value !== '');
   return typeof match === 'string' ? match : '';
+}
+
+function normalizeHookEventName(eventName) {
+  return toStringOrEmpty(eventName)
+    .toLowerCase()
+    .replace(/[\s_-]/g, '');
 }
 
 function readConfigText(cwd) {
@@ -180,6 +193,11 @@ function run(rawStdin, runtime = {}) {
   try {
     const input = parseJsonInput(rawStdin);
     const platform = detectPlatform(input);
+    const hookEventName = firstNonEmptyString([
+      toStringOrEmpty(input.hookEventName),
+      toStringOrEmpty(input.hook_event_name)
+    ]);
+    const normalizedHookEventName = normalizeHookEventName(hookEventName);
     const cwd = firstNonEmptyString([toStringOrEmpty(input.cwd), fallbackCwd]);
     const configText = readConfigText(cwd);
     const dotEnvText = readDotEnvText(cwd);
@@ -220,8 +238,37 @@ function run(rawStdin, runtime = {}) {
       return { status: 0, stdout: '', stderr: '' };
     }
 
-    const excerpt = buildTranscriptExcerpt(transcriptContent, 30, 15000);
-    if (excerpt.turnCount < 1) {
+    if (normalizedHookEventName === 'stop') {
+      if (sessionIdRaw === '') {
+        return { status: 0, stdout: '', stderr: '' };
+      }
+
+      const turns = parseJsonlTranscript(transcriptContent);
+      const captureState = loadCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder);
+      const lastCount = getTranscriptTurnCount(captureState, sessionIdRaw);
+
+      if (lastCount > 0) {
+        const assistantTurns = turns.slice(lastCount).filter((turn) => turn.role === 'assistant');
+        const today = new Date().toISOString().slice(0, 10);
+        const timestamp = new Date().toISOString().slice(11, 19);
+
+        assistantTurns.forEach((turn) => {
+          appendToDaily(
+            resolvedConfig.vaultPath,
+            resolvedConfig.subfolder,
+            today,
+            buildAssistantReplyEntry(turn.content, timestamp)
+          );
+        });
+      }
+
+      const updatedState = setTranscriptTurnCount(captureState, sessionIdRaw, turns.length);
+      saveCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder, updatedState);
+      return { status: 0, stdout: '', stderr: '' };
+    }
+
+    const fullTranscript = buildFullTranscript(transcriptContent);
+    if (fullTranscript.turnCount < 1) {
       return { status: 0, stdout: '', stderr: '' };
     }
 
@@ -229,14 +276,14 @@ function run(rawStdin, runtime = {}) {
     const sessionId = firstNonEmptyString([sessionIdRaw, 'unknown']);
     const source = firstNonEmptyString([toStringOrEmpty(input.source), platform]);
     const captureState = loadCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder);
-    const captureRecord = buildCaptureRecord(sessionId, source, excerpt.markdown, Date.now());
+    const captureRecord = buildCaptureRecord(sessionId, source, fullTranscript.markdown, Date.now());
 
     if (isDuplicateCapture(captureState.lastCapture, captureRecord, DUPLICATE_CAPTURE_WINDOW_MS)) {
       return { status: 0, stdout: '', stderr: '' };
     }
 
     const sessionHeader = buildSessionHeader(sessionId, source, new Date().toISOString());
-    appendToDaily(resolvedConfig.vaultPath, resolvedConfig.subfolder, today, sessionHeader + excerpt.markdown);
+    appendToDaily(resolvedConfig.vaultPath, resolvedConfig.subfolder, today, sessionHeader + fullTranscript.markdown);
     saveCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder, {
       ...captureState,
       lastCapture: captureRecord

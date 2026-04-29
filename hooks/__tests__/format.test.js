@@ -5,6 +5,7 @@ const {
   buildAdditionalContext,
   truncateContext,
   buildDailyEntry,
+  buildAssistantReplyEntry,
   buildSessionHeader,
   buildDailyHeader,
   takeLastLines,
@@ -45,13 +46,13 @@ describe('buildDailyEntry', () => {
     expect(buildDailyEntry('Write', 'some result', '14:30:00')).toBe('\n**[14:30:00] Write**\nsome result\n');
   });
 
-  it('truncates resultText to 500 chars', () => {
+  it('preserves full resultText without truncation', () => {
     const resultText = 'a'.repeat(600);
     const entry = buildDailyEntry('Write', resultText, '14:30:00');
     const lines = entry.split('\n');
 
-    expect(lines[2].length).toBe(500);
-    expect(lines[2]).toBe('a'.repeat(500));
+    expect(lines[2].length).toBe(600);
+    expect(lines[2]).toBe(resultText);
   });
 
   it('handles empty resultText', () => {
@@ -71,6 +72,24 @@ describe('buildDailyEntry', () => {
       'timestamp must be in HH:MM:SS format'
     );
     expect(() => buildDailyEntry('Write', 'some result', '14:30')).toThrow('timestamp must be in HH:MM:SS format');
+  });
+});
+
+describe('buildAssistantReplyEntry', () => {
+  it('preserves full assistant content without truncation', () => {
+    const content = 'x'.repeat(6000);
+    const entry = buildAssistantReplyEntry(content, '09:00:00');
+
+    expect(entry).toBe('\n**[09:00:00] AssistantReply**\n' + content + '\n');
+    expect(entry.includes('...(truncated)')).toBe(false);
+  });
+
+  it('throws when timestamp is not HH:MM:SS format', () => {
+    expect(() => buildAssistantReplyEntry('reply', 'bad')).toThrow('timestamp must be in HH:MM:SS format');
+  });
+
+  it('throws on non-string content', () => {
+    expect(() => buildAssistantReplyEntry(123, '09:00:00')).toThrow('content must be a string');
   });
 });
 

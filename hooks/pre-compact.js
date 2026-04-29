@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { parseJsonInput, resolveVaultConfig } = require('./lib/config');
-const { buildTranscriptExcerpt } = require('./lib/transcript');
+const { buildFullTranscript } = require('./lib/transcript');
 const { buildSessionHeader } = require('./lib/vault');
 const { appendToDaily } = require('./lib/writer');
 const { loadCaptureState, saveCaptureState, buildCaptureRecord, isDuplicateCapture } = require('./lib/capture-state');
@@ -85,9 +85,9 @@ function run(rawStdin, runtime = {}) {
     }
 
     const transcriptContent = fs.readFileSync(transcriptPath, 'utf-8');
-    const excerpt = buildTranscriptExcerpt(transcriptContent, 30, 15000);
+    const fullTranscript = buildFullTranscript(transcriptContent);
 
-    if (excerpt.turnCount < 5) {
+    if (fullTranscript.turnCount < 5) {
       return { status: 0, stdout: '', stderr: '' };
     }
 
@@ -107,14 +107,14 @@ function run(rawStdin, runtime = {}) {
       'unknown'
     ]);
     const captureState = loadCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder);
-    const captureRecord = buildCaptureRecord(sessionId, 'pre-compact', excerpt.markdown, Date.now());
+    const captureRecord = buildCaptureRecord(sessionId, 'pre-compact', fullTranscript.markdown, Date.now());
 
     if (isDuplicateCapture(captureState.lastCapture, captureRecord, DUPLICATE_CAPTURE_WINDOW_MS)) {
       return { status: 0, stdout: '', stderr: '' };
     }
 
     const sessionHeader = buildSessionHeader(sessionId, 'pre-compact', new Date().toISOString());
-    appendToDaily(resolvedConfig.vaultPath, resolvedConfig.subfolder, today, sessionHeader + excerpt.markdown);
+    appendToDaily(resolvedConfig.vaultPath, resolvedConfig.subfolder, today, sessionHeader + fullTranscript.markdown);
     saveCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder, {
       ...captureState,
       lastCapture: captureRecord

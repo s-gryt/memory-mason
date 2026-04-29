@@ -5,14 +5,13 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { parseJsonInput, detectPlatform, resolveVaultConfig } = require('./lib/config');
-const { buildDailyEntry, buildAssistantReplyEntry } = require('./lib/vault');
+const { buildDailyEntry } = require('./lib/vault');
 const { appendToDaily } = require('./lib/writer');
 const { extractPromptEntry } = require('./lib/prompt');
 const { parseJsonlTranscript } = require('./lib/transcript');
 const {
   loadCaptureState,
   saveCaptureState,
-  getTranscriptTurnCount,
   setTranscriptTurnCount
 } = require('./lib/capture-state');
 
@@ -102,21 +101,6 @@ function run(rawStdin, runtime = {}) {
       const transcriptContent = fs.readFileSync(transcriptPath, 'utf-8');
       const turns = parseJsonlTranscript(transcriptContent);
       const captureState = loadCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder);
-      const lastCount = getTranscriptTurnCount(captureState, sessionId);
-      const newTurns = turns.slice(lastCount);
-      const assistantTurns = newTurns.filter((turn) => turn.role === 'assistant');
-
-      if (assistantTurns.length > 0) {
-        assistantTurns.forEach((turn) => {
-          appendToDaily(
-            resolvedConfig.vaultPath,
-            resolvedConfig.subfolder,
-            today,
-            buildAssistantReplyEntry(turn.content, timestamp)
-          );
-        });
-      }
-
       const updatedState = setTranscriptTurnCount(captureState, sessionId, turns.length);
       saveCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder, updatedState);
     }

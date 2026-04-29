@@ -167,6 +167,29 @@ const renderTurnsAsMarkdown = (turns) => {
   return markdownLines.join('\n');
 };
 
+const buildFullTranscript = (content) => {
+  if (content === '') {
+    return {
+      markdown: '',
+      turnCount: 0
+    };
+  }
+
+  const turns = parseJsonlTranscript(content);
+
+  if (turns.length === 0) {
+    return {
+      markdown: '',
+      turnCount: 0
+    };
+  }
+
+  return {
+    markdown: renderTurnsAsMarkdown(turns),
+    turnCount: turns.length
+  };
+};
+
 const buildTranscriptExcerpt = (content, maxTurns, maxChars) => {
   assertPositiveInteger('maxTurns', maxTurns);
   assertPositiveInteger('maxChars', maxChars);
@@ -197,5 +220,6 @@ module.exports = {
   parseJsonlTranscript,
   selectRecentTurns,
   renderTurnsAsMarkdown,
+  buildFullTranscript,
   buildTranscriptExcerpt
 };

@@ -69,7 +69,7 @@ const fs = require('fs');
 const settingsPath = process.env.MEMORY_MASON_SETTINGS;
 const rawSettings = fs.readFileSync(settingsPath, 'utf8').replace(/^\uFEFF/, '');
 const settings = JSON.parse(rawSettings);
-const requiredEvents = ['SessionStart', 'UserPromptSubmit', 'UserPromptExpansion', 'PostToolUse', 'PreCompact', 'SessionEnd'];
+const requiredEvents = ['SessionStart', 'UserPromptSubmit', 'UserPromptExpansion', 'PostToolUse', 'PreCompact', 'SessionEnd', 'Stop'];
 const hasHook = (eventName) =>
   Array.isArray(settings.hooks && settings.hooks[eventName]) &&
   settings.hooks[eventName].some((entry) =>
@@ -238,7 +238,8 @@ const definitions = [
   { eventName: 'UserPromptExpansion', fileName: 'user-prompt-submit.js', timeout: 5 },
   { eventName: 'PostToolUse', fileName: 'post-tool-use.js', timeout: 5 },
   { eventName: 'PreCompact', fileName: 'pre-compact.js', timeout: 15 },
-  { eventName: 'SessionEnd', fileName: 'session-end.js', timeout: 15 }
+  { eventName: 'SessionEnd', fileName: 'session-end.js', timeout: 15 },
+  { eventName: 'Stop', fileName: 'session-end.js', timeout: 15 }
 ];
 
 const hasMemoryMasonHook = (entries) =>

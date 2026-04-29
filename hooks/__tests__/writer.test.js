@@ -10,20 +10,6 @@ const pathKey = Object.keys(process.env).find((key) => key.toLowerCase() === 'pa
 
 const createTempDir = (prefix) => fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 
-const loadWriterWithSpawn = (spawnImpl) => {
-  const childProcess = require('child_process');
-  const originalSpawnSync = childProcess.spawnSync;
-
-  childProcess.spawnSync = spawnImpl;
-  delete require.cache[require.resolve('../lib/writer')];
-
-  try {
-    return require('../lib/writer');
-  } finally {
-    childProcess.spawnSync = originalSpawnSync;
-  }
-};
-
 afterEach(() => {
   delete require.cache[require.resolve('../lib/writer')];
 });
@@ -64,13 +50,11 @@ describe('tryObsidianCli', () => {
 });
 
 describe('appendToDaily', () => {
-  it('falls back to fs when obsidian CLI is unavailable', () => {
+  it('creates daily file with header when file does not exist', () => {
     const vaultPath = createTempDir('memory-mason-vault-');
     const subfolder = 'ai-knowledge';
     const today = '2026-04-26';
     const content = '\n**[12:00:00] Write**\nhello\n';
-    const originalPath = process.env[pathKey];
-    process.env[pathKey] = '';
 
     try {
       appendToDaily(vaultPath, subfolder, today, content);
@@ -78,7 +62,6 @@ describe('appendToDaily', () => {
       expect(fs.existsSync(dailyPath)).toBe(true);
       expect(fs.readFileSync(dailyPath, 'utf-8')).toBe(buildDailyHeader(today) + content);
     } finally {
-      process.env[pathKey] = originalPath;
       fs.rmSync(vaultPath, { recursive: true, force: true });
     }
   });
@@ -89,92 +72,39 @@ describe('appendToDaily', () => {
     );
   });
 
-  it('falls back to fs when obsidian CLI reports success but no file is created', () => {
+  it('appends to existing daily file without duplicating header', () => {
     const vaultPath = createTempDir('memory-mason-vault-');
     const subfolder = 'ai-knowledge';
     const today = '2026-04-26';
-    const content = '\n**[12:00:00] Write**\nhello\n';
-    const shimDir = createTempDir('memory-mason-obsidian-noop-');
-    const shimPath =
-      process.platform === 'win32' ? path.join(shimDir, 'obsidian.cmd') : path.join(shimDir, 'obsidian');
-    const shimContent = process.platform === 'win32' ? '@echo off\r\nexit /b 0\r\n' : '#!/usr/bin/env sh\nexit 0\n';
-    fs.writeFileSync(shimPath, shimContent, 'utf-8');
-
-    if (process.platform !== 'win32') {
-      fs.chmodSync(shimPath, 0o755);
-    }
-
-    const originalPath = process.env[pathKey];
-    process.env[pathKey] = shimDir + path.delimiter + (typeof originalPath === 'string' ? originalPath : '');
-
-    try {
-      appendToDaily(vaultPath, subfolder, today, content);
-      const dailyPath = buildDailyFilePath(vaultPath, subfolder, today);
-      expect(fs.existsSync(dailyPath)).toBe(true);
-      expect(fs.readFileSync(dailyPath, 'utf-8')).toBe(buildDailyHeader(today) + content);
-    } finally {
-      process.env[pathKey] = originalPath;
-      fs.rmSync(vaultPath, { recursive: true, force: true });
-      fs.rmSync(shimDir, { recursive: true, force: true });
-    }
-  });
-
-  it('keeps CLI-created file when obsidian create succeeds', () => {
-    const vaultPath = createTempDir('memory-mason-vault-');
-    const subfolder = 'ai-knowledge';
-    const today = '2026-04-26';
-    const content = '\n**[12:00:00] Write**\nhello\n';
-    const { appendToDaily: appendToDailyWithMock } = loadWriterWithSpawn((command, args, options) => {
-      const action = args.find((arg) => arg === 'create' || arg === 'append');
-      const relativePath = args.find((arg) => arg.startsWith('path=')).slice(5);
-      const payload = args.find((arg) => arg.startsWith('content=')).slice(8);
-      const targetPath = path.join(options.cwd, relativePath);
-
-      fs.mkdirSync(path.dirname(targetPath), { recursive: true });
-      if (action === 'create') {
-        fs.writeFileSync(targetPath, 'CLI\n' + payload, 'utf-8');
-      }
-
-      return { status: 0, error: null };
-    });
-
-    try {
-      appendToDailyWithMock(vaultPath, subfolder, today, content);
-      const dailyPath = buildDailyFilePath(vaultPath, subfolder, today);
-      expect(fs.readFileSync(dailyPath, 'utf-8')).toBe('CLI\n' + buildDailyHeader(today) + content);
-    } finally {
-      fs.rmSync(vaultPath, { recursive: true, force: true });
-    }
-  });
-
-  it('keeps CLI-appended file when obsidian append succeeds', () => {
-    const vaultPath = createTempDir('memory-mason-vault-');
-    const subfolder = 'ai-knowledge';
-    const today = '2026-04-26';
-    const content = '\n**[12:00:00] Write**\nhello\n';
     const dailyPath = buildDailyFilePath(vaultPath, subfolder, today);
-    const { appendToDaily: appendToDailyWithMock } = loadWriterWithSpawn((command, args, options) => {
-      const action = args.find((arg) => arg === 'create' || arg === 'append');
-      const relativePath = args.find((arg) => arg.startsWith('path=')).slice(5);
-      const payload = args.find((arg) => arg.startsWith('content=')).slice(8);
-      const targetPath = path.join(options.cwd, relativePath);
-
-      fs.mkdirSync(path.dirname(targetPath), { recursive: true });
-      if (action === 'append') {
-        fs.appendFileSync(targetPath, payload + '\ncli-append\n', 'utf-8');
-      }
-
-      return { status: 0, error: null };
-    });
+    const existingContent = buildDailyHeader(today) + '\n**[11:00:00] Edit**\nfirst\n';
 
     fs.mkdirSync(path.dirname(dailyPath), { recursive: true });
-    fs.writeFileSync(dailyPath, buildDailyHeader(today) + 'before\n', 'utf-8');
+    fs.writeFileSync(dailyPath, existingContent, 'utf-8');
 
     try {
-      appendToDailyWithMock(vaultPath, subfolder, today, content);
+      const newContent = '\n**[12:00:00] Write**\nsecond\n';
+      appendToDaily(vaultPath, subfolder, today, newContent);
+
       const updated = fs.readFileSync(dailyPath, 'utf-8');
-      expect(updated.includes('cli-append')).toBe(true);
-      expect(updated.split(content).length - 1).toBe(1);
+      expect(updated).toBe(existingContent + newContent);
+      expect(updated.split('# Daily Log').length - 1).toBe(1);
+    } finally {
+      fs.rmSync(vaultPath, { recursive: true, force: true });
+    }
+  });
+
+  it('does not corrupt content containing special JSON characters', () => {
+    const vaultPath = createTempDir('memory-mason-vault-');
+    const subfolder = 'ai-knowledge';
+    const today = '2026-04-26';
+    const sqlContent = '\n**[12:00:00] AssistantReply**\nSELECT * FROM foo WHERE id IN (\'a\', \'b\'] AND x = "y";\n';
+
+    try {
+      appendToDaily(vaultPath, subfolder, today, sqlContent);
+
+      const dailyPath = buildDailyFilePath(vaultPath, subfolder, today);
+      expect(fs.readFileSync(dailyPath, 'utf-8')).toContain('SELECT * FROM foo');
     } finally {
       fs.rmSync(vaultPath, { recursive: true, force: true });
     }

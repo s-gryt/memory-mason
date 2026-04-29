@@ -7,6 +7,7 @@ const {
   parseJsonlTranscript,
   selectRecentTurns,
   renderTurnsAsMarkdown,
+  buildFullTranscript,
   buildTranscriptExcerpt
 } = require('../lib/transcript');
 
@@ -301,6 +302,70 @@ describe('renderTurnsAsMarkdown', () => {
     expect(() => renderTurnsAsMarkdown([{ role: 'user', content: '' }])).toThrow(
       'turn at index 0 must have non-empty content'
     );
+  });
+});
+
+describe('buildFullTranscript', () => {
+  it('returns empty markdown and 0 turn count for an empty transcript', () => {
+    expect(buildFullTranscript('')).toEqual({ markdown: '', turnCount: 0 });
+  });
+
+  it('returns empty markdown and 0 turn count when there are no supported turns', () => {
+    const input = [
+      JSON.stringify({ message: { role: 'system', content: 'policy' } }),
+      JSON.stringify({ message: { role: 'tool', content: 'call' } })
+    ].join('\n');
+
+    expect(buildFullTranscript(input)).toEqual({ markdown: '', turnCount: 0 });
+  });
+
+  it('returns markdown and turn count for a single turn', () => {
+    const input = JSON.stringify({ message: { role: 'user', content: 'hello' } });
+
+    expect(buildFullTranscript(input)).toEqual({
+      markdown: '**User:** hello\n',
+      turnCount: 1
+    });
+  });
+
+  it('renders all turns without dropping older content', () => {
+    const input = Array.from({ length: 40 }, (_, index) => {
+      const turnNumber = index + 1;
+      const role = turnNumber % 2 === 0 ? 'assistant' : 'user';
+      const label = 'turn-' + String(turnNumber).padStart(2, '0');
+      return JSON.stringify({ message: { role, content: label } });
+    }).join('\n');
+
+    const result = buildFullTranscript(input);
+
+    expect(result.turnCount).toBe(40);
+    expect(result.markdown.includes('turn-01')).toBe(true);
+    expect(result.markdown.includes('turn-40')).toBe(true);
+  });
+
+  it('keeps full content without applying character truncation', () => {
+    const longContent = 'x'.repeat(20000);
+    const input = JSON.stringify({ message: { role: 'user', content: longContent } });
+
+    const result = buildFullTranscript(input);
+
+    expect(result.turnCount).toBe(1);
+    expect(result.markdown.includes(longContent)).toBe(true);
+    expect(result.markdown.includes('...(truncated)')).toBe(false);
+  });
+
+  it('includes non-assistant conversation turns and ignores unsupported roles', () => {
+    const input = [
+      JSON.stringify({ message: { role: 'system', content: 'policy' } }),
+      JSON.stringify({ message: { role: 'user', content: 'question' } }),
+      JSON.stringify({ message: { role: 'tool', content: 'call' } }),
+      JSON.stringify({ message: { role: 'assistant', content: 'answer' } })
+    ].join('\n');
+
+    expect(buildFullTranscript(input)).toEqual({
+      markdown: '**User:** question\n\n**Assistant:** answer\n',
+      turnCount: 2
+    });
   });
 });
 

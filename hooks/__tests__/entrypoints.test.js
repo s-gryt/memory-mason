@@ -322,11 +322,29 @@ describe('user-prompt-submit.js', () => {
     expect(result.stderr).toContain('memory-mason.json not found and MEMORY_MASON_VAULT_PATH is not set');
   });
 
-  it('captures pending assistant turns from transcript before writing user prompt', () => {
+  it('does not backfill assistant turns on prompt submit after transcript grows', () => {
     const homeDir = createTempDir('memory-mason-home-');
     const vaultPath = createTempDir('memory-mason-vault-');
     const transcriptDir = createTempDir('memory-mason-transcript-');
     const transcriptPath = path.join(transcriptDir, 'session.jsonl');
+
+    writeText(transcriptPath, buildTranscript(2));
+
+    runScript('user-prompt-submit.js', {
+      payload: {
+        hookEventName: 'user-prompt-submit',
+        cwd: hooksRoot,
+        prompt: 'first user prompt',
+        transcript_path: transcriptPath,
+        session_id: 'session-anchor'
+      },
+      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath })
+    });
+
+    const dailyPathAfterFirst = buildDailyFilePath(vaultPath, 'ai-knowledge', today());
+    const contentAfterFirst = fs.readFileSync(dailyPathAfterFirst, 'utf-8');
+    expect(contentAfterFirst).not.toContain('AssistantReply');
+    expect(contentAfterFirst).toContain('first user prompt');
 
     writeText(transcriptPath, buildTranscript(4));
 
@@ -334,24 +352,48 @@ describe('user-prompt-submit.js', () => {
       payload: {
         hookEventName: 'user-prompt-submit',
         cwd: hooksRoot,
-        prompt: 'third user prompt',
+        prompt: 'second user prompt',
         transcript_path: transcriptPath,
-        session_id: 'session-abc'
+        session_id: 'session-anchor'
       },
       env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath })
     });
 
-    const dailyPath = buildDailyFilePath(vaultPath, 'ai-knowledge', today());
-    const dailyContent = fs.readFileSync(dailyPath, 'utf-8');
+    const dailyContent = fs.readFileSync(dailyPathAfterFirst, 'utf-8');
 
     expect(result.status).toBe(0);
-    expect(dailyContent).toContain('AssistantReply');
-    expect(dailyContent).toContain('assistant turn 1');
-    expect(dailyContent).toContain('assistant turn 3');
-    expect(dailyContent).toContain('third user prompt');
+    expect(dailyContent).toContain('second user prompt');
+    expect(dailyContent).not.toContain('AssistantReply');
+    expect(dailyContent).not.toContain('assistant turn 3');
   });
 
-  it('does not duplicate assistant turns on second user prompt in same session', () => {
+  it('skips assistant dump on first call even when transcript has historical turns', () => {
+    const homeDir = createTempDir('memory-mason-home-');
+    const vaultPath = createTempDir('memory-mason-vault-');
+    const transcriptDir = createTempDir('memory-mason-transcript-');
+    const transcriptPath = path.join(transcriptDir, 'session.jsonl');
+
+    writeText(transcriptPath, buildTranscript(10));
+
+    const result = runScript('user-prompt-submit.js', {
+      payload: {
+        hookEventName: 'user-prompt-submit',
+        cwd: hooksRoot,
+        prompt: 'new prompt after long history',
+        transcript_path: transcriptPath,
+        session_id: 'session-noorphan'
+      },
+      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath })
+    });
+
+    const dailyContent = fs.readFileSync(buildDailyFilePath(vaultPath, 'ai-knowledge', today()), 'utf-8');
+
+    expect(result.status).toBe(0);
+    expect(dailyContent).not.toContain('AssistantReply');
+    expect(dailyContent).toContain('new prompt after long history');
+  });
+
+  it('keeps first and second prompts adjacent without inserting assistant backfill', () => {
     const homeDir = createTempDir('memory-mason-home-');
     const vaultPath = createTempDir('memory-mason-vault-');
     const transcriptDir = createTempDir('memory-mason-transcript-');
@@ -386,7 +428,10 @@ describe('user-prompt-submit.js', () => {
     const dailyPath = buildDailyFilePath(vaultPath, 'ai-knowledge', today());
     const dailyContent = fs.readFileSync(dailyPath, 'utf-8');
 
-    expect(dailyContent.split('assistant turn 1').length - 1).toBe(1);
+    expect(dailyContent).toContain('second prompt');
+    expect(dailyContent).toContain('third prompt');
+    expect(dailyContent).not.toContain('AssistantReply');
+    expect(dailyContent).not.toContain('assistant turn 3');
   });
 
   it('skips assistant capture when transcript_path is absent', () => {
@@ -653,6 +698,28 @@ describe('pre-compact.js', () => {
     expect(JSON.parse(fs.readFileSync(statePath, 'utf-8')).lastCapture.source).toBe('pre-compact');
   });
 
+  it('writes full transcript without turn or character truncation', () => {
+    const homeDir = createTempDir('memory-mason-home-');
+    const vaultPath = createTempDir('memory-mason-vault-');
+    const transcriptPath = path.join(createTempDir('memory-mason-transcript-'), 'session.jsonl');
+    const longFirstTurn = 'first-user-turn-' + 'x'.repeat(17000);
+
+    writeText(transcriptPath, buildTranscript(40, longFirstTurn));
+
+    const result = runScript('pre-compact.js', {
+      payload: { cwd: hooksRoot, transcript_path: transcriptPath, session_id: 'session-full-pre-compact' },
+      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath })
+    });
+
+    const dailyPath = buildDailyFilePath(vaultPath, 'ai-knowledge', today());
+    const dailyContent = fs.readFileSync(dailyPath, 'utf-8');
+
+    expect(result.status).toBe(0);
+    expect(dailyContent).toContain(longFirstTurn);
+    expect(dailyContent).toContain('assistant turn 39');
+    expect(dailyContent).not.toContain('...(truncated)');
+  });
+
   it('skips duplicate capture within duplicate window', () => {
     const homeDir = createTempDir('memory-mason-home-');
     const vaultPath = createTempDir('memory-mason-vault-');
@@ -706,6 +773,95 @@ describe('session-end.js', () => {
     expect(fs.existsSync(buildDailyFilePath(vaultPath, 'ai-knowledge', today()))).toBe(false);
   });
 
+  it('captures assistant replies on Stop and skips duplicates for unchanged transcript', () => {
+    const homeDir = createTempDir('memory-mason-home-');
+    const vaultPath = createTempDir('memory-mason-vault-');
+    const transcriptPath = path.join(createTempDir('memory-mason-transcript-'), 'session.jsonl');
+
+    writeText(transcriptPath, buildTranscript(1, 'first prompt turn'));
+
+    runScript('user-prompt-submit.js', {
+      payload: {
+        hookEventName: 'user-prompt-submit',
+        cwd: hooksRoot,
+        prompt: 'first prompt',
+        transcript_path: transcriptPath,
+        session_id: 'session-stop-order'
+      },
+      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath })
+    });
+
+    const dailyPath = buildDailyFilePath(vaultPath, 'ai-knowledge', today());
+    const afterFirstPrompt = fs.readFileSync(dailyPath, 'utf-8');
+    expect(afterFirstPrompt).toContain('first prompt');
+    expect(afterFirstPrompt).not.toContain('AssistantReply');
+
+    writeText(transcriptPath, buildTranscript(2, 'first prompt turn'));
+
+    runScript('session-end.js', {
+      payload: {
+        hookEventName: 'Stop',
+        cwd: hooksRoot,
+        transcript_path: transcriptPath,
+        session_id: 'session-stop-order'
+      },
+      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath })
+    });
+
+    const afterFirstStop = fs.readFileSync(dailyPath, 'utf-8');
+    expect(afterFirstStop).toContain('AssistantReply');
+    expect(afterFirstStop).toContain('assistant turn 1');
+    expect(afterFirstStop.indexOf('first prompt')).toBeLessThan(afterFirstStop.indexOf('assistant turn 1'));
+
+    writeText(transcriptPath, buildTranscript(3, 'first prompt turn'));
+
+    runScript('user-prompt-submit.js', {
+      payload: {
+        hookEventName: 'user-prompt-submit',
+        cwd: hooksRoot,
+        prompt: 'second prompt',
+        transcript_path: transcriptPath,
+        session_id: 'session-stop-order'
+      },
+      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath })
+    });
+
+    const afterSecondPrompt = fs.readFileSync(dailyPath, 'utf-8');
+    expect(afterSecondPrompt).toContain('second prompt');
+    expect(afterSecondPrompt.split('assistant turn 1').length - 1).toBe(1);
+    expect(afterSecondPrompt).not.toContain('assistant turn 3');
+
+    writeText(transcriptPath, buildTranscript(4, 'first prompt turn'));
+
+    runScript('session-end.js', {
+      payload: {
+        hook_event_name: 'stop',
+        cwd: hooksRoot,
+        transcript_path: transcriptPath,
+        session_id: 'session-stop-order'
+      },
+      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath })
+    });
+
+    const afterSecondStop = fs.readFileSync(dailyPath, 'utf-8');
+    expect(afterSecondStop).toContain('assistant turn 3');
+    expect(afterSecondStop.indexOf('second prompt')).toBeLessThan(afterSecondStop.indexOf('assistant turn 3'));
+
+    runScript('session-end.js', {
+      payload: {
+        hook_event_name: 'stop',
+        cwd: hooksRoot,
+        transcript_path: transcriptPath,
+        session_id: 'session-stop-order'
+      },
+      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath })
+    });
+
+    const afterDuplicateStop = fs.readFileSync(dailyPath, 'utf-8');
+    expect(afterDuplicateStop).toBe(afterSecondStop);
+    expect(afterDuplicateStop.split('assistant turn 3').length - 1).toBe(1);
+  });
+
   it('writes transcript from explicit transcript path', () => {
     const homeDir = createTempDir('memory-mason-home-');
     const vaultPath = createTempDir('memory-mason-vault-');
@@ -727,6 +883,34 @@ describe('session-end.js', () => {
     const dailyPath = buildDailyFilePath(vaultPath, 'ai-knowledge', today());
     expect(result.status).toBe(0);
     expect(fs.readFileSync(dailyPath, 'utf-8')).toContain('session-1 / stop');
+  });
+
+  it('writes full transcript from explicit path without truncation', () => {
+    const homeDir = createTempDir('memory-mason-home-');
+    const vaultPath = createTempDir('memory-mason-vault-');
+    const transcriptPath = path.join(createTempDir('memory-mason-transcript-'), 'session.jsonl');
+    const longFirstTurn = 'session-end-first-user-' + 'y'.repeat(17000);
+
+    writeText(transcriptPath, buildTranscript(40, longFirstTurn));
+
+    const result = runScript('session-end.js', {
+      payload: {
+        hook_event_name: 'session_end',
+        cwd: hooksRoot,
+        transcript_path: transcriptPath,
+        session_id: 'session-full-session-end',
+        source: 'stop'
+      },
+      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath })
+    });
+
+    const dailyPath = buildDailyFilePath(vaultPath, 'ai-knowledge', today());
+    const dailyContent = fs.readFileSync(dailyPath, 'utf-8');
+
+    expect(result.status).toBe(0);
+    expect(dailyContent).toContain(longFirstTurn);
+    expect(dailyContent).toContain('assistant turn 39');
+    expect(dailyContent).not.toContain('...(truncated)');
   });
 
   it('falls back to codex session files when transcript path missing', () => {
@@ -1046,11 +1230,11 @@ describe('vault.js buildAssistantReplyEntry', () => {
     expect(entry).toContain('SELECT * FROM foo;');
   });
 
-  it('truncates content exceeding 5000 chars', () => {
+  it('preserves full content exceeding 5000 chars', () => {
     const longContent = 'x'.repeat(6000);
     const entry = buildAssistantReplyEntry(longContent, '09:00:00');
-    expect(entry).toContain('...(truncated)');
-    expect(entry.length).toBeLessThan(6100);
+    expect(entry).toContain(longContent);
+    expect(entry).not.toContain('...(truncated)');
   });
 
   it('throws on invalid timestamp', () => {

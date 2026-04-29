@@ -81,11 +81,8 @@ const buildDailyEntry = (toolName, resultText, timestamp) => {
   if (!/^\d{2}:\d{2}:\d{2}$/.test(safeTimestamp)) {
     throw new Error('timestamp must be in HH:MM:SS format');
   }
-  const truncatedResult = safeResultText.length > 500 ? safeResultText.slice(0, 500) : safeResultText;
-  return '\n**[' + safeTimestamp + '] ' + safeToolName + '**\n' + truncatedResult + '\n';
+  return '\n**[' + safeTimestamp + '] ' + safeToolName + '**\n' + safeResultText + '\n';
 };
-
-const MAX_ASSISTANT_REPLY_CHARS = 5000;
 
 const buildAssistantReplyEntry = (content, timestamp) => {
   const safeContent = assertString('content', content);
@@ -93,11 +90,7 @@ const buildAssistantReplyEntry = (content, timestamp) => {
   if (!/^\d{2}:\d{2}:\d{2}$/.test(safeTimestamp)) {
     throw new Error('timestamp must be in HH:MM:SS format');
   }
-  const truncated =
-    safeContent.length > MAX_ASSISTANT_REPLY_CHARS
-      ? safeContent.slice(0, MAX_ASSISTANT_REPLY_CHARS) + '\n...(truncated)'
-      : safeContent;
-  return '\n**[' + safeTimestamp + '] AssistantReply**\n' + truncated + '\n';
+  return '\n**[' + safeTimestamp + '] AssistantReply**\n' + safeContent + '\n';
 };
 
 const buildSessionHeader = (sessionId, source, timestamp) => {
