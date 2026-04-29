@@ -1,6 +1,6 @@
 {
   "name": "memory-mason",
   "description": "Sync AI conversations into an Obsidian knowledge base and expose Memory Mason KB skills.",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "contextFileName": "GEMINI.md"
 }

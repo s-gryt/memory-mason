@@ -13,7 +13,7 @@ module.exports = defineConfig({
       provider: 'v8',
       reporter: ['text', 'json-summary'],
       reportsDirectory: '../coverage',
-      include: ['lib/*.js'],
+      include: ['*.js', 'lib/*.js'],
       exclude: ['**/__tests__/**', 'vitest.config.js'],
       thresholds: {
         lines: 100,

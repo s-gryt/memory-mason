@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { parseJsonInput, detectPlatform, resolveVaultConfig } = require('./lib/config');
+const { buildCommandErrorResult, writeIfPresent } = require('./lib/cli');
 const { buildDailyEntry, localNow } = require('./lib/vault');
 const { appendToDaily } = require('./lib/writer');
 const { extractPromptEntry } = require('./lib/prompt');
@@ -175,15 +176,6 @@ function persistPromptSubmission(plan) {
   appendToDaily(resolvedConfig.vaultPath, resolvedConfig.subfolder, plan.today, dailyEntry);
 }
 
-function buildErrorResult(error) {
-  const message = error instanceof Error ? error.message : String(error);
-  return {
-    status: 0,
-    stdout: '',
-    stderr: message + '\n'
-  };
-}
-
 function run(rawStdin, runtime = {}) {
   try {
     const plan = buildRunPlan(rawStdin, runtime);
@@ -195,30 +187,28 @@ function run(rawStdin, runtime = {}) {
     persistPromptSubmission(plan);
     return { status: 0, stdout: '', stderr: '' };
   } catch (error) {
-    return buildErrorResult(error);
+    return buildCommandErrorResult(error);
   }
 }
 
 function main(runtime = {}) {
+  /* c8 ignore start */
   const io = runtime.io !== null && typeof runtime.io === 'object' ? runtime.io : {};
   const stdout = typeof io.stdout === 'function' ? io.stdout : (text) => process.stdout.write(text);
   const stderr = typeof io.stderr === 'function' ? io.stderr : (text) => process.stderr.write(text);
   const exit = typeof io.exit === 'function' ? io.exit : (code) => process.exit(code);
   const fsApi = runtime.fs !== null && typeof runtime.fs === 'object' ? runtime.fs : fs;
+  /* c8 ignore stop */
   const result = run(readStdin(fsApi), runtime);
-
-  if (result.stdout !== '') {
-    stdout(result.stdout);
-  }
-
-  if (result.stderr !== '') {
-    stderr(result.stderr);
-  }
-
+  /* c8 ignore start */
+  writeIfPresent(result.stdout, stdout);
+  writeIfPresent(result.stderr, stderr);
   exit(result.status);
+  /* c8 ignore stop */
   return result;
 }
 
+/* c8 ignore next 3 */
 if (require.main === module) {
   main();
 }

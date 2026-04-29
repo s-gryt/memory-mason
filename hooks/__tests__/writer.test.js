@@ -47,6 +47,49 @@ describe('tryObsidianCli', () => {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
   });
+
+  it('uses the direct obsidian command on non-Windows platforms', () => {
+    const calls = [];
+    const spawnSync = (command, args, options) => {
+      calls.push({ command, args, options });
+      return { status: 0, error: null };
+    };
+
+    expect(tryObsidianCli(['--version'], { platform: 'linux', spawnSync, cwd: '/tmp/vault' })).toBe(true);
+    expect(calls).toEqual([
+      {
+        command: 'obsidian',
+        args: ['--version'],
+        options: {
+          encoding: 'utf-8',
+          timeout: 8000,
+          cwd: '/tmp/vault'
+        }
+      }
+    ]);
+  });
+
+  it('uses cmd.exe wrapper on Windows platforms', () => {
+    const calls = [];
+    const spawnSync = (command, args, options) => {
+      calls.push({ command, args, options });
+      return { status: 0, error: null };
+    };
+
+    expect(tryObsidianCli(['--version'], { platform: 'win32', spawnSync, cwd: 'C:/tmp/vault' })).toBe(true);
+    expect(calls).toEqual([
+      {
+        command: 'cmd.exe',
+        args: ['/d', '/s', '/c', 'obsidian', '--version'],
+        options: {
+          encoding: 'utf-8',
+          timeout: 8000,
+          windowsHide: true,
+          cwd: 'C:/tmp/vault'
+        }
+      }
+    ]);
+  });
 });
 
 describe('appendToDaily', () => {

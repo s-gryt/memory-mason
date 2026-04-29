@@ -9,7 +9,9 @@ const {
   loadCaptureState,
   saveCaptureState,
   buildCaptureRecord,
-  isDuplicateCapture
+  isDuplicateCapture,
+  getTranscriptTurnCount,
+  setTranscriptTurnCount
 } = require('../lib/capture-state');
 
 let tempDirectories = [];
@@ -182,5 +184,84 @@ describe('isDuplicateCapture', () => {
 
   it('throws when next capture is invalid', () => {
     expect(() => isDuplicateCapture(null, null, 60000)).toThrow('nextCapture must be a valid capture record');
+  });
+});
+
+describe('capture-state.js helpers', () => {
+  it('getTranscriptTurnCount returns 0 when sessionId not found', () => {
+    const state = defaultCaptureState();
+    expect(getTranscriptTurnCount(state, 'unknown-session')).toBe(0);
+  });
+
+  it('getTranscriptTurnCount returns stored count', () => {
+    const state = { lastCapture: null, transcriptTurnCounts: { 'session-1': 5 } };
+    expect(getTranscriptTurnCount(state, 'session-1')).toBe(5);
+  });
+
+  it('getTranscriptTurnCount returns 0 for invalid/empty sessionId', () => {
+    const state = defaultCaptureState();
+    expect(getTranscriptTurnCount(state, '')).toBe(0);
+    expect(getTranscriptTurnCount(null, 'session-1')).toBe(0);
+  });
+
+  it('setTranscriptTurnCount stores count for sessionId', () => {
+    const state = defaultCaptureState();
+    const next = setTranscriptTurnCount(state, 'session-1', 4);
+    expect(next.transcriptTurnCounts['session-1']).toBe(4);
+    expect(next.lastCapture).toBe(null);
+  });
+
+  it('setTranscriptTurnCount preserves other session counts', () => {
+    const state = { lastCapture: null, transcriptTurnCounts: { 'session-1': 2 } };
+    const next = setTranscriptTurnCount(state, 'session-2', 6);
+    expect(next.transcriptTurnCounts['session-1']).toBe(2);
+    expect(next.transcriptTurnCounts['session-2']).toBe(6);
+  });
+
+  it('setTranscriptTurnCount throws on empty sessionId', () => {
+    expect(() => setTranscriptTurnCount(defaultCaptureState(), '', 1)).toThrow('sessionId must be a non-empty string');
+    expect(() => setTranscriptTurnCount(defaultCaptureState(), 123, 1)).toThrow('sessionId must be a non-empty string');
+  });
+
+  it('setTranscriptTurnCount throws on invalid count', () => {
+    expect(() => setTranscriptTurnCount(defaultCaptureState(), 'session-1', -1)).toThrow('count must be a non-negative integer');
+    expect(() => setTranscriptTurnCount(defaultCaptureState(), 'session-1', 1.5)).toThrow('count must be a non-negative integer');
+  });
+
+  it('setTranscriptTurnCount falls back to default state for non-object state', () => {
+    expect(setTranscriptTurnCount(null, 'session-1', 2)).toEqual({
+      lastCapture: null,
+      transcriptTurnCounts: {
+        'session-1': 2
+      }
+    });
+  });
+
+  it('loadCaptureState sanitizes transcriptTurnCounts and keeps only non-negative integers', () => {
+    const vaultPath = createTempVaultPath();
+    const statePath = resolveCaptureStatePath(vaultPath, 'ai-knowledge');
+
+    fs.mkdirSync(path.dirname(statePath), { recursive: true });
+
+    fs.writeFileSync(
+      statePath,
+      JSON.stringify({
+        lastCapture: null,
+        transcriptTurnCounts: {
+          'session-1': 3,
+          'session-2': -1,
+          'session-3': 1.5,
+          'session-4': '4'
+        }
+      }),
+      'utf-8'
+    );
+
+    expect(loadCaptureState(vaultPath, 'ai-knowledge')).toEqual({
+      lastCapture: null,
+      transcriptTurnCounts: {
+        'session-1': 3
+      }
+    });
   });
 });

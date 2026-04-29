@@ -4,6 +4,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { writeIfPresent } = require('./lib/cli');
 
 const hookFiles = ['session-start.json', 'user-prompt-submit.json', 'post-tool-use.json', 'pre-compact.json', 'stop.json'];
 
@@ -78,30 +79,28 @@ function run(runtime = {}) {
 }
 
 function main(runtime = {}) {
+  /* c8 ignore start */
   const argv = Array.isArray(runtime.argv) ? runtime.argv : process.argv.slice(2);
   const cwd = typeof runtime.cwd === 'string' && runtime.cwd !== '' ? runtime.cwd : process.cwd();
   const io = runtime.io !== null && typeof runtime.io === 'object' ? runtime.io : {};
   const stdout = typeof io.stdout === 'function' ? io.stdout : (text) => process.stdout.write(text);
   const stderr = typeof io.stderr === 'function' ? io.stderr : (text) => process.stderr.write(text);
   const exit = typeof io.exit === 'function' ? io.exit : (code) => process.exit(code);
+  /* c8 ignore stop */
   const result = run({
     ...runtime,
     ...parseArgs(argv, cwd),
     cwd
   });
-
-  if (result.stdout !== '') {
-    stdout(result.stdout);
-  }
-
-  if (result.stderr !== '') {
-    stderr(result.stderr);
-  }
-
+  /* c8 ignore start */
+  writeIfPresent(result.stdout, stdout);
+  writeIfPresent(result.stderr, stderr);
   exit(result.status);
+  /* c8 ignore stop */
   return result;
 }
 
+/* c8 ignore next 3 */
 if (require.main === module) {
   main();
 }

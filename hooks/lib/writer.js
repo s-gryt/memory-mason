@@ -12,9 +12,28 @@ const assertString = (name, value) => {
   return value;
 };
 
+const resolveObsidianCommand = (args, platform) =>
+  platform === 'win32'
+    ? {
+        command: 'cmd.exe',
+        args: ['/d', '/s', '/c', 'obsidian'].concat(args),
+        options: { windowsHide: true }
+      }
+    : {
+        command: 'obsidian',
+        args,
+        options: {}
+      };
+
 const tryObsidianCli = (args, options) => {
-  const spawnOptions = Object.assign({ encoding: 'utf-8', timeout: 8000 }, options);
-  const result = require('child_process').spawnSync('obsidian', args, spawnOptions);
+  const safeOptions = options !== null && typeof options === 'object' ? options : {};
+  const { platform = process.platform, spawnSync = require('child_process').spawnSync, ...spawnOptions } = safeOptions;
+  const command = resolveObsidianCommand(args, platform);
+  const result = spawnSync(
+    command.command,
+    command.args,
+    Object.assign({ encoding: 'utf-8', timeout: 8000 }, command.options, spawnOptions)
+  );
   return result.status === 0 && result.error == null;
 };
 
