@@ -67,7 +67,7 @@ Pick your agent. Restart the host after install.
 | Agent | Install command |
 |:------|:----------------|
 | **Claude Code** | `/plugin marketplace add s-gryt/memory-mason` then `/plugin install memory-mason@s-gryt` |
-| **GitHub Copilot CLI** | `copilot plugin install s-gryt/memory-mason` |
+| **GitHub Copilot CLI** | `copilot plugin marketplace add s-gryt/memory-mason` then `copilot plugin install memory-mason@s-gryt` |
 | **VS Code Copilot** | Command Palette → `Chat: Install Plugin From Source` → `https://github.com/s-gryt/memory-mason` |
 | **Codex** | Open `/plugins`, search `Memory Mason`, install |
 | **Gemini CLI** | `gemini extensions install https://github.com/s-gryt/memory-mason` |

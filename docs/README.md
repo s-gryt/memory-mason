@@ -20,12 +20,6 @@ Restart Claude Code. Plugin cache lives under `~/.claude/plugins/`.
 GitHub Copilot CLI:
 
 ```
-copilot plugin install s-gryt/memory-mason
-```
-
-Or install from the Memory Mason marketplace:
-
-```
 copilot plugin marketplace add s-gryt/memory-mason
 copilot plugin install memory-mason@s-gryt
 ```
