@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "hooks": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "bash": "node hooks/session-start.js",
+        "powershell": "node hooks/session-start.js",
+        "cwd": ".",
+        "timeoutSec": 10
+      }
+    ],
+    "userPromptSubmitted": [
+      {
+        "type": "command",
+        "bash": "node hooks/user-prompt-submit.js",
+        "powershell": "node hooks/user-prompt-submit.js",
+        "cwd": ".",
+        "timeoutSec": 5
+      }
+    ],
+    "postToolUse": [
+      {
+        "type": "command",
+        "bash": "node hooks/post-tool-use.js",
+        "powershell": "node hooks/post-tool-use.js",
+        "cwd": ".",
+        "timeoutSec": 5
+      }
+    ],
+    "preCompact": [
+      {
+        "type": "command",
+        "bash": "node hooks/pre-compact.js",
+        "powershell": "node hooks/pre-compact.js",
+        "cwd": ".",
+        "timeoutSec": 15
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "bash": "node hooks/session-end.js",
+        "powershell": "node hooks/session-end.js",
+        "cwd": ".",
+        "timeoutSec": 15
+      }
+    ],
+    "sessionEnd": [
+      {
+        "type": "command",
+        "bash": "node hooks/session-end.js",
+        "powershell": "node hooks/session-end.js",
+        "cwd": ".",
+        "timeoutSec": 15
+      }
+    ]
+  }
+}

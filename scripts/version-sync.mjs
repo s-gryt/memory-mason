@@ -16,6 +16,14 @@ const trackedFiles = [
     fields: [['metadata', 'version'], ['plugins', 0, 'version']],
   },
   {
+    path: '.github/plugin/plugin.json',
+    fields: [['version']],
+  },
+  {
+    path: '.github/plugin/marketplace.json',
+    fields: [['metadata', 'version'], ['plugins', 0, 'version']],
+  },
+  {
     path: 'gemini-extension.json',
     fields: [['version']],
   },

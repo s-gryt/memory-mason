@@ -36,6 +36,8 @@ These are synced from the source files above and should not be edited manually:
 | `.cursor/rules/memory-mason.mdc` | `rules/kb-activate.md` + Cursor frontmatter |
 | `.windsurf/rules/memory-mason.md` | `rules/kb-activate.md` + Windsurf frontmatter |
 | `.github/copilot-instructions.md` | `rules/kb-activate.md` block |
+| `.github/plugin/plugin.json` | `.claude-plugin/plugin.json` |
+| `.github/plugin/marketplace.json` | `.claude-plugin/marketplace.json` |
 
 ## Important behavior notes
 
@@ -53,4 +55,4 @@ These are synced from the source files above and should not be edited manually:
 - Hook coverage gate: `cd hooks && npm run coverage`
 - Manifest version sync check: `node scripts/version-sync.mjs check`
 - Stale-name sweep: search for old ids or old repo names before release
-- Manifests to check before publish: `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.agents/plugins/marketplace.json`, `plugins/memory-mason/.codex-plugin/plugin.json`, `gemini-extension.json`
+- Manifests to check before publish: `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.github/plugin/plugin.json`, `.github/plugin/marketplace.json`, `.agents/plugins/marketplace.json`, `plugins/memory-mason/.codex-plugin/plugin.json`, `gemini-extension.json`

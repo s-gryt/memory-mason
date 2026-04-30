@@ -8,7 +8,7 @@ Memory Mason is a publishable multi-agent plugin and skills repo. Keep changes m
 
 | What | Where |
 |:-----|:------|
-| KB skills | `skills/` |
+| Knowledge base skills | `skills/` |
 | Always-on rule text | `rules/kb-activate.md` |
 | Hook runtime | `hooks/` |
 | Install scripts | `install.sh`, `install.ps1`, `hooks/install*.sh`, `hooks/install*.ps1` |

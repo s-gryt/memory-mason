@@ -39,7 +39,7 @@ REPO_URL="https://raw.githubusercontent.com/s-gryt/memory-mason/main/hooks"
 
 HOOK_RUNTIME_FILES=("session-start.js" "user-prompt-submit.js" "post-tool-use.js" "pre-compact.js" "session-end.js")
 LIB_FILES=("config.js" "writer.js" "vault.js" "prompt.js" "transcript.js" "capture-state.js")
-HOOK_JSON_FILES=("session-start.json" "user-prompt-submit.json" "post-tool-use.json" "pre-compact.json" "stop.json")
+HOOK_JSON_FILES=("session-start.json" "user-prompt-submit.json" "post-tool-use.json" "pre-compact.json" "stop.json" "session-end.json")
 
 SCRIPT_DIR=""
 if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
@@ -294,7 +294,8 @@ node -e "
     { fileName: 'user-prompt-submit.json', eventName: 'UserPromptSubmit', scriptName: 'user-prompt-submit.js', timeout: 5 },
     { fileName: 'post-tool-use.json', eventName: 'PostToolUse', scriptName: 'post-tool-use.js', timeout: 5 },
     { fileName: 'pre-compact.json', eventName: 'PreCompact', scriptName: 'pre-compact.js', timeout: 15 },
-    { fileName: 'stop.json', eventName: 'Stop', scriptName: 'session-end.js', timeout: 15 }
+    { fileName: 'stop.json', eventName: 'Stop', scriptName: 'session-end.js', timeout: 15 },
+    { fileName: 'session-end.json', eventName: 'SessionEnd', scriptName: 'session-end.js', timeout: 15 }
   ];
 
   fs.mkdirSync(workspaceHooksDir, { recursive: true });

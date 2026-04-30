@@ -1,120 +1,94 @@
 # Memory Mason — Technical Reference
 
-Cross-LLM Obsidian sync. Hook-based capture + reusable KB skills across Claude Code, GitHub Copilot, Codex, Gemini CLI, Cursor, Windsurf, Cline, and other Agent Skills hosts.
+Cross-LLM Obsidian sync. Hook-based capture + reusable knowledge base skills across Claude Code, GitHub Copilot, Codex, Gemini CLI, Cursor, Windsurf, Cline, and other Agent Skills hosts.
 
-## Install by Platform
+## Plugin Install
+
+Install Memory Mason as a plugin. Hooks and skills auto-wire on install. Run `/mmsetup` after install to configure your vault path.
 
 ### Claude Code
 
-**Plugin marketplace (recommended):**
-
 ```
 /plugin marketplace add s-gryt/memory-mason
-/plugin install memory-mason@memory-mason
+/plugin install memory-mason@s-gryt
 ```
 
-Restart Claude Code. Runtime installs to `~/.claude/plugins/marketplaces/memory-mason/`.
-
-**Shell installer (alternative):**
-
-```bash
-# macOS / Linux
-bash <(curl -fsSL https://raw.githubusercontent.com/s-gryt/memory-mason/main/install.sh) --agent claude
-```
-
-```powershell
-# Windows PowerShell
-& ([scriptblock]::Create((iwr https://raw.githubusercontent.com/s-gryt/memory-mason/main/install.ps1 -UseBasicParsing).Content)) -Agent claude
-```
-
-The shell installer copies runtime to `~/.claude/hooks/memory-mason/`, wires 6 events in `~/.claude/settings.json`, and creates `~/.memory-mason/config.json`. Restart Claude Code after install. Run `/mmsetup` to reconfigure the vault path at any time.
-
-**From a local clone:**
-
-```bash
-bash install.sh --agent claude
-powershell -File install.ps1 -Agent claude
-```
+Restart Claude Code. Plugin cache lives under `~/.claude/plugins/`.
 
 ### GitHub Copilot
 
-```bash
-# macOS / Linux
-bash <(curl -fsSL https://raw.githubusercontent.com/s-gryt/memory-mason/main/install.sh) --agent copilot
+GitHub Copilot CLI:
+
+```
+copilot plugin install s-gryt/memory-mason
 ```
 
-```powershell
-# Windows PowerShell
-& ([scriptblock]::Create((iwr https://raw.githubusercontent.com/s-gryt/memory-mason/main/install.ps1 -UseBasicParsing).Content)) -Agent copilot
+Or install from the Memory Mason marketplace:
+
+```
+copilot plugin marketplace add s-gryt/memory-mason
+copilot plugin install memory-mason@s-gryt
 ```
 
-Copies runtime to `~/.copilot/hooks/memory-mason/`, generates workspace hook JSON, creates `~/.memory-mason/config.json`.
+VS Code:
 
-GitHub Copilot install is split:
+1. Open Command Palette.
+2. Run `Chat: Install Plugin From Source`.
+3. Enter `https://github.com/s-gryt/memory-mason`.
 
-- `npx skills add s-gryt/memory-mason -a github-copilot` installs `/mm*` skills
-- Memory Mason installer installs capture hooks + vault config
+To add Memory Mason to `@agentPlugins` search, add this to VS Code settings:
 
-Run both if you want both commands and automatic capture.
-
-**From a local clone:**
-
-```bash
-bash install.sh --agent copilot
-powershell -File install.ps1 -Agent copilot
-```
-
-#### Workspace-level install
-
-```bash
-bash install.sh --agent copilot --workspace /path/to/project
+```json
+"chat.plugins.marketplaces": [
+  "s-gryt/memory-mason"
+]
 ```
 
 ### Codex
 
-**Marketplace:** Open `/plugins`, search `Memory Mason`, install.
-
-**Shell installer:**
-
-```bash
-# macOS / Linux
-bash <(curl -fsSL https://raw.githubusercontent.com/s-gryt/memory-mason/main/install.sh) --agent codex
-```
-
-```powershell
-# Windows PowerShell
-& ([scriptblock]::Create((iwr https://raw.githubusercontent.com/s-gryt/memory-mason/main/install.ps1 -UseBasicParsing).Content)) -Agent codex
-```
-
-### All Agents at Once
-
-```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/s-gryt/memory-mason/main/install.sh) --agent all
-```
-
-```powershell
-& ([scriptblock]::Create((iwr https://raw.githubusercontent.com/s-gryt/memory-mason/main/install.ps1 -UseBasicParsing).Content)) -Agent all
-```
-
-### Skills-Only Hosts
-
-Cursor, Windsurf, Cline, and other [Agent Skills](https://agentskills.io) hosts get KB commands without hooks:
-
-```bash
-npx skills add s-gryt/memory-mason -a cursor -s '*' -y
-npx skills add s-gryt/memory-mason -a windsurf -s '*' -y
-npx skills add s-gryt/memory-mason -a cline -s '*' -y
-npx skills add s-gryt/memory-mason              # any host
-```
-
-`npx skills` discovers skills from [skills/](../skills) and installs them into the target agent. No `.github/skills/` copies needed.
-
-`npx skills add` installs KB commands but does **not** install hooks or configure your vault. Run `/mmsetup` after install — it will set your vault path and install capture hooks via the shell installer. These platforms don't have a native hook system, so `/mmsetup` bridges the gap by running the appropriate `install.sh` / `install.ps1` for your OS.
+Open `/plugins`, search `Memory Mason`, install.
 
 ### Gemini CLI
 
 ```bash
 gemini extensions install https://github.com/s-gryt/memory-mason
+```
+
+## Skills Install (npx)
+
+For Cursor, Windsurf, Cline, and other [Agent Skills](https://agentskills.io) hosts:
+
+```bash
+npx skills add s-gryt/memory-mason -a cursor -s '*' -y
+npx skills add s-gryt/memory-mason -a windsurf -s '*' -y
+npx skills add s-gryt/memory-mason -a cline -s '*' -y
+npx skills add s-gryt/memory-mason -a github-copilot
+npx skills add s-gryt/memory-mason              # any host
+```
+
+`npx skills add` installs knowledge base commands (`/mmc`, `/mmq`, `/mml`, `/mms`, `/mmsetup`) but does **not** install hooks or configure your vault.
+
+Run `/mmsetup` after install. It configures your vault path and installs capture hooks via the shell installer for your OS. Platforms without a native hook system (Cursor, Windsurf, Cline) get knowledge base commands only.
+
+## Shell Install (backup)
+
+Shell installers copy hook runtime, wire events, and create vault config in one step. Use these if you prefer not to use the plugin system.
+
+```bash
+# macOS / Linux
+bash <(curl -fsSL https://raw.githubusercontent.com/s-gryt/memory-mason/main/install.sh) --agent <name>
+
+# Windows PowerShell
+& ([scriptblock]::Create((iwr https://raw.githubusercontent.com/s-gryt/memory-mason/main/install.ps1 -UseBasicParsing).Content)) -Agent <name>
+```
+
+Replace `<name>` with `claude`, `copilot`, `codex`, or `all`.
+
+From a local clone:
+
+```bash
+bash install.sh --agent <name>
+powershell -File install.ps1 -Agent <name>
 ```
 
 ### Installer Flags
@@ -131,39 +105,30 @@ gemini extensions install https://github.com/s-gryt/memory-mason
 
 | Agent | What the installer does | Runtime location |
 |:------|:------------------------|:-----------------|
-| **Claude Code** (plugin) | Registers in plugin marketplace | `~/.claude/plugins/marketplaces/memory-mason/` |
-| **Claude Code** (shell) | Wires 6 hook events in `~/.claude/settings.json` | `~/.claude/hooks/memory-mason/` |
-| **GitHub Copilot** | Generates workspace hook JSON + copies runtime | `~/.copilot/hooks/memory-mason/` |
+| **Claude Code** | Wires 6 hook events in `~/.claude/settings.json` | `~/.claude/hooks/memory-mason/` |
+| **GitHub Copilot** | Generates 6 workspace hook JSON files + copies runtime | `~/.copilot/hooks/memory-mason/` |
 | **Codex** | Writes `.codex/hooks.json` + copies runtime | `~/.codex/hooks/memory-mason/` |
-| **Cursor** | Skills only (no hook system) | `npx skills add` |
-| **Windsurf** | Skills only (no hook system) | `npx skills add` |
-
-## Runtime Model
-
-Hooks append session activity into `{vault}/{subfolder}/daily/YYYY-MM-DD.md`. No API key required — hooks write directly to the filesystem.
-
-| Command | Action |
-|:--------|:-------|
-| `/mmc` | Compile daily logs into knowledge articles under `knowledge/` |
-| `/mmq` | Answer from compiled KB with `[[wikilink]]` citations |
-| `/mml` | Report KB quality issues |
-| `/mms` | Show KB status and compilation coverage |
-| `/mmsetup` | First-time vault configuration (or uninstall) |
 
 ## Configuration
 
+Run `/mmsetup` to configure your vault path interactively. Or set it up manually using any of these methods.
+
 Config resolves in this order (first match wins):
 
-| Priority | Source | Location |
-|:--------:|:-------|:---------|
-| 1 | Env var | `MEMORY_MASON_VAULT_PATH` |
-| 2 | Project config | `memory-mason.json` in project root |
-| 3 | Project `.env` | `MEMORY_MASON_VAULT_PATH` + optional `MEMORY_MASON_SUBFOLDER` |
-| 4 | Global config | `~/.memory-mason/config.json` |
+| Priority | Source | Location | Best for |
+|:--------:|:-------|:---------|:---------|
+| 1 | Env var | `MEMORY_MASON_VAULT_PATH` | CI, containers |
+| 2 | Project config | `memory-mason.json` in project root | Per-project override |
+| 3 | Project `.env` | `MEMORY_MASON_VAULT_PATH` + optional `MEMORY_MASON_SUBFOLDER` | Per-project override |
+| 4 | Global config | `~/.memory-mason/config.json` | Default for all projects |
 
 If no source is found, hooks throw an explicit error.
 
-**`memory-mason.json`:**
+### Global config (recommended for most users)
+
+Created automatically by `/mmsetup` or shell installers. Works across all projects.
+
+**`~/.memory-mason/config.json`:**
 
 ```json
 {
@@ -172,12 +137,81 @@ If no source is found, hooks throw an explicit error.
 }
 ```
 
-**`.env`:**
+### Per-project config
+
+Override the global config for a specific project. Useful when different projects write to different vaults or subfolders.
+
+**`memory-mason.json`** in project root:
+
+```json
+{
+  "vaultPath": "/path/to/your/obsidian/vault",
+  "subfolder": "my-project"
+}
+```
+
+**`.env`** in project root:
 
 ```env
 MEMORY_MASON_VAULT_PATH=/path/to/your/obsidian/vault
-MEMORY_MASON_SUBFOLDER=memory-mason
+MEMORY_MASON_SUBFOLDER=my-project
 ```
+
+Both formats work identically. Use `.env` if your project already has one; use `memory-mason.json` if you prefer a dedicated config file.
+
+## Uninstall
+
+Run `/mmsetup` and say "uninstall" for guided removal. Your vault content (daily logs, knowledge articles) is never deleted.
+
+Platform-specific alternatives:
+
+| Agent | Uninstall method |
+|:------|:-----------------|
+| **Claude Code** (plugin) | `/plugin uninstall memory-mason` |
+| **Claude Code** (shell) | `bash hooks/uninstall.sh` or `powershell -File hooks\uninstall.ps1` |
+| **Copilot** | `/mmsetup` uninstall (removes hook files + workspace JSON) |
+| **Codex** | `/mmsetup` uninstall (removes hook files + `.codex/hooks.json` entries) |
+| **Cursor / Windsurf / Cline** | `npx skills remove s-gryt/memory-mason -a <agent>` |
+
+To also remove global config: delete `~/.memory-mason/config.json`.
+
+## How It Works
+
+### Capture
+
+Hooks append session activity into `{vault}/{subfolder}/daily/YYYY-MM-DD.md`. No API key required — hooks write directly to the filesystem. Capture happens silently during every AI session.
+
+```text
+[AI Conversation] ──> [Hook Runtime] ──> daily/YYYY-MM-DD.md
+```
+
+### Compile
+
+Run `/mmc` to compile daily logs into structured knowledge articles. The host LLM reads raw logs and produces concept pages, connection pages, and Q&A entries — all linked with `[[wikilinks]]` for Obsidian graph navigation.
+
+```text
+daily/YYYY-MM-DD.md ──> /mmc ──> knowledge/concepts/
+                                  knowledge/connections/
+                                  knowledge/qa/
+```
+
+### Retrieve
+
+Run `/mmq` with a question. Memory Mason reads compiled articles, synthesizes an answer, and cites sources with `[[wikilinks]]` back to the original concepts. Your knowledge base grows with every session.
+
+```text
+/mmq "How does X work?" ──> reads knowledge/ ──> answer with [[citations]]
+```
+
+### Commands
+
+| Command | Action |
+|:--------|:-------|
+| `/mmc` | Compile daily logs into structured knowledge articles |
+| `/mmq` | Answer questions from the knowledge base with `[[wikilink]]` citations |
+| `/mml` | Report knowledge base quality issues |
+| `/mms` | Show knowledge base status and compilation coverage |
+| `/mmsetup` | First-time vault configuration (or uninstall) |
 
 ## Vault Layout
 
@@ -203,36 +237,23 @@ MEMORY_MASON_SUBFOLDER=memory-mason
 | UserPromptExpansion | — | — | — |
 | PostToolUse | Y | Y | Y |
 | PreCompact | Y | Y | — |
-| SessionEnd / Stop | Y | Y | Y |
+| Stop | Y | Y | Y |
+| SessionEnd | Y | Y | — |
 
-`user-prompt-submit.js` can parse `UserPromptExpansion`, but Memory Mason does not auto-register that Claude hook because current Claude plugin validation can reject the event key.
-
-## Uninstall
-
-Run `/mmsetup` and say "uninstall" for guided removal. It detects what's installed and walks you through cleanup. Your vault content (daily logs, knowledge articles) is never deleted.
-
-Platform-specific alternatives:
-
-| Agent | Uninstall method |
-|:------|:-----------------|
-| **Claude Code** (plugin) | `/plugin uninstall memory-mason` |
-| **Claude Code** (shell) | `bash hooks/uninstall.sh` or `powershell -File hooks\uninstall.ps1` |
-| **Copilot** | `/mmsetup` uninstall (removes hook files + workspace JSON) |
-| **Codex** | `/mmsetup` uninstall (removes hook files + `.codex/hooks.json` entries) |
-| **Cursor / Windsurf / Cline** | `npx skills remove s-gryt/memory-mason -a <agent>` |
-
-To also remove global config: delete `~/.memory-mason/config.json`.
+`session-end.js` handles both events: `Stop` appends latest assistant turns; `SessionEnd` captures the full transcript.
 
 ## Platform Manifests
 
 | Surface | Path | Purpose |
 |:--------|:-----|:--------|
 | Claude Code | [.claude-plugin/plugin.json](../.claude-plugin/plugin.json) | Plugin marketplace entry |
+| Copilot plugin | [.github/plugin/plugin.json](../.github/plugin/plugin.json) | Copilot and VS Code plugin manifest |
+| Copilot plugin hooks | [../hooks.json](../hooks.json) | Copilot CLI and VS Code hook configuration |
+| Copilot marketplace | [.github/plugin/marketplace.json](../.github/plugin/marketplace.json) | Copilot CLI and VS Code marketplace |
 | Codex | [plugins/memory-mason/.codex-plugin/plugin.json](../plugins/memory-mason/.codex-plugin/plugin.json) | Codex marketplace entry |
 | Codex agents | [.agents/plugins/marketplace.json](../.agents/plugins/marketplace.json) | Codex agent marketplace |
 | Gemini CLI | [gemini-extension.json](../gemini-extension.json) + [GEMINI.md](../GEMINI.md) | Extension metadata |
-| Copilot | [AGENTS.md](../AGENTS.md) | Skill references for Copilot |
-| Agent Skills | [skills/](../skills) | Cross-agent KB skills |
+| Agent Skills | [skills/](../skills) | Cross-agent knowledge base skills |
 | CI | [.github/workflows/ci.yml](../.github/workflows/ci.yml) | Hook coverage + artifact sync |
 
 ## Development
@@ -244,7 +265,7 @@ npm test
 npm run coverage
 ```
 
-`npm run coverage` enforces 100% line, statement, function, and branch coverage for shared logic in `hooks/lib/`. Hook entry scripts are covered by behavior tests in `hooks/__tests__/entrypoints.test.js`.
+`npm run coverage` enforces 100% line, statement, function, and branch coverage for shared logic in `hooks/lib/`. Hook entry scripts are covered by behavior tests in `hooks/__tests__/`.
 
 ## License
 

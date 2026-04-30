@@ -21,7 +21,7 @@ $RepoUrl = "https://raw.githubusercontent.com/s-gryt/memory-mason/main/hooks"
 
 $HookRuntimeFiles = @("session-start.js", "user-prompt-submit.js", "post-tool-use.js", "pre-compact.js", "session-end.js")
 $LibFiles = @("config.js", "writer.js", "vault.js", "prompt.js", "transcript.js", "capture-state.js")
-$HookJsonFiles = @("session-start.json", "user-prompt-submit.json", "post-tool-use.json", "pre-compact.json", "stop.json")
+$HookJsonFiles = @("session-start.json", "user-prompt-submit.json", "post-tool-use.json", "pre-compact.json", "stop.json", "session-end.json")
 
 if (-not (Test-Path -LiteralPath $WorkspaceRoot -PathType Container)) {
     Write-Host "ERROR: workspace directory does not exist: $WorkspaceRoot" -ForegroundColor Red
@@ -262,7 +262,8 @@ const definitions = [
   { fileName: 'user-prompt-submit.json', eventName: 'UserPromptSubmit', scriptName: 'user-prompt-submit.js', timeout: 5 },
   { fileName: 'post-tool-use.json', eventName: 'PostToolUse', scriptName: 'post-tool-use.js', timeout: 5 },
   { fileName: 'pre-compact.json', eventName: 'PreCompact', scriptName: 'pre-compact.js', timeout: 15 },
-  { fileName: 'stop.json', eventName: 'Stop', scriptName: 'session-end.js', timeout: 15 }
+    { fileName: 'stop.json', eventName: 'Stop', scriptName: 'session-end.js', timeout: 15 },
+    { fileName: 'session-end.json', eventName: 'SessionEnd', scriptName: 'session-end.js', timeout: 15 }
 ];
 
 fs.mkdirSync(workspaceHooksDir, { recursive: true });
