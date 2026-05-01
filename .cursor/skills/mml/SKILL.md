@@ -4,12 +4,12 @@ description: >
   Run health checks on the knowledge base. Finds broken wikilinks, orphan
   pages, uncompiled daily logs, stale articles, missing backlinks, and sparse
   content. Reports issues by severity: error, warning, suggestion.
-allowed-tools: "Read Glob Grep"
+allowed-tools: "Read Glob Grep Bash(obsidian *)"
 ---
 
 ## Objective
 
-Run six health checks on the knowledge base and report all findings by severity.
+Run seven health checks on the knowledge base and report all findings by severity.
 
 ## Path Resolution
 
@@ -62,7 +62,7 @@ WARN [orphan_page] file.md: No other articles link to [[path/slug]]
 
 - Read {vault}/{subfolder}/state.json if it exists.
 - Use the ingested map of filename -> hash.
-- Glob all .md files in {vault}/{subfolder}/daily/.
+- Glob all .md files in {vault}/{subfolder}/daily/ (flat files). Also glob all immediate subdirectories in {vault}/{subfolder}/daily/ (folder-per-day entries). For flat files the key is the filename (e.g. "2026-04-30.md"). For folders the key is the date string (e.g. "2026-04-30"). Check each against state.json ingested map using the appropriate key format.
 - Report any daily log that is not present in ingested.
 - Report format:
 
@@ -73,6 +73,7 @@ WARN [orphan_source] daily/YYYY-MM-DD.md: Not yet compiled
 ### Check 4: Stale articles (severity: warning)
 
 - From state.json ingested entries, compare current daily log file hash with stored hash.
+- For folder-per-day logs: compute hash over concatenated chunk content in numeric order. Compare against stored hash for the date key `"YYYY-MM-DD"`.
 - If a file changed since compilation, report it.
 - Report format:
 
@@ -102,6 +103,25 @@ SUGGESTION [missing_backlink] a.md: [[a/slug]] links to [[b/slug]] but not vice 
 SUGGESTION [sparse_article] file.md: Only N words (minimum recommended: 200)
 ```
 
+### Check 7: Large daily logs (severity: warning)
+
+For each entry under `{vault}/{subfolder}/daily/`:
+- Flat `.md` files: read file size directly.
+- Folder-per-day directories: sum sizes of all `NNN.md` chunk files inside.
+
+Report flat files over 500KB:
+```text
+WARN [large_daily_log] daily/YYYY-MM-DD.md: File is {size}KB (over 500KB). Run /mmc to compile.
+```
+Report flat files over 2MB as error:
+```text
+ERROR [oversized_daily_log] daily/YYYY-MM-DD.md: File is {size}MB (over 2MB). /mmc may fail. Run /mmc immediately.
+```
+Report folder-per-day total over 2MB as warning (chunked = Obsidian-safe, but flag for awareness):
+```text
+WARN [large_daily_folder] daily/YYYY-MM-DD/: Total {size}MB across {n} chunks. Consider running /mmc.
+```
+
 ## Output Format
 
 Return results exactly in this structure:
@@ -111,9 +131,11 @@ Return results exactly in this structure:
 
 ### Errors (must fix)
 - ERROR [broken_link] ...
+- ERROR [oversized_daily_log] ...
 
 ### Warnings (should fix)
 - WARN [orphan_page] ...
+- WARN [large_daily_log] ...
 
 ### Suggestions (nice to fix)
 - SUGGESTION [sparse_article] ...

@@ -35,11 +35,39 @@ Use these paths for all operations:
 
 ## Steps
 
-1. Find the log to compile
+1. Find and chunk the log to compile
 - If an argument was provided, use it as the target log file.
 - If no argument was provided, use today's daily log: {vault}/{subfolder}/daily/{YYYY-MM-DD}.md.
-- Read the selected log file content.
+If the target resolves to a folder {vault}/{subfolder}/daily/{YYYY-MM-DD}/, read chunks in numeric order: `001.md`, `002.md`, etc. Concatenate their contents in order to form the full log text. Process this concatenated text exactly as if it were a single flat file. Use the date string `YYYY-MM-DD` (not `YYYY-MM-DD.md`) as the state.json ingested key for folder-per-day logs.
 - If the file is missing, fail fast with an explicit error.
+
+Chunking protocol (required for files over 50KB):
+a. Read the file size. If under 50KB, read full content and proceed to Steps 2 and 3 as before.
+b. For large files: parse the file line-by-line while tracking fenced code blocks opened and closed by triple backticks.
+c. Only lines outside fenced code blocks may start a top-level block. This avoids false matches from pasted examples such as
+   `## Session [ISO timestamp] ...` or copied session headers inside tool output.
+d. Top-level blocks are:
+   - real transcript capture headers matching `^## Session \[[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?(?:Z)?\] .+ / .+$`
+   - event headers matching `^\*\*\[[0-9]{2}:[0-9]{2}:[0-9]{2}\] [^*]+\*\*$`
+   - leading preamble content before the first top-level block
+e. Build chunks by grouping consecutive top-level blocks up to roughly 50KB. Do not split a top-level block across chunks.
+f. If a single top-level block itself exceeds 100KB, treat it as its own standalone chunk and process it fully without truncation after Steps 2 and 3 are complete.
+g. After chunk boundaries are established, continue to Steps 2 and 3.
+h. After Steps 2 and 3 are complete, process chunks one at a time:
+   - For each chunk: extract 3-7 concepts (apply Step 4 logic per chunk using the current index and existing articles as context)
+  - Accumulate created/updated article names across blocks
+  - After all blocks: merge/deduplicate concepts (prefer updating existing over creating duplicates)
+
+Per-chunk checkpoint (for incremental /mmc runs):
+- Before processing each chunk, check {vault}/{subfolder}/state.json for a
+  "chunks" map under the daily log filename entry.
+- The chunk key must be deterministic and based on the real chunk boundaries, for example:
+  `session-2026-04-30T14:22:01-lines-10500-63299` or `preamble-lines-1-10499`.
+- If a chunk entry exists with a hash matching the current chunk content hash
+  (first 16 chars of SHA-256), skip that chunk - already compiled.
+- After compiling each chunk, write its hash to state.json immediately:
+  state.ingested["2026-04-30.md"].chunks["session-2026-04-30T14:22:01-lines-10500-63299"] = { hash: "<16-char>", compiled_at: "<ISO>" }
+- The top-level ingested entry hash (Step 8) still represents the full file hash.
 
 2. Read the current knowledge index
 - Read {vault}/{subfolder}/knowledge/index.md if it exists.
@@ -154,10 +182,46 @@ updated: YYYY-MM-DD
 8. Update state.json
 - Read {vault}/{subfolder}/state.json if it exists, or start with default state: {"ingested":{}, "last_compile": null, "last_lint": null}
 - Compute a 16-character SHA-256 hex hash of the daily log file content.
-- Set the ingested entry for the compiled daily log filename (e.g. "2026-04-26.md"):
+- For folder-per-day logs: compute the hash over the full concatenated content of all chunks (same as if it were a flat file).
+- Set the ingested entry for the compiled daily log key. For flat files use filename key `"2026-04-26.md"`. For folder-per-day logs use date key `"2026-04-30"` (no extension):
   {"hash": "<16-char-hash>", "compiled_at": "<ISO-8601 timestamp>"}
 - Set "last_compile" to the current ISO-8601 timestamp.
 - Write the updated state to {vault}/{subfolder}/state.json with 2-space JSON indentation.
+
+8.5 Update hot.md
+- After compiling, write a ~500-word session hot cache to {vault}/{subfolder}/hot.md.
+- Format:
+
+```markdown
+---
+type: meta
+title: "Hot Cache"
+updated: {ISO-timestamp}
+---
+
+## Last Updated
+{date}
+
+## Key Recent Facts
+- {3-5 bullets summarizing most important things compiled in this session}
+
+## Recent Changes
+- Created: {wikilinks to newly created articles, if any}
+- Updated: {wikilinks to updated articles, if any}
+
+## Active Threads
+- {any open questions or follow-ups visible in the daily log}
+```
+
+- Keep hot.md under 500 words. Overwrite completely each time (it's a cache, not a log).
+
+8.6 Decompose oversized flat daily logs
+- This step applies only when the source was a flat `.md` file (not already a folder-per-day).
+- If the compiled daily log is still over 2MB or 20,000 lines after successful compilation, decompose it inside the vault for Obsidian usability.
+- Create chunk files under {vault}/{subfolder}/daily/chunks/{YYYY-MM-DD}/ using stable names such as `part-001.md`, `part-002.md`, and so on.
+- Move only already-compiled chunks into those files. Preserve their original text verbatim.
+- Rewrite {vault}/{subfolder}/daily/{YYYY-MM-DD}.md as a lightweight index/stub.
+- If the source was already a folder-per-day, skip this step - the data is already chunked.
 
 9. Quality standards
 - Every article must have complete YAML frontmatter with all required fields.
