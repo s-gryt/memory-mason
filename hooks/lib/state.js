@@ -1,14 +1,15 @@
-'use strict';
+"use strict";
 
-const fs = require('fs');
-const path = require('path');
-const { assertNonEmptyString } = require('./config');
+const fs = require("node:fs");
+const path = require("node:path");
+const { assertNonEmptyString } = require("./config");
 
-const isObjectRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+const isObjectRecord = (value) =>
+  value !== null && typeof value === "object" && !Array.isArray(value);
 
 const assertObjectRecord = (name, value) => {
   if (!isObjectRecord(value)) {
-    throw new Error(name + ' must be an object');
+    throw new Error(`${name} must be an object`);
   }
   return value;
 };
@@ -16,13 +17,13 @@ const assertObjectRecord = (name, value) => {
 const defaultState = () => ({
   ingested: {},
   last_compile: null,
-  last_lint: null
+  last_lint: null,
 });
 
 const resolveStatePath = (vaultPath, subfolder) => {
-  const safeVaultPath = assertNonEmptyString('vaultPath', vaultPath);
-  const safeSubfolder = assertNonEmptyString('subfolder', subfolder);
-  return path.join(safeVaultPath, safeSubfolder, 'state.json');
+  const safeVaultPath = assertNonEmptyString("vaultPath", vaultPath);
+  const safeSubfolder = assertNonEmptyString("subfolder", subfolder);
+  return path.join(safeVaultPath, safeSubfolder, "state.json");
 };
 
 const mergeWithDefaults = (state) => {
@@ -34,7 +35,7 @@ const mergeWithDefaults = (state) => {
   return {
     ...defaultState(),
     ...state,
-    ingested: safeIngested
+    ingested: safeIngested,
   };
 };
 
@@ -45,7 +46,7 @@ const loadState = (vaultPath, subfolder) => {
     return defaultState();
   }
 
-  const rawState = fs.readFileSync(statePath, 'utf-8');
+  const rawState = fs.readFileSync(statePath, "utf-8");
 
   try {
     const parsedState = JSON.parse(rawState);
@@ -59,15 +60,15 @@ const loadState = (vaultPath, subfolder) => {
 };
 
 const saveState = (vaultPath, subfolder, state) => {
-  const safeState = assertObjectRecord('state', state);
+  const safeState = assertObjectRecord("state", state);
   const statePath = resolveStatePath(vaultPath, subfolder);
   fs.mkdirSync(path.dirname(statePath), { recursive: true });
-  fs.writeFileSync(statePath, JSON.stringify(safeState, null, 2), 'utf-8');
+  fs.writeFileSync(statePath, JSON.stringify(safeState, null, 2), "utf-8");
 };
 
 module.exports = {
   defaultState,
   resolveStatePath,
   loadState,
-  saveState
+  saveState,
 };

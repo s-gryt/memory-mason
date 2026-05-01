@@ -173,10 +173,10 @@ To also remove global config: delete `~/.memory-mason/config.json`.
 
 ### Capture
 
-Hooks append session activity into `{vault}/{subfolder}/daily/YYYY-MM-DD.md`. No API key required — hooks write directly to the filesystem. Capture happens silently during every AI session.
+Hooks append session activity into a folder-per-day structure: `{vault}/{subfolder}/daily/YYYY-MM-DD/`. Each daily folder contains chunk files (`001.md`, `002.md`, …) capped at 500KB each, an `index.md` with wikilinks to all chunks, and a `meta.json` chunk registry. Legacy flat `YYYY-MM-DD.md` files from before migration are still readable. No API key required — hooks write directly to the filesystem. Capture happens silently during every AI session.
 
 ```text
-[AI Conversation] ──> [Hook Runtime] ──> daily/YYYY-MM-DD.md
+[AI Conversation] ──> [Hook Runtime] ──> daily/YYYY-MM-DD/001.md  (auto-rotates at 500KB)
 ```
 
 ### Compile
@@ -205,6 +205,7 @@ Run `/mmq` with a question. Memory Mason reads compiled articles, synthesizes an
 | `/mmq` | Answer questions from the knowledge base with `[[wikilink]]` citations |
 | `/mml` | Report knowledge base quality issues |
 | `/mms` | Show knowledge base status and compilation coverage |
+| `/mma` | Archive old build log entries to keep knowledge base log compact |
 | `/mmsetup` | First-time vault configuration (or uninstall) |
 
 ## Vault Layout
@@ -212,13 +213,19 @@ Run `/mmq` with a question. Memory Mason reads compiled articles, synthesizes an
 ```text
 {vault}/{subfolder}/
 ├── daily/
-│   └── 2026-04-28.md
+│   ├── 2026-04-28.md          ← legacy flat file (pre-migration)
+│   └── 2026-04-30/            ← folder-per-day (new writes)
+│       ├── index.md           ← wikilinks to chunks
+│       ├── 001.md             ← chunk 1 (≤500KB)
+│       ├── 002.md             ← chunk 2
+│       └── meta.json          ← chunk registry
 ├── knowledge/
 │   ├── index.md
 │   ├── log.md
 │   ├── concepts/
 │   ├── connections/
-│   └── qa/
+│   ├── qa/
+│   └── folds/                 ← /mma archives
 └── state.json
 ```
 

@@ -1,20 +1,22 @@
 #!/usr/bin/env node
-'use strict';
+"use strict";
 
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
-const { parseJsonInput, detectPlatform, resolveVaultConfig } = require('./lib/config');
-const { buildCommandErrorResult, writeIfPresent } = require('./lib/cli');
-const { buildDailyEntry, localNow } = require('./lib/vault');
-const { appendToDaily } = require('./lib/writer');
-const { extractPromptEntry } = require('./lib/prompt');
-const { parseJsonlTranscript } = require('./lib/transcript');
+const fs = require("node:fs");
+const path = require("node:path");
+const os = require("node:os");
+const { parseJsonInput, detectPlatform, resolveVaultConfig } = require("./lib/config");
+const { buildCommandErrorResult, writeIfPresent } = require("./lib/cli");
+const { buildDailyEntry, localNow } = require("./lib/vault");
+const { appendToDaily } = require("./lib/writer");
+const { extractPromptEntry } = require("./lib/prompt");
+const { parseJsonlTranscript } = require("./lib/transcript");
 const {
   loadCaptureState,
   saveCaptureState,
-  setTranscriptTurnCount
-} = require('./lib/capture-state');
+  setTranscriptTurnCount,
+  getMmSuppressed,
+  setMmSuppressed,
+} = require("./lib/capture-state");
 
 function readStdin(fsApi = fs) {
   const fd = 0;
@@ -28,65 +30,65 @@ function readStdin(fsApi = fs) {
     return [chunk.slice(0, bytesRead)].concat(readChunks());
   }
 
-  return Buffer.concat(readChunks()).toString('utf-8');
+  return Buffer.concat(readChunks()).toString("utf-8");
 }
 
 function toStringOrEmpty(value) {
-  return typeof value === 'string' ? value : '';
+  return typeof value === "string" ? value : "";
 }
 
 function firstNonEmptyString(values) {
-  const match = values.find((value) => typeof value === 'string' && value !== '');
-  return typeof match === 'string' ? match : '';
+  const match = values.find((value) => typeof value === "string" && value !== "");
+  return typeof match === "string" ? match : "";
 }
 
 function readConfigText(cwd) {
-  const configPath = path.join(cwd, 'memory-mason.json');
+  const configPath = path.join(cwd, "memory-mason.json");
   if (!fs.existsSync(configPath)) {
-    return '';
+    return "";
   }
-  return fs.readFileSync(configPath, 'utf-8');
+  return fs.readFileSync(configPath, "utf-8");
 }
 
 function readDotEnvText(cwd) {
-  const envPath = path.join(cwd, '.env');
+  const envPath = path.join(cwd, ".env");
   if (!fs.existsSync(envPath)) {
-    return '';
+    return "";
   }
-  return fs.readFileSync(envPath, 'utf-8');
+  return fs.readFileSync(envPath, "utf-8");
 }
 
 function readGlobalConfigText(homedir) {
-  const globalConfigPath = path.join(homedir, '.memory-mason', 'config.json');
+  const globalConfigPath = path.join(homedir, ".memory-mason", "config.json");
   if (!fs.existsSync(globalConfigPath)) {
-    return '';
+    return "";
   }
-  return fs.readFileSync(globalConfigPath, 'utf-8');
+  return fs.readFileSync(globalConfigPath, "utf-8");
 }
 
 function readGlobalDotEnvText(homedir) {
-  const globalEnvPath = path.join(homedir, '.memory-mason', '.env');
+  const globalEnvPath = path.join(homedir, ".memory-mason", ".env");
   if (!fs.existsSync(globalEnvPath)) {
-    return '';
+    return "";
   }
-  return fs.readFileSync(globalEnvPath, 'utf-8');
+  return fs.readFileSync(globalEnvPath, "utf-8");
 }
 
 function resolveRuntimeEnv(runtime) {
-  return runtime.env !== null && typeof runtime.env === 'object' ? runtime.env : process.env;
+  return runtime.env !== null && typeof runtime.env === "object" ? runtime.env : process.env;
 }
 
 function resolveFallbackCwd(runtime) {
-  return typeof runtime.cwd === 'string' ? runtime.cwd : process.cwd();
+  return typeof runtime.cwd === "string" ? runtime.cwd : process.cwd();
 }
 
 function resolveRuntimeHomedir(runtime) {
-  return typeof runtime.homedir === 'string' ? runtime.homedir : os.homedir();
+  return typeof runtime.homedir === "string" ? runtime.homedir : os.homedir();
 }
 
 function resolveInputCwd(input, fallbackCwd) {
   const inputCwd = toStringOrEmpty(input.cwd);
-  return inputCwd !== '' ? inputCwd : fallbackCwd;
+  return inputCwd !== "" ? inputCwd : fallbackCwd;
 }
 
 function readConfigSources(cwd, homedir) {
@@ -94,17 +96,23 @@ function readConfigSources(cwd, homedir) {
     configText: readConfigText(cwd),
     dotEnvText: readDotEnvText(cwd),
     globalConfigText: readGlobalConfigText(homedir),
-    globalDotEnvText: readGlobalDotEnvText(homedir)
+    globalDotEnvText: readGlobalDotEnvText(homedir),
   };
 }
 
 function resolveRuntimeConfig(cwd, env, homedir) {
   const configSources = readConfigSources(cwd, homedir);
-  return resolveVaultConfig(cwd, toStringOrEmpty(env.MEMORY_MASON_VAULT_PATH), configSources.configText, homedir, {
-    dotEnvText: configSources.dotEnvText,
-    globalConfigText: configSources.globalConfigText,
-    globalDotEnvText: configSources.globalDotEnvText
-  });
+  return resolveVaultConfig(
+    cwd,
+    toStringOrEmpty(env.MEMORY_MASON_VAULT_PATH),
+    configSources.configText,
+    homedir,
+    {
+      dotEnvText: configSources.dotEnvText,
+      globalConfigText: configSources.globalConfigText,
+      globalDotEnvText: configSources.globalDotEnvText,
+    },
+  );
 }
 
 function resolvePromptPayload(rawStdin) {
@@ -113,14 +121,20 @@ function resolvePromptPayload(rawStdin) {
   const promptEntry = extractPromptEntry(platform, input);
   return {
     input,
-    promptEntry
+    promptEntry,
   };
 }
 
 function buildPromptStateAnchors(input) {
   return {
-    transcriptPath: firstNonEmptyString([toStringOrEmpty(input.transcript_path), toStringOrEmpty(input.transcriptPath)]),
-    sessionId: firstNonEmptyString([toStringOrEmpty(input.session_id), toStringOrEmpty(input.sessionId)])
+    transcriptPath: firstNonEmptyString([
+      toStringOrEmpty(input.transcript_path),
+      toStringOrEmpty(input.transcriptPath),
+    ]),
+    sessionId: firstNonEmptyString([
+      toStringOrEmpty(input.session_id),
+      toStringOrEmpty(input.sessionId),
+    ]),
   };
 }
 
@@ -128,7 +142,7 @@ function buildCaptureTimestamp() {
   const now = localNow();
   return {
     today: now.date,
-    timestamp: now.time
+    timestamp: now.time,
   };
 }
 
@@ -149,30 +163,32 @@ function buildRunPlan(rawStdin, runtime = {}) {
     transcriptPath: anchors.transcriptPath,
     sessionId: anchors.sessionId,
     today: captureTimestamp.today,
-    timestamp: captureTimestamp.timestamp
+    timestamp: captureTimestamp.timestamp,
   };
 }
 
 function shouldUpdateTranscriptState(transcriptPath, sessionId) {
-  return transcriptPath !== '' && sessionId !== '' && fs.existsSync(transcriptPath);
+  return transcriptPath !== "" && sessionId !== "" && fs.existsSync(transcriptPath);
 }
 
 function updateTranscriptState(resolvedConfig, transcriptPath, sessionId) {
-  const transcriptContent = fs.readFileSync(transcriptPath, 'utf-8');
+  const transcriptContent = fs.readFileSync(transcriptPath, "utf-8");
   const turns = parseJsonlTranscript(transcriptContent);
   const captureState = loadCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder);
   const updatedState = setTranscriptTurnCount(captureState, sessionId, turns.length);
   saveCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder, updatedState);
 }
 
-function persistPromptSubmission(plan) {
-  const resolvedConfig = resolveRuntimeConfig(plan.cwd, plan.env, plan.homedir);
-
+function persistPromptSubmission(plan, resolvedConfig) {
   if (shouldUpdateTranscriptState(plan.transcriptPath, plan.sessionId)) {
     updateTranscriptState(resolvedConfig, plan.transcriptPath, plan.sessionId);
   }
 
-  const dailyEntry = buildDailyEntry(plan.promptEntry.entryName, plan.promptEntry.text, plan.timestamp);
+  const dailyEntry = buildDailyEntry(
+    plan.promptEntry.entryName,
+    plan.promptEntry.text,
+    plan.timestamp,
+  );
   appendToDaily(resolvedConfig.vaultPath, resolvedConfig.subfolder, plan.today, dailyEntry);
 }
 
@@ -180,12 +196,26 @@ function run(rawStdin, runtime = {}) {
   try {
     const plan = buildRunPlan(rawStdin, runtime);
 
-    if (plan.promptEntry.text === '') {
-      return { status: 0, stdout: '', stderr: '' };
+    if (plan.promptEntry.text === "") {
+      return { status: 0, stdout: "", stderr: "" };
     }
 
-    persistPromptSubmission(plan);
-    return { status: 0, stdout: '', stderr: '' };
+    const resolvedConfig = resolveRuntimeConfig(plan.cwd, plan.env, plan.homedir);
+    const captureState = loadCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder);
+
+    if (plan.promptEntry.text.startsWith("/mm")) {
+      const suppressedState = setMmSuppressed(captureState, true);
+      saveCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder, suppressedState);
+      return { status: 0, stdout: "", stderr: "" };
+    }
+
+    if (getMmSuppressed(captureState)) {
+      const unsuppressedState = setMmSuppressed(captureState, false);
+      saveCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder, unsuppressedState);
+    }
+
+    persistPromptSubmission(plan, resolvedConfig);
+    return { status: 0, stdout: "", stderr: "" };
   } catch (error) {
     return buildCommandErrorResult(error);
   }
@@ -193,11 +223,11 @@ function run(rawStdin, runtime = {}) {
 
 function main(runtime = {}) {
   /* c8 ignore start */
-  const io = runtime.io !== null && typeof runtime.io === 'object' ? runtime.io : {};
-  const stdout = typeof io.stdout === 'function' ? io.stdout : (text) => process.stdout.write(text);
-  const stderr = typeof io.stderr === 'function' ? io.stderr : (text) => process.stderr.write(text);
-  const exit = typeof io.exit === 'function' ? io.exit : (code) => process.exit(code);
-  const fsApi = runtime.fs !== null && typeof runtime.fs === 'object' ? runtime.fs : fs;
+  const io = runtime.io !== null && typeof runtime.io === "object" ? runtime.io : {};
+  const stdout = typeof io.stdout === "function" ? io.stdout : (text) => process.stdout.write(text);
+  const stderr = typeof io.stderr === "function" ? io.stderr : (text) => process.stderr.write(text);
+  const exit = typeof io.exit === "function" ? io.exit : (code) => process.exit(code);
+  const fsApi = runtime.fs !== null && typeof runtime.fs === "object" ? runtime.fs : fs;
   /* c8 ignore stop */
   const result = run(readStdin(fsApi), runtime);
   /* c8 ignore start */
@@ -220,5 +250,5 @@ module.exports = {
   readGlobalConfigText,
   readGlobalDotEnvText,
   run,
-  main
+  main,
 };

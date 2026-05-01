@@ -4,7 +4,7 @@ description: >
   Show knowledge base statistics: article count by type, last compile time,
   daily log status, total vault size, and a health summary. Quick overview
   of the Memory Mason knowledge base state.
-allowed-tools: "Read Glob"
+allowed-tools: "Read Glob Bash(obsidian *)"
 ---
 
 ## Objective
@@ -39,7 +39,12 @@ Use these paths:
 - {vault}/{subfolder}/knowledge/concepts/*.md -> concept count
 - {vault}/{subfolder}/knowledge/connections/*.md -> connection count
 - {vault}/{subfolder}/knowledge/qa/*.md -> Q&A count
-- {vault}/{subfolder}/daily/*.md -> daily log count
+- Count daily log entries: glob {vault}/{subfolder}/daily/*.md (flat files) + glob {vault}/{subfolder}/daily/*/ (folders). Each flat file = 1 log entry. Each folder = 1 log entry. Report total as combined count.
+
+**2b. For each daily log entry in `{vault}/{subfolder}/daily/`:**
+- For flat `.md` files: record filename + size in bytes.
+- For folder-per-day directories: sum the sizes of all `NNN.md` chunk files inside. Record `{YYYY-MM-DD}/` + total size.
+- Identify entries over 500KB (524288 bytes) - both flat and folder total sizes count.
 
 3. From state.json, read:
 - total_cost_usd (if present)
@@ -49,6 +54,11 @@ Use these paths:
 
 5. Count uncompiled daily logs.
 - Uncompiled means a daily log exists but is not present in the ingested map.
+
+5.5 Identify large daily logs.
+- List any daily log over 500KB with its filename and size.
+- If total daily/ directory size exceeds 2MB, flag it.
+- For folder-per-day entries, the total size is the sum of all chunk files. If a folder's total exceeds 2MB, flag it as oversized even though no single file exceeds that threshold.
 
 6. Read the first 5 data rows from {vault}/{subfolder}/knowledge/index.md as preview.
 - Keep the header and first five article rows.
@@ -70,6 +80,13 @@ Return status exactly like this:
 
 ## Health
 {healthy / N daily logs need compilation}
+
+## Daily Log Sizes
+{table: filename | size | status}
+- status: "OK" if under 500KB, "LARGE" if over 500KB, "⚠ VERY LARGE" if over 2MB
+
+**Total daily/:** {total size in MB}
+{If any log is LARGE: "Tip: Run /mmc on large logs to compile them."}
 ```
 
 ## Health Rule

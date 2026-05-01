@@ -9,6 +9,7 @@
 [![cov](https://raw.githubusercontent.com/s-gryt/memory-mason/gh-pages/badges/coverage.svg)](https://github.com/s-gryt/memory-mason/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Claude Code](https://img.shields.io/badge/Claude_Code-plugin-8B5CF6)](https://code.claude.com/docs/en/discover-plugins)
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-Sergii%20Grytsaienko-0077B5?logo=linkedin)](https://www.linkedin.com/in/sergii-grytsaienko/)
 
 ---
 
@@ -22,18 +23,20 @@ No API key needed. No cloud sync. Everything stays local in your Obsidian vault.
 
 ```text
 [AI Conversation] ──> [Hook Runtime] ──> [Obsidian Vault]
-   (any agent)          (automatic)        daily/YYYY-MM-DD.md
+   (any agent)          (automatic)        daily/YYYY-MM-DD/
 ```
 
-Hooks capture prompts, tool results, and session transcripts into daily log files. This happens silently in the background — no manual steps required.
+Hooks capture prompts, tool results, and session transcripts into daily log files. This happens silently in the background — no manual steps required. Memory Mason's own commands (`/mmc`, `/mmq`, etc.) are automatically excluded from capture to avoid noise.
+
+Daily logs are stored in per-day folders and auto-split into files of up to 500KB each. This keeps Obsidian responsive and ensures each file stays within LLM processing limits. No data is lost — every conversation turn is preserved, and Obsidian indexes all chunks for full-text search. See [docs/README.md](docs/README.md) for technical details on chunked storage.
 
 ### How knowledge is built
 
 ```text
-daily/YYYY-MM-DD.md ──> /mmc compile ──> knowledge/
-                                          ├── concepts/
-                                          ├── connections/
-                                          └── qa/
+daily/YYYY-MM-DD/ ──> /mmc compile ──> knowledge/
+                                        ├── concepts/
+                                        ├── connections/
+                                        └── qa/
 ```
 
 Run `/mmc` to compile daily logs into structured articles. The host LLM reads your raw logs and produces encyclopedia-style concept pages, cross-concept connection pages, and Q&A entries — all linked with `[[wikilinks]]` for Obsidian graph navigation.
@@ -54,6 +57,7 @@ Run `/mmq` with a question. Memory Mason reads compiled articles, synthesizes an
 | `/mmq` | Answer questions from the knowledge base with `[[wikilink]]` citations |
 | `/mml` | Run knowledge base health checks |
 | `/mms` | Show knowledge base status and compilation coverage |
+| `/mma` | Archive old build log entries to keep the knowledge base log compact |
 | `/mmsetup` | First-time vault configuration (or uninstall) |
 
 ## Install

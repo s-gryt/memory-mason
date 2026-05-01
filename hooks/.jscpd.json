@@ -1,0 +1,8 @@
+{
+  "threshold": 5,
+  "minLines": 10,
+  "reporters": ["console", "html", "json"],
+  "output": "reports/jscpd",
+  "languages": ["javascript"],
+  "ignore": ["**/node_modules/**", "**/coverage/**", "**/reports/**"]
+}

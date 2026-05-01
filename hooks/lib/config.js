@@ -1,19 +1,19 @@
-'use strict';
+"use strict";
 
 const assertNonEmptyString = (name, value) => {
-  if (typeof value !== 'string' || value === '') {
-    throw new Error(name + ' must be a non-empty string');
+  if (typeof value !== "string" || value === "") {
+    throw new Error(`${name} must be a non-empty string`);
   }
   return value;
 };
 
 const parseJsonInput = (rawStdin) => {
-  assertNonEmptyString('stdin', rawStdin);
+  assertNonEmptyString("stdin", rawStdin);
 
   try {
     const parsed = JSON.parse(rawStdin);
-    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      throw new Error('invalid JSON in stdin: ' + rawStdin.slice(0, 200));
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error(`invalid JSON in stdin: ${rawStdin.slice(0, 200)}`);
     }
     return parsed;
   } catch (error) {
@@ -23,20 +23,24 @@ const parseJsonInput = (rawStdin) => {
   }
 
   try {
-    const escapedStdin = rawStdin.replace(/(?<!\\)\\(?!["\\])/g, '\\\\');
+    const escapedStdin = rawStdin.replace(/(?<!\\)\\(?!["\\])/g, "\\\\");
     const parsedEscaped = JSON.parse(escapedStdin);
-    if (parsedEscaped === null || typeof parsedEscaped !== 'object' || Array.isArray(parsedEscaped)) {
-      throw new Error('invalid JSON in stdin: ' + rawStdin.slice(0, 200));
+    if (
+      parsedEscaped === null ||
+      typeof parsedEscaped !== "object" ||
+      Array.isArray(parsedEscaped)
+    ) {
+      throw new Error(`invalid JSON in stdin: ${rawStdin.slice(0, 200)}`);
     }
     return parsedEscaped;
-  } catch (error) {
-    throw new Error('invalid JSON in stdin: ' + rawStdin.slice(0, 200));
+  } catch (_error) {
+    throw new Error(`invalid JSON in stdin: ${rawStdin.slice(0, 200)}`);
   }
 };
 
 const expandHomePath = (inputPath, homedir) => {
-  const safeInputPath = assertNonEmptyString('inputPath', inputPath);
-  const safeHomedir = assertNonEmptyString('homedir', homedir);
+  const safeInputPath = assertNonEmptyString("inputPath", inputPath);
+  const safeHomedir = assertNonEmptyString("homedir", homedir);
   if (/^~(?=$|[\\/])/.test(safeInputPath)) {
     return safeInputPath.replace(/^~(?=$|[\\/])/, safeHomedir);
   }
@@ -44,22 +48,22 @@ const expandHomePath = (inputPath, homedir) => {
 };
 
 const parseMemoryMasonConfig = (rawText) => {
-  assertNonEmptyString('rawText', rawText);
+  assertNonEmptyString("rawText", rawText);
 
   const parsed = (() => {
     try {
       return JSON.parse(rawText);
-    } catch (error) {
-      throw new Error('invalid memory-mason config JSON');
+    } catch (_error) {
+      throw new Error("invalid memory-mason config JSON");
     }
   })();
 
-  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error('memory-mason config must be an object');
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("memory-mason config must be an object");
   }
 
-  const vaultPath = assertNonEmptyString('vaultPath', parsed.vaultPath);
-  const subfolder = assertNonEmptyString('subfolder', parsed.subfolder);
+  const vaultPath = assertNonEmptyString("vaultPath", parsed.vaultPath);
+  const subfolder = assertNonEmptyString("subfolder", parsed.subfolder);
   return { vaultPath, subfolder };
 };
 
@@ -69,7 +73,7 @@ const stripDotEnvComment = (valueText) => {
   const isDoubleQuoted = trimmedValue.startsWith('"');
 
   if (!isSingleQuoted && !isDoubleQuoted) {
-    return trimmedValue.split('#')[0].trim();
+    return trimmedValue.split("#")[0].trim();
   }
 
   const quote = isSingleQuoted ? "'" : '"';
@@ -88,26 +92,27 @@ const stripSurroundingQuotes = (valueText) => {
   const lastCharacter = trimmedValue[trimmedValue.length - 1];
   const hasSurroundingQuotes =
     trimmedValue.length >= 2 &&
-    ((firstCharacter === '"' && lastCharacter === '"') || (firstCharacter === "'" && lastCharacter === "'"));
+    ((firstCharacter === '"' && lastCharacter === '"') ||
+      (firstCharacter === "'" && lastCharacter === "'"));
 
   return hasSurroundingQuotes ? trimmedValue.slice(1, -1) : trimmedValue;
 };
 
 const parseDotEnv = (rawText) => {
-  const safeRawText = typeof rawText === 'string' ? rawText : '';
+  const safeRawText = typeof rawText === "string" ? rawText : "";
 
-  if (safeRawText === '') {
+  if (safeRawText === "") {
     return {};
   }
 
-  return safeRawText
+  const parsedEntries = safeRawText
     .split(/\r?\n/)
     .map((line) => line.trim())
-    .filter((line) => line !== '' && !line.startsWith('#'))
-    .reduce((accumulator, line) => {
-      const equalsIndex = line.indexOf('=');
+    .filter((line) => line !== "" && !line.startsWith("#"))
+    .map((line) => {
+      const equalsIndex = line.indexOf("=");
       if (equalsIndex <= 0) {
-        return accumulator;
+        return null;
       }
 
       const key = line.slice(0, equalsIndex).trim();
@@ -115,88 +120,91 @@ const parseDotEnv = (rawText) => {
       const withoutComment = stripDotEnvComment(valueText);
       const value = stripSurroundingQuotes(withoutComment);
 
-      return {
-        ...accumulator,
-        [key]: value
-      };
-    }, {});
+      return [key, value];
+    })
+    .filter((entry) => entry !== null);
+
+  return Object.fromEntries(parsedEntries);
 };
 
 const pickFirstNonEmptyString = (values, fallbackValue) => {
-  const firstMatch = values.find((value) => typeof value === 'string' && value !== '');
-  if (typeof firstMatch === 'string') {
+  const firstMatch = values.find((value) => typeof value === "string" && value !== "");
+  if (typeof firstMatch === "string") {
     return firstMatch;
   }
   return fallbackValue;
 };
 
 const parseConfigSubfolderOrEmpty = (configText) => {
-  if (configText === '') {
-    return '';
+  if (configText === "") {
+    return "";
   }
 
   try {
     return parseMemoryMasonConfig(configText).subfolder;
-  } catch (error) {
-    return '';
+  } catch (_error) {
+    return "";
   }
 };
 
 const resolveFromEnvVaultPath = (resolutionInput) => {
-  if (resolutionInput.envVaultPath === '') {
+  if (resolutionInput.envVaultPath === "") {
     return null;
   }
 
   const subfolderFromConfig = parseConfigSubfolderOrEmpty(resolutionInput.configText);
   return {
     vaultPath: expandHomePath(resolutionInput.envVaultPath, resolutionInput.homedir),
-    subfolder: pickFirstNonEmptyString([subfolderFromConfig, resolutionInput.dotEnvSubfolder], 'ai-knowledge')
+    subfolder: pickFirstNonEmptyString(
+      [subfolderFromConfig, resolutionInput.dotEnvSubfolder],
+      "ai-knowledge",
+    ),
   };
 };
 
 const resolveFromConfigText = (resolutionInput) => {
-  if (resolutionInput.configText === '') {
+  if (resolutionInput.configText === "") {
     return null;
   }
 
   const parsedConfig = parseMemoryMasonConfig(resolutionInput.configText);
   return {
     vaultPath: expandHomePath(parsedConfig.vaultPath, resolutionInput.homedir),
-    subfolder: parsedConfig.subfolder
+    subfolder: parsedConfig.subfolder,
   };
 };
 
 const resolveFromDotEnvVaultPath = (resolutionInput) => {
-  if (resolutionInput.dotEnvVaultPath === '') {
+  if (resolutionInput.dotEnvVaultPath === "") {
     return null;
   }
 
   return {
     vaultPath: expandHomePath(resolutionInput.dotEnvVaultPath, resolutionInput.homedir),
-    subfolder: pickFirstNonEmptyString([resolutionInput.dotEnvSubfolder], 'ai-knowledge')
+    subfolder: pickFirstNonEmptyString([resolutionInput.dotEnvSubfolder], "ai-knowledge"),
   };
 };
 
 const resolveFromGlobalConfigText = (resolutionInput) => {
-  if (resolutionInput.globalConfigText === '') {
+  if (resolutionInput.globalConfigText === "") {
     return null;
   }
 
   const parsedGlobalConfig = parseMemoryMasonConfig(resolutionInput.globalConfigText);
   return {
     vaultPath: expandHomePath(parsedGlobalConfig.vaultPath, resolutionInput.homedir),
-    subfolder: parsedGlobalConfig.subfolder
+    subfolder: parsedGlobalConfig.subfolder,
   };
 };
 
 const resolveFromGlobalDotEnv = (resolutionInput) => {
-  if (resolutionInput.globalDotEnvVaultPath === '') {
+  if (resolutionInput.globalDotEnvVaultPath === "") {
     return null;
   }
 
   return {
     vaultPath: expandHomePath(resolutionInput.globalDotEnvVaultPath, resolutionInput.homedir),
-    subfolder: pickFirstNonEmptyString([resolutionInput.globalDotEnvSubfolder], 'ai-knowledge')
+    subfolder: pickFirstNonEmptyString([resolutionInput.globalDotEnvSubfolder], "ai-knowledge"),
   };
 };
 
@@ -206,7 +214,7 @@ const resolveVaultConfigFromAlternatives = (resolutionInput) => {
     resolveFromConfigText,
     resolveFromDotEnvVaultPath,
     resolveFromGlobalConfigText,
-    resolveFromGlobalDotEnv
+    resolveFromGlobalDotEnv,
   ];
 
   return alternatives.reduce((resolvedConfig, resolveAlternative) => {
@@ -219,22 +227,33 @@ const resolveVaultConfigFromAlternatives = (resolutionInput) => {
 };
 
 const resolveVaultConfig = (cwd, envVaultPath, configText, homedir, options = {}) => {
-  const safeHomedir = assertNonEmptyString('homedir', homedir);
-  const safeEnvVaultPath = typeof envVaultPath === 'string' ? envVaultPath : '';
-  const safeConfigText = typeof configText === 'string' ? configText : '';
-  const safeOptions = options !== null && typeof options === 'object' ? options : {};
-  const safeDotEnvText = typeof safeOptions.dotEnvText === 'string' ? safeOptions.dotEnvText : '';
-  const safeGlobalConfigText = typeof safeOptions.globalConfigText === 'string' ? safeOptions.globalConfigText : '';
-  const safeGlobalDotEnvText = typeof safeOptions.globalDotEnvText === 'string' ? safeOptions.globalDotEnvText : '';
+  const safeHomedir = assertNonEmptyString("homedir", homedir);
+  const safeEnvVaultPath = typeof envVaultPath === "string" ? envVaultPath : "";
+  const safeConfigText = typeof configText === "string" ? configText : "";
+  const safeOptions = options !== null && typeof options === "object" ? options : {};
+  const safeDotEnvText = typeof safeOptions.dotEnvText === "string" ? safeOptions.dotEnvText : "";
+  const safeGlobalConfigText =
+    typeof safeOptions.globalConfigText === "string" ? safeOptions.globalConfigText : "";
+  const safeGlobalDotEnvText =
+    typeof safeOptions.globalDotEnvText === "string" ? safeOptions.globalDotEnvText : "";
   const parsedDotEnv = parseDotEnv(safeDotEnvText);
-  const dotEnvVaultPath = typeof parsedDotEnv.MEMORY_MASON_VAULT_PATH === 'string' ? parsedDotEnv.MEMORY_MASON_VAULT_PATH : '';
+  const dotEnvVaultPath =
+    typeof parsedDotEnv.MEMORY_MASON_VAULT_PATH === "string"
+      ? parsedDotEnv.MEMORY_MASON_VAULT_PATH
+      : "";
   const dotEnvSubfolder =
-    typeof parsedDotEnv.MEMORY_MASON_SUBFOLDER === 'string' ? parsedDotEnv.MEMORY_MASON_SUBFOLDER : '';
+    typeof parsedDotEnv.MEMORY_MASON_SUBFOLDER === "string"
+      ? parsedDotEnv.MEMORY_MASON_SUBFOLDER
+      : "";
   const parsedGlobalDotEnv = parseDotEnv(safeGlobalDotEnvText);
   const globalDotEnvVaultPath =
-    typeof parsedGlobalDotEnv.MEMORY_MASON_VAULT_PATH === 'string' ? parsedGlobalDotEnv.MEMORY_MASON_VAULT_PATH : '';
+    typeof parsedGlobalDotEnv.MEMORY_MASON_VAULT_PATH === "string"
+      ? parsedGlobalDotEnv.MEMORY_MASON_VAULT_PATH
+      : "";
   const globalDotEnvSubfolder =
-    typeof parsedGlobalDotEnv.MEMORY_MASON_SUBFOLDER === 'string' ? parsedGlobalDotEnv.MEMORY_MASON_SUBFOLDER : '';
+    typeof parsedGlobalDotEnv.MEMORY_MASON_SUBFOLDER === "string"
+      ? parsedGlobalDotEnv.MEMORY_MASON_SUBFOLDER
+      : "";
 
   const resolutionInput = {
     homedir: safeHomedir,
@@ -244,7 +263,7 @@ const resolveVaultConfig = (cwd, envVaultPath, configText, homedir, options = {}
     dotEnvSubfolder,
     globalConfigText: safeGlobalConfigText,
     globalDotEnvVaultPath,
-    globalDotEnvSubfolder
+    globalDotEnvSubfolder,
   };
 
   const resolvedConfig = resolveVaultConfigFromAlternatives(resolutionInput);
@@ -252,36 +271,41 @@ const resolveVaultConfig = (cwd, envVaultPath, configText, homedir, options = {}
     return resolvedConfig;
   }
 
-  assertNonEmptyString('cwd', cwd);
-  throw new Error('memory-mason.json not found and MEMORY_MASON_VAULT_PATH is not set');
+  assertNonEmptyString("cwd", cwd);
+  throw new Error("memory-mason.json not found and MEMORY_MASON_VAULT_PATH is not set");
 };
 
 const detectPlatform = (input) => {
-  if (input === null || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).length === 0) {
-    throw new Error('input must be a non-empty object');
+  if (
+    input === null ||
+    typeof input !== "object" ||
+    Array.isArray(input) ||
+    Object.keys(input).length === 0
+  ) {
+    throw new Error("input must be a non-empty object");
   }
 
-  if (typeof input.hookEventName === 'string') {
-    return 'copilot-vscode';
+  if (typeof input.hookEventName === "string") {
+    return "copilot-vscode";
   }
 
-  if (typeof input.hook_event_name === 'string' && typeof input.turn_id === 'string') {
-    return 'codex';
+  if (typeof input.hook_event_name === "string" && typeof input.turn_id === "string") {
+    return "codex";
   }
 
-  if (typeof input.hook_event_name === 'string') {
-    return 'claude-code';
+  if (typeof input.hook_event_name === "string") {
+    return "claude-code";
   }
 
   if (
-    typeof input.timestamp !== 'undefined' &&
-    typeof input.hook_event_name === 'undefined' &&
-    typeof input.hookEventName === 'undefined'
+    typeof input.timestamp !== "undefined" &&
+    typeof input.hook_event_name === "undefined" &&
+    typeof input.hookEventName === "undefined"
   ) {
-    return 'copilot-cli';
+    return "copilot-cli";
   }
 
-  throw new Error('cannot detect platform from stdin shape: ' + JSON.stringify(Object.keys(input)));
+  throw new Error(`cannot detect platform from stdin shape: ${JSON.stringify(Object.keys(input))}`);
 };
 
 module.exports = {
@@ -291,5 +315,5 @@ module.exports = {
   parseMemoryMasonConfig,
   parseDotEnv,
   resolveVaultConfig,
-  detectPlatform
+  detectPlatform,
 };
