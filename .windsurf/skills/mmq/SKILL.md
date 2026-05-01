@@ -1,10 +1,10 @@
 ---
 name: mmq
 description: >
-  Query the knowledge base. Reads the index, identifies relevant articles,
-  synthesizes a clear answer with [[wikilink]] citations. Use when you want
-  to ask about past decisions, patterns, lessons, or technical knowledge
-  captured in previous AI conversations.
+  Query the knowledge base. Reads hot cache first, then the index, then
+  relevant articles, and synthesizes a clear answer with [[wikilink]]
+  citations. Use when you want to ask about past decisions, patterns,
+  lessons, or technical knowledge captured in previous AI conversations.
 argument-hint: "[question]"
 allowed-tools: "Read Glob Grep"
 ---
@@ -26,6 +26,7 @@ If `./memory-mason.json` is missing, run one workspace search for `**/memory-mas
 - If no file is found, state that the knowledge base is not initialized.
 
 Use these paths:
+- Hot cache: {vault}/{subfolder}/hot.md
 - Index: {vault}/{subfolder}/knowledge/index.md
 - Concepts: {vault}/{subfolder}/knowledge/concepts/
 - Connections: {vault}/{subfolder}/knowledge/connections/
@@ -34,20 +35,28 @@ Use these paths:
 
 ## Steps
 
-1. Read {vault}/{subfolder}/knowledge/index.md.
-- This is the primary retrieval mechanism.
+1. Read {vault}/{subfolder}/hot.md if it exists.
+- Treat hot.md as a fast cache of recent context, not a replacement for the knowledge base.
+- If hot.md directly answers the question with enough precision, answer immediately.
+- If hot.md is relevant but incomplete, extract likely article names, topics, and follow-up questions from it,
+  then continue.
+
+2. Read {vault}/{subfolder}/knowledge/index.md.
+- This is the primary retrieval mechanism after the hot cache.
 - If it is missing, state that the knowledge base is not initialized.
 
-2. Read the index table carefully.
+3. Read the index table carefully.
 - Identify 3-10 articles most relevant to the user question.
+- Prefer pages explicitly mentioned in hot.md when they are relevant to the question.
 
-3. Read selected articles in full.
+4. Read selected articles in full.
 - Pull complete article context before answering.
 
-4. Synthesize a clear, thorough answer.
+5. Synthesize a clear, thorough answer.
 - Cite supporting sources with [[wikilinks]] (for example: [[concepts/example-article]]).
+- Use [[hot]] only when the answer truly comes from the cache and no better article citation exists.
 
-5. Handle missing knowledge honestly.
+6. Handle missing knowledge honestly.
 - If the knowledge base does not contain relevant information, say so clearly.
 - Suggest running /mmc if there are uncompiled daily logs.
 
@@ -96,4 +105,5 @@ filed: YYYY-MM-DD
 
 - Prefer precision over broad speculation.
 - Keep the final answer directly tied to cited knowledge articles.
+- Use hot.md to accelerate retrieval, not to skip article reads when the answer requires durable citations.
 - Use concise, clear language and explicit reasoning.

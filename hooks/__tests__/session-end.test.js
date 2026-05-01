@@ -660,6 +660,88 @@ describe("run - mm suppression for Stop event", () => {
   });
 });
 
+describe("run - sync flag", () => {
+  it("returns status 0 without vault write for Stop event when sync is false", () => {
+    const cwd = createTempDir("memory-mason-cwd-");
+    const homeDir = createTempDir("memory-mason-home-");
+    const vaultPath = createTempDir("memory-mason-vault-");
+    const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
+    const statePath = resolveCaptureStatePath(vaultPath, "ai-knowledge");
+    const initialState = {
+      lastCapture: null,
+      mmSuppressed: false,
+      transcriptTurnCounts: {
+        "session-stop-sync-false": 1,
+      },
+    };
+
+    writeText(
+      path.join(cwd, "memory-mason.json"),
+      JSON.stringify({ vaultPath, subfolder: "ai-knowledge", sync: false }),
+    );
+    writeText(transcriptPath, buildTranscript(2, "session-sync-user"));
+    writeText(statePath, JSON.stringify(initialState, null, 2));
+
+    const result = runScript("session-end.js", {
+      payload: {
+        hook_event_name: "Stop",
+        cwd,
+        transcript_path: transcriptPath,
+        session_id: "session-stop-sync-false",
+      },
+      cwd,
+      env: buildEnv(homeDir),
+    });
+
+    const persistedState = JSON.parse(fs.readFileSync(statePath, "utf-8"));
+
+    expect(result.status).toBe(0);
+    expect(fs.existsSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1))).toBe(false);
+    expect(persistedState).toEqual(initialState);
+  });
+
+  it("returns status 0 without vault write for SessionEnd event when sync is false", () => {
+    const cwd = createTempDir("memory-mason-cwd-");
+    const homeDir = createTempDir("memory-mason-home-");
+    const vaultPath = createTempDir("memory-mason-vault-");
+    const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
+    const statePath = resolveCaptureStatePath(vaultPath, "ai-knowledge");
+    const initialState = {
+      lastCapture: {
+        sessionId: "previous-session-sync",
+        source: "claude-code",
+        contentHash: "fedcba9876543210",
+        timestampMs: 1,
+      },
+      mmSuppressed: false,
+    };
+
+    writeText(
+      path.join(cwd, "memory-mason.json"),
+      JSON.stringify({ vaultPath, subfolder: "ai-knowledge", sync: false }),
+    );
+    writeText(transcriptPath, buildTranscript(2, "session-sync-user"));
+    writeText(statePath, JSON.stringify(initialState, null, 2));
+
+    const result = runScript("session-end.js", {
+      payload: {
+        hook_event_name: "session_end",
+        cwd,
+        transcript_path: transcriptPath,
+        session_id: "session-end-sync-false",
+      },
+      cwd,
+      env: buildEnv(homeDir),
+    });
+
+    const persistedState = JSON.parse(fs.readFileSync(statePath, "utf-8"));
+
+    expect(result.status).toBe(0);
+    expect(fs.existsSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1))).toBe(false);
+    expect(persistedState).toEqual(initialState);
+  });
+});
+
 describe("run - mm transcript filtering for SessionEnd event", () => {
   it("filters out /mm turns from full transcript before writing", () => {
     const homeDir = createTempDir("memory-mason-home-");

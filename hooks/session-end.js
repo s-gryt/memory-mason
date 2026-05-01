@@ -357,16 +357,11 @@ function run(rawStdin, runtime = {}) {
       },
     );
 
-    const transcriptPath = resolveTranscriptPath(input);
-    const transcriptFromPath = readTranscriptFromPath(transcriptPath);
+    if (resolvedConfig.sync === false) {
+      return { status: 0, stdout: "", stderr: "" };
+    }
+
     const sessionIdRaw = resolveSessionId(input);
-    const transcriptContent = discoverTranscriptContent(
-      platform,
-      transcriptFromPath,
-      homedir,
-      sessionIdRaw,
-      cwd,
-    );
 
     if (normalizedHookEventName === "stop") {
       if (sessionIdRaw === "") {
@@ -377,6 +372,16 @@ function run(rawStdin, runtime = {}) {
       if (getMmSuppressed(stopCaptureState)) {
         return { status: 0, stdout: "", stderr: "" };
       }
+
+      const transcriptPath = resolveTranscriptPath(input);
+      const transcriptFromPath = readTranscriptFromPath(transcriptPath);
+      const transcriptContent = discoverTranscriptContent(
+        platform,
+        transcriptFromPath,
+        homedir,
+        sessionIdRaw,
+        cwd,
+      );
 
       const turns = parseTranscriptTurns(transcriptContent);
       const lastCount = getTranscriptTurnCount(stopCaptureState, sessionIdRaw);
@@ -400,6 +405,17 @@ function run(rawStdin, runtime = {}) {
       return { status: 0, stdout: "", stderr: "" };
     }
 
+    const captureState = loadCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder);
+    const transcriptPath = resolveTranscriptPath(input);
+    const transcriptFromPath = readTranscriptFromPath(transcriptPath);
+    const transcriptContent = discoverTranscriptContent(
+      platform,
+      transcriptFromPath,
+      homedir,
+      sessionIdRaw,
+      cwd,
+    );
+
     if (transcriptContent === "") {
       return { status: 0, stdout: "", stderr: "" };
     }
@@ -415,7 +431,6 @@ function run(rawStdin, runtime = {}) {
     const today = localNow().date;
     const sessionId = firstNonEmptyString([sessionIdRaw, "unknown"]);
     const source = firstNonEmptyString([toStringOrEmpty(input.source), platform]);
-    const captureState = loadCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder);
     const captureRecord = buildCaptureRecord(sessionId, source, fullTranscriptMarkdown, Date.now());
 
     if (isDuplicateCapture(captureState.lastCapture, captureRecord, DUPLICATE_CAPTURE_WINDOW_MS)) {

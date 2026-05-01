@@ -102,7 +102,7 @@ bash hooks/install-codex-hooks.sh
 powershell -File hooks\install-codex-hooks.ps1
 ```
 
-Skills-only hosts (Cursor, Windsurf, Cline): no hook system available. Inform user that automatic session capture is not supported on this platform. Knowledge base commands (`/mmc`, `/mmq`, `/mml`, `/mms`) work once vault is configured.
+Skills-only hosts (Cursor, Windsurf, Cline): no hook system available. Inform user that automatic session capture is not supported on this platform. Knowledge base commands (`/mmc`, `/mmq`, `/mml`, `/mms`, `/mma`) work once vault is configured.
 
 ### Step 5: Verify
 

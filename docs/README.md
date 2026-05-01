@@ -60,7 +60,7 @@ npx skills add s-gryt/memory-mason -a github-copilot
 npx skills add s-gryt/memory-mason              # any host
 ```
 
-`npx skills add` installs knowledge base commands (`/mmc`, `/mmq`, `/mml`, `/mms`, `/mmsetup`) but does **not** install hooks or configure your vault.
+`npx skills add` installs knowledge base commands (`/mmc`, `/mmq`, `/mml`, `/mms`, `/mma`, `/mmsetup`) but does **not** install hooks or configure your vault.
 
 Run `/mmsetup` after install. It configures your vault path and installs capture hooks via the shell installer for your OS. Platforms without a native hook system (Cursor, Windsurf, Cline) get knowledge base commands only.
 
@@ -151,7 +151,27 @@ MEMORY_MASON_VAULT_PATH=/path/to/your/obsidian/vault
 MEMORY_MASON_SUBFOLDER=my-project
 ```
 
-Both formats work identically. Use `.env` if your project already has one; use `memory-mason.json` if you prefer a dedicated config file.
+Both formats work identically for `vaultPath` and `subfolder`. Use `.env` if your project already has one; use `memory-mason.json` if you prefer a dedicated config file.
+
+### Pausing capture
+
+When you need to focus on debugging, run a quick experiment, or work through a session you'd rather keep out of your knowledge base, you can pause capture temporarily.
+
+Add `"sync": false` to your project's `memory-mason.json` or global `~/.memory-mason/config.json`:
+
+```json
+{
+  "vaultPath": "/path/to/your/obsidian/vault",
+  "subfolder": "my-project",
+  "sync": false
+}
+```
+
+Or set `MEMORY_MASON_SYNC=false` as a process environment variable for a single session. The environment variable takes priority over JSON config.
+
+To resume capture, set `"sync": true` or remove the field entirely. All knowledge base commands (`/mmc`, `/mmq`, etc.) remain available while capture is paused — only automatic session logging is affected.
+
+Note: `.env` files do not support the `sync` setting. Use JSON config or a process environment variable.
 
 ## Uninstall
 
@@ -179,32 +199,44 @@ Hooks append session activity into a folder-per-day structure: `{vault}/{subfold
 [AI Conversation] ──> [Hook Runtime] ──> daily/YYYY-MM-DD/001.md  (auto-rotates at 500KB)
 ```
 
+Memory Mason's own commands (`/mmc`, `/mmq`, `/mml`, `/mms`, `/mma`) are automatically excluded from capture. You can compile, query, and manage your knowledge base at any time without those interactions appearing in your daily logs or producing duplicate entries. This works through three layers:
+
+1. **Prompt skip** — `user-prompt-submit.js` detects `/mm*` prompts and skips writing them to the daily log. It sets an `mmSuppressed` flag in capture state.
+2. **Capture state flag** — `post-tool-use.js` and `pre-compact.js` check the `mmSuppressed` flag and skip capture while it is active. The flag resets on the next non-`/mm*` prompt.
+3. **Transcript filter** — `session-end.js` runs `filterMmTurns()` to strip any `/mm*` user turns and their paired assistant replies from the full session transcript before writing.
+
+For sessions you'd rather keep out of the knowledge base entirely — debugging, quick experiments, or focused work — you can pause capture with `"sync": false` in any JSON config file or `MEMORY_MASON_SYNC=false` as a process environment variable. Every hook checks `resolvedConfig.sync === false` early and returns without any vault I/O. The environment variable takes priority over JSON config. Knowledge base commands remain available while capture is paused. See [Pausing capture](#pausing-capture) for configuration details.
+
 ### Compile
 
-Run `/mmc` to compile daily logs into structured knowledge articles. The host LLM reads raw logs and produces concept pages, connection pages, and Q&A entries — all linked with `[[wikilinks]]` for Obsidian graph navigation.
+Run `/mmc` to compile daily logs into structured knowledge articles. The host LLM reads raw logs and produces concept pages, connection pages, and Q&A entries — all linked with `[[wikilinks]]` for Obsidian graph navigation. Compilation also generates a hot cache (`hot.md`) for fast session startup context and a source manifest (`.manifest.json`) for source-to-page lineage tracking.
+
+For large daily logs (over 50KB), `/mmc` splits the content into chunks and compiles them incrementally with per-chunk checkpoints in `state.json`. Already-compiled chunks are skipped on re-runs.
 
 ```text
-daily/YYYY-MM-DD.md ──> /mmc ──> knowledge/concepts/
-                                  knowledge/connections/
-                                  knowledge/qa/
+daily/YYYY-MM-DD/ ──> /mmc ──> knowledge/concepts/
+                                knowledge/connections/
+                                knowledge/qa/
+                                hot.md            (session startup cache)
+                                .manifest.json    (source-to-page lineage)
 ```
 
 ### Retrieve
 
-Run `/mmq` with a question. Memory Mason reads compiled articles, synthesizes an answer, and cites sources with `[[wikilinks]]` back to the original concepts. Your knowledge base grows with every session.
+Run `/mmq` with a question. Memory Mason checks the hot cache first for recent context, then reads compiled articles, synthesizes an answer, and cites sources with `[[wikilinks]]` back to the original concepts. Your knowledge base grows with every session.
 
 ```text
-/mmq "How does X work?" ──> reads knowledge/ ──> answer with [[citations]]
+/mmq "How does X work?" ──> hot cache ──> knowledge/ ──> answer with [[citations]]
 ```
 
 ### Commands
 
 | Command | Action |
 |:--------|:-------|
-| `/mmc` | Compile daily logs into structured knowledge articles |
-| `/mmq` | Answer questions from the knowledge base with `[[wikilink]]` citations |
-| `/mml` | Report knowledge base quality issues |
-| `/mms` | Show knowledge base status and compilation coverage |
+| `/mmc` | Compile daily logs into structured knowledge articles, update hot cache and source manifest |
+| `/mmq` | Answer questions from your knowledge base with source citations (reads hot cache first) |
+| `/mml` | Run 9 knowledge base health checks: broken links, orphans, stale content, manifest integrity, hot cache freshness |
+| `/mms` | Show knowledge base status: article counts, compilation coverage, manifest status, hot cache freshness |
 | `/mma` | Archive old build log entries to keep knowledge base log compact |
 | `/mmsetup` | First-time vault configuration (or uninstall) |
 
@@ -226,6 +258,8 @@ Run `/mmq` with a question. Memory Mason reads compiled articles, synthesizes an
 │   ├── connections/
 │   ├── qa/
 │   └── folds/                 ← /mma archives
+├── hot.md                     ← session startup cache (~500 words, updated each /mmc)
+├── .manifest.json             ← source-to-page lineage (updated each /mmc)
 └── state.json
 ```
 

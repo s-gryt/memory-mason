@@ -18,9 +18,14 @@ If no source is found, hooks throw. Default subfolder is `ai-knowledge` when onl
 ```json
 {
   "vaultPath": "~/ObsidianVault",
-  "subfolder": "ai-knowledge"
+  "subfolder": "ai-knowledge",
+  "sync": false
 }
 ```
+
+`"sync": false` disables all vault capture. Every hook checks `resolvedConfig.sync === false` early and returns without vault I/O. Defaults to `true` when omitted.
+
+`MEMORY_MASON_SYNC=false` as a process env var also disables capture and overrides JSON config. `.env` files do not support this setting.
 
 ## Hook Files
 
@@ -33,6 +38,16 @@ If no source is found, hooks throw. Default subfolder is `ai-knowledge` when onl
 | `session-end.js` | Stop / SessionEnd | Stop appends latest assistant turns; SessionEnd captures full transcript |
 
 `user-prompt-submit.js` still understands `UserPromptExpansion` input, but Memory Mason does not auto-register that event because current Claude plugin validation can reject the key.
+
+## /mm* Command Suppression
+
+Memory Mason commands (`/mmc`, `/mmq`, `/mml`, `/mms`, `/mma`) are excluded from capture through three layers:
+
+1. **Prompt skip** — `user-prompt-submit.js` detects `/mm*` prefix, sets `mmSuppressed` in `capture-state.json`, and skips writing the prompt.
+2. **Capture state flag** — `post-tool-use.js` and `pre-compact.js` check `mmSuppressed` and skip capture while active. The flag resets on the next non-`/mm*` prompt.
+3. **Transcript filter** — `session-end.js` SessionEnd handler runs `filterMmTurns()` to strip `/mm*` user turns and their paired assistant replies from the transcript.
+
+This prevents Memory Mason output from appearing in daily logs and avoids duplicate content in the knowledge base.
 
 ## Platform Mappings
 

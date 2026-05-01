@@ -586,6 +586,61 @@ describe("run - mm suppression state management", () => {
   });
 });
 
+describe("run - sync flag", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const runWithSyncDisabled = (prompt) => {
+    const homeDir = createTempDir("memory-mason-home-");
+    const vaultPath = createTempDir("memory-mason-vault-");
+    const statePath = resolveCaptureStatePath(vaultPath, "ai-knowledge");
+    const dailyPath = buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1);
+
+    vi.spyOn(userPromptSubmit, "resolveRuntimeConfig").mockReturnValue({
+      vaultPath,
+      subfolder: "ai-knowledge",
+      sync: false,
+    });
+
+    const result = runScript("user-prompt-submit.js", {
+      payload: {
+        hookEventName: "user-prompt-submit",
+        cwd: hooksRoot,
+        prompt,
+      },
+      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+    });
+
+    return { result, statePath, dailyPath };
+  };
+
+  it("returns status 0 without writing to vault when sync is false", () => {
+    const { result, dailyPath } = runWithSyncDisabled("normal sync-off prompt");
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe("");
+    expect(fs.existsSync(dailyPath)).toBe(false);
+  });
+
+  it("does not write capture state when sync is false on /mm* prompt", () => {
+    const { result, statePath, dailyPath } = runWithSyncDisabled("/mmc");
+
+    expect(result.status).toBe(0);
+    expect(fs.existsSync(statePath)).toBe(false);
+    expect(fs.existsSync(dailyPath)).toBe(false);
+  });
+
+  it("does not write capture state when sync is false on normal prompt", () => {
+    const { result, statePath, dailyPath } = runWithSyncDisabled("normal prompt with sync off");
+
+    expect(result.status).toBe(0);
+    expect(fs.existsSync(statePath)).toBe(false);
+    expect(fs.existsSync(dailyPath)).toBe(false);
+  });
+});
+
 describe("user-prompt-submit.js readStdin", () => {
   it("returns valid JSON string from mocked fd 0", () => {
     const payload = JSON.stringify({ hook_event_name: "UserPromptSubmit", prompt: "hello" });

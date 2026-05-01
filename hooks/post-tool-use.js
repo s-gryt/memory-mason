@@ -235,6 +235,11 @@ function run(rawStdin, runtime = {}) {
   try {
     const plan = buildRunPlan(rawStdin, runtime);
     const resolvedConfig = resolveRuntimeConfig(plan.cwd, plan.env, plan.homedir);
+
+    if (resolvedConfig.sync === false) {
+      return { status: 0, stdout: "", stderr: "" };
+    }
+
     const captureState = loadCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder);
 
     if (getMmSuppressed(captureState)) {

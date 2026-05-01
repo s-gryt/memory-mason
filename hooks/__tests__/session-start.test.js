@@ -525,6 +525,80 @@ describe("session-start.js", () => {
   });
 });
 
+describe("run - sync flag", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("returns status 0 with empty additionalContext when sync is false", () => {
+    const homeDir = createTempDir("memory-mason-home-");
+    const vaultPath = createTempDir("memory-mason-vault-");
+
+    vi.spyOn(sessionStart, "resolveRuntimeConfig").mockReturnValue({
+      vaultPath,
+      subfolder: "ai-knowledge",
+      sync: false,
+    });
+
+    const existsSyncSpy = vi.spyOn(fs, "existsSync");
+    const statSyncSpy = vi.spyOn(fs, "statSync");
+    const readdirSyncSpy = vi.spyOn(fs, "readdirSync");
+    const readFileSyncSpy = vi.spyOn(fs, "readFileSync");
+
+    const result = runScript("session-start.js", {
+      payload: { cwd: hooksRoot, hookEventName: "SessionStart" },
+      env: buildEnv(homeDir),
+    });
+    const parsed = JSON.parse(result.stdout);
+
+    const touchedVaultPath = [existsSyncSpy, statSyncSpy, readdirSyncSpy, readFileSyncSpy].some(
+      (spy) =>
+        spy.mock.calls.some(
+          ([targetPath]) => typeof targetPath === "string" && targetPath.startsWith(vaultPath),
+        ),
+    );
+
+    expect(result.status).toBe(0);
+    expect(parsed.hookSpecificOutput.hookEventName).toBeTruthy();
+    expect(parsed.hookSpecificOutput.additionalContext).toBe("");
+    expect(touchedVaultPath).toBe(false);
+  });
+
+  it("proceeds normally when sync is true", () => {
+    const homeDir = createTempDir("memory-mason-home-");
+    const vaultPath = createTempDir("memory-mason-vault-");
+    const subfolder = "ai-knowledge";
+    const indexPath = buildKnowledgeIndexPath(vaultPath, subfolder);
+    const dailyPath = buildDailyFilePath(vaultPath, subfolder, today());
+
+    writeText(indexPath, "# Index\n\nSYNC_TRUE_INDEX_SENTINEL");
+    writeText(dailyPath, "# Daily Log\n\nSYNC_TRUE_DAILY_SENTINEL");
+
+    vi.spyOn(sessionStart, "resolveRuntimeConfig").mockReturnValue({
+      vaultPath,
+      subfolder,
+      sync: true,
+    });
+
+    const readFileSyncSpy = vi.spyOn(fs, "readFileSync");
+
+    const result = runScript("session-start.js", {
+      payload: { cwd: hooksRoot, hookEventName: "SessionStart" },
+      env: buildEnv(homeDir),
+    });
+    const parsed = JSON.parse(result.stdout);
+
+    const readFromVault = readFileSyncSpy.mock.calls.some(
+      ([targetPath]) => typeof targetPath === "string" && targetPath.startsWith(vaultPath),
+    );
+
+    expect(result.status).toBe(0);
+    expect(parsed.hookSpecificOutput.additionalContext).toContain("SYNC_TRUE_INDEX_SENTINEL");
+    expect(parsed.hookSpecificOutput.additionalContext).toContain("SYNC_TRUE_DAILY_SENTINEL");
+    expect(readFromVault).toBe(true);
+  });
+});
+
 describe("session-start.js readStdin", () => {
   it("returns valid JSON string from mocked fd 0", () => {
     const payload = JSON.stringify({ cwd: "/tmp", hookEventName: "SessionStart" });

@@ -3,8 +3,9 @@ name: mmc
 description: >
   Compile today's daily conversation log into structured knowledge articles
   in the Obsidian vault. Creates concept pages, connection pages, updates
-  the knowledge index and build log. Use when you want to process captured
-  AI conversations into permanent, searchable knowledge.
+  the knowledge index, build log, hot cache, and source manifest. Use when
+  you want to process captured AI conversations into permanent, searchable
+  knowledge.
 argument-hint: "[daily-log-file]"
 allowed-tools: "Read Write Edit Glob Grep Bash(obsidian *)"
 ---
@@ -32,6 +33,9 @@ Use these paths for all operations:
 - Connections: {vault}/{subfolder}/knowledge/connections/
 - Index: {vault}/{subfolder}/knowledge/index.md
 - Build log: {vault}/{subfolder}/knowledge/log.md
+- State file: {vault}/{subfolder}/state.json
+- Hot cache: {vault}/{subfolder}/hot.md
+- Manifest: {vault}/{subfolder}/.manifest.json
 
 ## Steps
 
@@ -68,6 +72,16 @@ Per-chunk checkpoint (for incremental /mmc runs):
 - After compiling each chunk, write its hash to state.json immediately:
   state.ingested["2026-04-30.md"].chunks["session-2026-04-30T14:22:01-lines-10500-63299"] = { hash: "<16-char>", compiled_at: "<ISO>" }
 - The top-level ingested entry hash (Step 8) still represents the full file hash.
+
+Manifest checkpoint (source-to-page lineage, optional but preferred):
+- Read {vault}/{subfolder}/.manifest.json if it exists, or start with `{ "sources": {} }`.
+- After the full log text is assembled, compute a full-source 16-character SHA-256 hash.
+- Use the same source key convention as state.json:
+  - flat file -> `YYYY-MM-DD.md`
+  - folder-per-day -> `YYYY-MM-DD`
+- If the manifest already contains the same source key with the same full-source hash and the user did not
+  explicitly ask to force recompilation, stop and report `Already compiled (unchanged).`
+- Use `state.json` for runtime checkpoints and chunk hashes. Use `.manifest.json` for source-to-page lineage.
 
 2. Read the current knowledge index
 - Read {vault}/{subfolder}/knowledge/index.md if it exists.
@@ -181,12 +195,35 @@ updated: YYYY-MM-DD
 
 8. Update state.json
 - Read {vault}/{subfolder}/state.json if it exists, or start with default state: {"ingested":{}, "last_compile": null, "last_lint": null}
-- Compute a 16-character SHA-256 hex hash of the daily log file content.
+- Compute a 16-character SHA-256 hex hash of the daily log file content. Reuse the full-source hash from the
+  manifest checkpoint if you already computed it.
 - For folder-per-day logs: compute the hash over the full concatenated content of all chunks (same as if it were a flat file).
 - Set the ingested entry for the compiled daily log key. For flat files use filename key `"2026-04-26.md"`. For folder-per-day logs use date key `"2026-04-30"` (no extension):
   {"hash": "<16-char-hash>", "compiled_at": "<ISO-8601 timestamp>"}
 - Set "last_compile" to the current ISO-8601 timestamp.
 - Write the updated state to {vault}/{subfolder}/state.json with 2-space JSON indentation.
+
+8.4 Update .manifest.json
+- Read {vault}/{subfolder}/.manifest.json if it exists, or start with:
+
+```json
+{
+  "sources": {}
+}
+```
+
+- Set `sources[sourceKey]` using the same source key chosen for state.json.
+- Record:
+  - `source_path`: `daily/YYYY-MM-DD.md` for flat files or `daily/YYYY-MM-DD/` for folder-per-day logs
+  - `hash`: the 16-character full-source hash
+  - `compiled_at`: current ISO timestamp
+  - `pages_created`: knowledge-relative page paths created by this compile, such as
+    `knowledge/concepts/auth-pattern.md`
+  - `pages_updated`: knowledge-relative page paths updated by this compile
+- If the source already exists in the manifest, merge and deduplicate `pages_created` and `pages_updated`
+  instead of narrowing them.
+- Preserve all other source entries.
+- Write the updated manifest to {vault}/{subfolder}/.manifest.json with 2-space JSON indentation.
 
 8.5 Update hot.md
 - After compiling, write a ~500-word session hot cache to {vault}/{subfolder}/hot.md.
@@ -214,6 +251,8 @@ updated: {ISO-timestamp}
 ```
 
 - Keep hot.md under 500 words. Overwrite completely each time (it's a cache, not a log).
+- Use the created/updated article lists from the current compile and, when helpful, the manifest entry you just
+  wrote to keep the cache consistent with durable page lineage.
 
 8.6 Decompose oversized flat daily logs
 - This step applies only when the source was a flat `.md` file (not already a folder-per-day).

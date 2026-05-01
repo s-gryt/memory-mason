@@ -64,7 +64,74 @@ const parseMemoryMasonConfig = (rawText) => {
 
   const vaultPath = assertNonEmptyString("vaultPath", parsed.vaultPath);
   const subfolder = assertNonEmptyString("subfolder", parsed.subfolder);
-  return { vaultPath, subfolder };
+  const sync = parseSyncFieldFromConfigObject(parsed);
+  return typeof sync === "boolean" ? { vaultPath, subfolder, sync } : { vaultPath, subfolder };
+};
+
+const describeValueType = (value) => {
+  if (value === null) {
+    return "null";
+  }
+
+  if (Array.isArray(value)) {
+    return "array";
+  }
+
+  return typeof value;
+};
+
+const parseSyncFieldFromConfigObject = (parsedConfig) => {
+  if (!Object.hasOwn(parsedConfig, "sync")) {
+    return null;
+  }
+
+  if (typeof parsedConfig.sync === "boolean") {
+    return parsedConfig.sync;
+  }
+
+  throw new Error(`config sync must be a boolean, got: ${describeValueType(parsedConfig.sync)}`);
+};
+
+const parseConfigObjectOrNull = (configText) => {
+  if (configText === "") {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(configText);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return null;
+    }
+
+    return parsed;
+  } catch (_error) {
+    return null;
+  }
+};
+
+const parseConfigSyncOrNull = (configText) => {
+  const parsedConfig = parseConfigObjectOrNull(configText);
+  if (parsedConfig === null) {
+    return null;
+  }
+
+  return parseSyncFieldFromConfigObject(parsedConfig);
+};
+
+const parseEnvSyncOrNull = (envSyncValue) => {
+  if (typeof envSyncValue !== "string" || envSyncValue === "") {
+    return null;
+  }
+
+  if (envSyncValue === "false") {
+    return false;
+  }
+
+  if (envSyncValue === "true") {
+    return true;
+  }
+
+  throw new Error(`MEMORY_MASON_SYNC must be 'true' or 'false', got: ${envSyncValue}`);
 };
 
 const stripDotEnvComment = (valueText) => {
@@ -152,14 +219,17 @@ const resolveFromEnvVaultPath = (resolutionInput) => {
     return null;
   }
 
+  const configSync = parseConfigSyncOrNull(resolutionInput.configText);
   const subfolderFromConfig = parseConfigSubfolderOrEmpty(resolutionInput.configText);
-  return {
+  const resolvedConfig = {
     vaultPath: expandHomePath(resolutionInput.envVaultPath, resolutionInput.homedir),
     subfolder: pickFirstNonEmptyString(
       [subfolderFromConfig, resolutionInput.dotEnvSubfolder],
       "ai-knowledge",
     ),
   };
+
+  return typeof configSync === "boolean" ? { ...resolvedConfig, sync: configSync } : resolvedConfig;
 };
 
 const resolveFromConfigText = (resolutionInput) => {
@@ -168,10 +238,14 @@ const resolveFromConfigText = (resolutionInput) => {
   }
 
   const parsedConfig = parseMemoryMasonConfig(resolutionInput.configText);
-  return {
+  const resolvedConfig = {
     vaultPath: expandHomePath(parsedConfig.vaultPath, resolutionInput.homedir),
     subfolder: parsedConfig.subfolder,
   };
+
+  return typeof parsedConfig.sync === "boolean"
+    ? { ...resolvedConfig, sync: parsedConfig.sync }
+    : resolvedConfig;
 };
 
 const resolveFromDotEnvVaultPath = (resolutionInput) => {
@@ -191,10 +265,14 @@ const resolveFromGlobalConfigText = (resolutionInput) => {
   }
 
   const parsedGlobalConfig = parseMemoryMasonConfig(resolutionInput.globalConfigText);
-  return {
+  const resolvedConfig = {
     vaultPath: expandHomePath(parsedGlobalConfig.vaultPath, resolutionInput.homedir),
     subfolder: parsedGlobalConfig.subfolder,
   };
+
+  return typeof parsedGlobalConfig.sync === "boolean"
+    ? { ...resolvedConfig, sync: parsedGlobalConfig.sync }
+    : resolvedConfig;
 };
 
 const resolveFromGlobalDotEnv = (resolutionInput) => {
@@ -231,11 +309,14 @@ const resolveVaultConfig = (cwd, envVaultPath, configText, homedir, options = {}
   const safeEnvVaultPath = typeof envVaultPath === "string" ? envVaultPath : "";
   const safeConfigText = typeof configText === "string" ? configText : "";
   const safeOptions = options !== null && typeof options === "object" ? options : {};
+  const safeEnvSync =
+    typeof process.env.MEMORY_MASON_SYNC === "string" ? process.env.MEMORY_MASON_SYNC : "";
   const safeDotEnvText = typeof safeOptions.dotEnvText === "string" ? safeOptions.dotEnvText : "";
   const safeGlobalConfigText =
     typeof safeOptions.globalConfigText === "string" ? safeOptions.globalConfigText : "";
   const safeGlobalDotEnvText =
     typeof safeOptions.globalDotEnvText === "string" ? safeOptions.globalDotEnvText : "";
+  const syncFromEnv = parseEnvSyncOrNull(safeEnvSync);
   const parsedDotEnv = parseDotEnv(safeDotEnvText);
   const dotEnvVaultPath =
     typeof parsedDotEnv.MEMORY_MASON_VAULT_PATH === "string"
@@ -268,7 +349,21 @@ const resolveVaultConfig = (cwd, envVaultPath, configText, homedir, options = {}
 
   const resolvedConfig = resolveVaultConfigFromAlternatives(resolutionInput);
   if (resolvedConfig !== null) {
-    return resolvedConfig;
+    let sync = true;
+
+    if (typeof resolvedConfig.sync === "boolean") {
+      sync = resolvedConfig.sync;
+    }
+
+    if (typeof syncFromEnv === "boolean") {
+      sync = syncFromEnv;
+    }
+
+    return {
+      vaultPath: resolvedConfig.vaultPath,
+      subfolder: resolvedConfig.subfolder,
+      sync,
+    };
   }
 
   assertNonEmptyString("cwd", cwd);

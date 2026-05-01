@@ -233,7 +233,12 @@ function run(rawStdin, runtime = {}) {
   try {
     const input = parseJsonInput(rawStdin);
     const cwd = resolveInputCwd(input, fallbackCwd);
-    const resolvedConfig = resolveRuntimeConfig(cwd, env, homedir);
+    const resolvedConfig = module.exports.resolveRuntimeConfig(cwd, env, homedir);
+
+    if (resolvedConfig.sync === false) {
+      return buildSuccessResult("");
+    }
+
     const additionalContext = buildSessionAdditionalContext(resolvedConfig);
     return buildSuccessResult(additionalContext);
   } catch (error) {
@@ -258,11 +263,6 @@ function main(runtime = {}) {
   return result;
 }
 
-/* c8 ignore next 3 */
-if (require.main === module) {
-  main();
-}
-
 module.exports = {
   readStdin,
   readDotEnvText,
@@ -270,6 +270,12 @@ module.exports = {
   readGlobalDotEnvText,
   readDailyLogText,
   readRecentDailyLog,
+  resolveRuntimeConfig,
   run,
   main,
 };
+
+/* c8 ignore next 3 */
+if (require.main === module) {
+  main();
+}

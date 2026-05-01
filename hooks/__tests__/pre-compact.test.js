@@ -329,6 +329,34 @@ describe("run - mm suppression", () => {
   });
 });
 
+describe("run - sync flag", () => {
+  it("returns status 0 without writing to vault when sync is false", () => {
+    const cwd = createTempDir("memory-mason-cwd-");
+    const homeDir = createTempDir("memory-mason-home-");
+    const vaultPath = createTempDir("memory-mason-vault-");
+    const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
+
+    writeText(
+      path.join(cwd, "memory-mason.json"),
+      JSON.stringify({ vaultPath, subfolder: "ai-knowledge", sync: false }),
+    );
+    writeText(transcriptPath, buildTranscript(6));
+
+    const result = runScript("pre-compact.js", {
+      payload: {
+        cwd,
+        transcript_path: transcriptPath,
+        session_id: "session-sync-false",
+      },
+      cwd,
+      env: buildEnv(homeDir),
+    });
+
+    expect(result.status).toBe(0);
+    expect(fs.existsSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1))).toBe(false);
+  });
+});
+
 describe("pre-compact.js readStdin", () => {
   it("reads single chunk from mocked fd 0", () => {
     const payload = JSON.stringify({ session_id: "s1" });

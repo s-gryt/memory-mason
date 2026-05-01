@@ -57,6 +57,9 @@ jobs:
       - name: Install hook dependencies
         run: npm ci
 
+      - name: Run hook lint
+        run: npm run lint
+
       - name: Run hook coverage
         run: npm run coverage
 
@@ -88,23 +91,30 @@ jobs:
 
       - name: Sync SKILL.md copies
         run: |
-          for skill in mmc mmq mml mms; do
+          for skill_dir in skills/*; do
+            [ -d "$skill_dir" ] || continue
+            skill="$(basename "$skill_dir")"
+
             mkdir -p ".cursor/skills/${skill}"
-            cp "skills/${skill}/SKILL.md" ".cursor/skills/${skill}/SKILL.md"
+            cp "${skill_dir}/SKILL.md" ".cursor/skills/${skill}/SKILL.md"
 
             mkdir -p ".windsurf/skills/${skill}"
-            cp "skills/${skill}/SKILL.md" ".windsurf/skills/${skill}/SKILL.md"
+            cp "${skill_dir}/SKILL.md" ".windsurf/skills/${skill}/SKILL.md"
 
             mkdir -p "plugins/memory-mason/skills/${skill}"
-            cp "skills/${skill}/SKILL.md" "plugins/memory-mason/skills/${skill}/SKILL.md"
+            cp "${skill_dir}/SKILL.md" "plugins/memory-mason/skills/${skill}/SKILL.md"
           done
 
       - name: Build .skill ZIP archives
         run: |
-          cd skills/mmc && zip -r ../../mmc.skill . && cd ../..
-          cd skills/mmq && zip -r ../../mmq.skill . && cd ../..
-          cd skills/mml && zip -r ../../mml.skill . && cd ../..
-          cd skills/mms && zip -r ../../mms.skill . && cd ../..
+          rm -f ./*.skill
+          for skill_dir in skills/*; do
+            [ -d "$skill_dir" ] || continue
+            skill="$(basename "$skill_dir")"
+            cd "$skill_dir"
+            zip -r "../../${skill}.skill" .
+            cd ../..
+          done
 
       - name: Sync auto-activation rules
         run: |
@@ -149,7 +159,7 @@ jobs:
             .cursor/skills/ \
             .windsurf/skills/ \
             plugins/memory-mason/skills/ \
-            mmc.skill mmq.skill mml.skill mms.skill \
+            *.skill \
             .clinerules/memory-mason.md \
             .cursor/rules/memory-mason.mdc \
             .windsurf/rules/memory-mason.md \

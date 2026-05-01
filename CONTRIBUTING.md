@@ -7,7 +7,7 @@ Memory Mason is a publishable multi-agent plugin and skills repo. Keep changes m
 ## Source of truth
 
 | What | Where |
-|:-----|:------|
+| :--- | :---- |
 | Knowledge base skills | `skills/` |
 | Always-on rule text | `rules/kb-activate.md` |
 | Hook runtime | `hooks/` |
@@ -15,7 +15,7 @@ Memory Mason is a publishable multi-agent plugin and skills repo. Keep changes m
 | Release version | `VERSION` |
 | Product docs | `README.md`, `docs/README.md`, `hooks/README.md` |
 
-Do not hand-edit generated copies under `.cursor/skills`, `.windsurf/skills`, `plugins/memory-mason/skills`, `.clinerules`, or `.github/copilot-instructions.md`. CI syncs those.
+Do not hand-edit generated copies under `.cursor/skills`, `.windsurf/skills`, `plugins/memory-mason/skills`, `*.skill`, `.clinerules`, or `.github/copilot-instructions.md`. CI syncs those.
 
 ## Validation
 

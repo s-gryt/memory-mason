@@ -2,8 +2,8 @@
 name: mms
 description: >
   Show knowledge base statistics: article count by type, last compile time,
-  daily log status, total vault size, and a health summary. Quick overview
-  of the Memory Mason knowledge base state.
+  daily log status, total vault size, hot cache status, manifest status, and
+  a health summary. Quick overview of the Memory Mason knowledge base state.
 allowed-tools: "Read Glob Bash(obsidian *)"
 ---
 
@@ -25,6 +25,8 @@ If `./memory-mason.json` is missing, run one workspace search for `**/memory-mas
 
 Use these paths:
 - State file: {vault}/{subfolder}/state.json
+- Manifest file: {vault}/{subfolder}/.manifest.json
+- Hot cache: {vault}/{subfolder}/hot.md
 - Concepts: {vault}/{subfolder}/knowledge/concepts/
 - Connections: {vault}/{subfolder}/knowledge/connections/
 - Q&A: {vault}/{subfolder}/knowledge/qa/
@@ -34,6 +36,8 @@ Use these paths:
 ## Steps
 
 1. Read {vault}/{subfolder}/state.json if it exists.
+
+1.5 Read {vault}/{subfolder}/.manifest.json if it exists.
 
 2. Count files with glob:
 - {vault}/{subfolder}/knowledge/concepts/*.md -> concept count
@@ -50,7 +54,13 @@ Use these paths:
 - total_cost_usd (if present)
 - ingested entries and each compiled_at timestamp
 
+3.5 From .manifest.json, read:
+- total tracked source count (`sources` object size)
+- each source entry hash and compiled_at timestamp
+- any source paths that no longer exist on disk
+
 4. Determine the most recent compile timestamp from ingested entries.
+- If state.json has no ingested entries but .manifest.json exists, use the most recent manifest `compiled_at`.
 
 5. Count uncompiled daily logs.
 - Uncompiled means a daily log exists but is not present in the ingested map.
@@ -59,6 +69,19 @@ Use these paths:
 - List any daily log over 500KB with its filename and size.
 - If total daily/ directory size exceeds 2MB, flag it.
 - For folder-per-day entries, the total size is the sum of all chunk files. If a folder's total exceeds 2MB, flag it as oversized even though no single file exceeds that threshold.
+
+5.6 Determine manifest status.
+- Report `present` when .manifest.json exists and parses successfully.
+- Report `missing` when it does not exist.
+- Report tracked source count.
+- If manifest source paths are recorded but missing on disk, mark manifest status as `stale references`.
+
+5.7 Determine hot cache status.
+- If {vault}/{subfolder}/hot.md exists, read its frontmatter `updated` timestamp.
+- Compare hot.md `updated` against the most recent compile timestamp.
+- Report `fresh` when hot.md is updated at or after the most recent compile timestamp.
+- Report `stale` when hot.md exists but is older than the most recent compile timestamp.
+- Report `missing` when hot.md does not exist.
 
 6. Read the first 5 data rows from {vault}/{subfolder}/knowledge/index.md as preview.
 - Keep the header and first five article rows.
@@ -74,12 +97,16 @@ Return status exactly like this:
 **Articles:** {concept count} concepts, {connection count} connections, {qa count} Q&A
 **Daily logs:** {total} total, {uncompiled} uncompiled
 **Last compiled:** {ISO timestamp or "never"}
+**Manifest:** {present/missing} ({tracked source count} sources)
+**Hot cache:** {fresh/stale/missing} ({updated timestamp or "never"})
 
 ## Recent Index (first 5 entries)
 {index preview}
 
 ## Health
 {healthy / N daily logs need compilation}
+- Manifest: {present / missing / stale references}
+- Hot cache: {fresh / stale / missing}
 
 ## Daily Log Sizes
 {table: filename | size | status}

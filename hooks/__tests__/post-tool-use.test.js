@@ -341,6 +341,79 @@ describe("run - mm suppression", () => {
   });
 });
 
+describe("run - sync flag", () => {
+  it("returns status 0 without writing to vault when sync is false", () => {
+    const homeDir = createTempDir("memory-mason-home-");
+    const vaultPath = createTempDir("memory-mason-vault-");
+    const cwd = createTempDir("memory-mason-cwd-");
+
+    writeText(
+      path.join(cwd, "memory-mason.json"),
+      JSON.stringify(
+        {
+          vaultPath,
+          subfolder: "ai-knowledge",
+          sync: false,
+        },
+        null,
+        2,
+      ),
+    );
+
+    const result = runScript("post-tool-use.js", {
+      payload: {
+        hook_event_name: "PostToolUse",
+        cwd,
+        tool_name: "Bash",
+        tool_response: "should be skipped when sync is false",
+      },
+      cwd,
+      env: buildEnv(homeDir),
+    });
+
+    expect(result).toEqual({ status: 0, stdout: "", stderr: "" });
+    expect(fs.existsSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1))).toBe(false);
+  });
+
+  it("proceeds normally when sync is true", () => {
+    const homeDir = createTempDir("memory-mason-home-");
+    const vaultPath = createTempDir("memory-mason-vault-");
+    const cwd = createTempDir("memory-mason-cwd-");
+
+    writeText(
+      path.join(cwd, "memory-mason.json"),
+      JSON.stringify(
+        {
+          vaultPath,
+          subfolder: "ai-knowledge",
+          sync: true,
+        },
+        null,
+        2,
+      ),
+    );
+
+    const result = runScript("post-tool-use.js", {
+      payload: {
+        hook_event_name: "PostToolUse",
+        cwd,
+        tool_name: "Bash",
+        tool_response: "tool output when sync is enabled",
+      },
+      cwd,
+      env: buildEnv(homeDir),
+    });
+
+    const dailyContent = fs.readFileSync(
+      buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1),
+      "utf-8",
+    );
+
+    expect(result.status).toBe(0);
+    expect(dailyContent).toContain("tool output when sync is enabled");
+  });
+});
+
 describe("post-tool-use.js readStdin", () => {
   it("returns valid JSON string from mocked fd 0", () => {
     const payload = JSON.stringify({ tool_name: "Bash", tool_response: "ok" });

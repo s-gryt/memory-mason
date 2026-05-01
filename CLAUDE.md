@@ -10,6 +10,7 @@ Edit these files directly:
 
 | File | Owns |
 | ----- | ----- |
+| `skills/mma/SKILL.md` | Build-log folding workflow |
 | `skills/mmc/SKILL.md` | Compile workflow |
 | `skills/mmq/SKILL.md` | Query workflow |
 | `skills/mml/SKILL.md` | Lint workflow |
@@ -20,28 +21,32 @@ Edit these files directly:
 | `VERSION` | Shared plugin/package version for releasable manifests |
 | `README.md` | Product front door |
 | `docs/README.md` | Platform details |
-| `.github/workflows/ci.yml` | Hook validation + generated artifact sync |
+| `.claude-plugin/` | Claude plugin manifests |
+| `plugins/memory-mason/.codex-plugin/plugin.json` | Codex plugin manifest |
+| `gemini-extension.json` | Gemini extension manifest |
 
 ## Generated copies
 
-These are synced from the source files above and should not be edited manually:
+These are checked-in generated distribution surfaces synced from the source files above and should not be edited manually:
 
 | Path | Source |
 | ----- | ------ |
 | `.cursor/skills/*/SKILL.md` | `skills/*/SKILL.md` |
 | `.windsurf/skills/*/SKILL.md` | `skills/*/SKILL.md` |
 | `plugins/memory-mason/skills/*/SKILL.md` | `skills/*/SKILL.md` |
-| `mmc.skill`, `mmq.skill`, `mml.skill`, `mms.skill` | ZIP archives of `skills/mmc`, `skills/mmq`, `skills/mml`, `skills/mms` |
+| `*.skill` | ZIP archives of corresponding `skills/*` directories |
 | `.clinerules/memory-mason.md` | `rules/kb-activate.md` |
 | `.cursor/rules/memory-mason.mdc` | `rules/kb-activate.md` + Cursor frontmatter |
 | `.windsurf/rules/memory-mason.md` | `rules/kb-activate.md` + Windsurf frontmatter |
-| `.github/copilot-instructions.md` | `rules/kb-activate.md` block |
-| `.github/plugin/plugin.json` | `.claude-plugin/plugin.json` |
-| `.github/plugin/marketplace.json` | `.claude-plugin/marketplace.json` |
+
+`skills/*` are product skills shipped by Memory Mason.
+`.cursor/skills/*` and `.windsurf/skills/*` are generated host-facing copies of root `skills/*`.
+`plugins/memory-mason/skills/*` is generated plugin-packaged copy of root `skills/*`.
+`.claude-plugin/` is publishable Claude plugin surface.
 
 ## Important behavior notes
 
-- `npx skills add` reads source skills from `skills/` in this repo. It does not require checked-in `.github/skills/` copies.
+- `npx skills add` reads source skills from `skills/` in this repo.
 - Hook config resolution order is: `MEMORY_MASON_VAULT_PATH` env var, `memory-mason.json` in project root, `.env` in project root, then `~/.memory-mason/config.json` global config. It throws if none are found.
 - Claude Code one-command install scripts are `hooks/install.sh` and `hooks/install.ps1`.
 - Claude Code install bootstraps `~/.memory-mason/config.json` for cross-project use.
@@ -55,4 +60,4 @@ These are synced from the source files above and should not be edited manually:
 - Hook coverage gate: `cd hooks && npm run coverage`
 - Manifest version sync check: `node scripts/version-sync.mjs check`
 - Stale-name sweep: search for old ids or old repo names before release
-- Manifests to check before publish: `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.github/plugin/plugin.json`, `.github/plugin/marketplace.json`, `.agents/plugins/marketplace.json`, `plugins/memory-mason/.codex-plugin/plugin.json`, `gemini-extension.json`
+- Manifests to check before publish: `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `plugins/memory-mason/.codex-plugin/plugin.json`, `gemini-extension.json`

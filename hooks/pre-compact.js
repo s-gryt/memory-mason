@@ -195,18 +195,23 @@ function run(rawStdin, runtime = {}) {
       return { status: 0, stdout: "", stderr: "" };
     }
 
+    const cwd = resolveInputCwd(input, fallbackCwd);
+    const resolvedConfig = resolveRuntimeConfig(cwd, env, homedir);
+
+    if (resolvedConfig.sync === false) {
+      return { status: 0, stdout: "", stderr: "" };
+    }
+
+    const captureState = loadCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder);
+
+    if (getMmSuppressed(captureState)) {
+      return { status: 0, stdout: "", stderr: "" };
+    }
+
     const transcriptContent = fs.readFileSync(transcriptPath, "utf-8");
     const fullTranscript = buildFullTranscript(transcriptContent);
 
     if (shouldSkipShortTranscript(fullTranscript)) {
-      return { status: 0, stdout: "", stderr: "" };
-    }
-
-    const cwd = resolveInputCwd(input, fallbackCwd);
-    const resolvedConfig = resolveRuntimeConfig(cwd, env, homedir);
-    const captureState = loadCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder);
-
-    if (getMmSuppressed(captureState)) {
       return { status: 0, stdout: "", stderr: "" };
     }
 

@@ -200,7 +200,12 @@ function run(rawStdin, runtime = {}) {
       return { status: 0, stdout: "", stderr: "" };
     }
 
-    const resolvedConfig = resolveRuntimeConfig(plan.cwd, plan.env, plan.homedir);
+    const resolvedConfig = module.exports.resolveRuntimeConfig(plan.cwd, plan.env, plan.homedir);
+
+    if (resolvedConfig.sync === false) {
+      return { status: 0, stdout: "", stderr: "" };
+    }
+
     const captureState = loadCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder);
 
     if (plan.promptEntry.text.startsWith("/mm")) {
@@ -238,17 +243,18 @@ function main(runtime = {}) {
   return result;
 }
 
-/* c8 ignore next 3 */
-if (require.main === module) {
-  main();
-}
-
 module.exports = {
   readStdin,
   firstNonEmptyString,
   readDotEnvText,
   readGlobalConfigText,
   readGlobalDotEnvText,
+  resolveRuntimeConfig,
   run,
   main,
 };
+
+/* c8 ignore next 3 */
+if (require.main === module) {
+  main();
+}

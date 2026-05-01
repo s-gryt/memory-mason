@@ -7,6 +7,7 @@
 [![Stars](https://img.shields.io/github/stars/s-gryt/memory-mason?style=flat&color=e8734a)](https://github.com/s-gryt/memory-mason/stargazers)
 [![CI](https://github.com/s-gryt/memory-mason/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/s-gryt/memory-mason/actions/workflows/ci.yml)
 [![cov](https://raw.githubusercontent.com/s-gryt/memory-mason/gh-pages/badges/coverage.svg)](https://github.com/s-gryt/memory-mason/actions/workflows/ci.yml)
+[![Checked with Biome](https://img.shields.io/badge/Checked_with-Biome-60a5fa?style=flat&logo=biome)](https://biomejs.dev)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Claude Code](https://img.shields.io/badge/Claude_Code-plugin-8B5CF6)](https://code.claude.com/docs/en/discover-plugins)
 [![LinkedIn](https://img.shields.io/badge/LinkedIn-Sergii%20Grytsaienko-0077B5?logo=linkedin)](https://www.linkedin.com/in/sergii-grytsaienko/)
@@ -26,7 +27,9 @@ No API key needed. No cloud sync. Everything stays local in your Obsidian vault.
    (any agent)          (automatic)        daily/YYYY-MM-DD/
 ```
 
-Hooks capture prompts, tool results, and session transcripts into daily log files. This happens silently in the background — no manual steps required. Memory Mason's own commands (`/mmc`, `/mmq`, etc.) are automatically excluded from capture to avoid noise.
+Hooks capture prompts, tool results, and session transcripts into daily log files. This happens silently in the background — no manual steps required.
+
+Memory Mason's own commands (`/mmc`, `/mmq`, `/mml`, `/mms`, `/mma`) are automatically excluded from capture. This means you can compile, query, and manage your knowledge base at any time without those interactions appearing in your daily logs or producing duplicate entries.
 
 Daily logs are stored in per-day folders and auto-split into files of up to 500KB each. This keeps Obsidian responsive and ensures each file stays within LLM processing limits. No data is lost — every conversation turn is preserved, and Obsidian indexes all chunks for full-text search. See [docs/README.md](docs/README.md) for technical details on chunked storage.
 
@@ -44,19 +47,19 @@ Run `/mmc` to compile daily logs into structured articles. The host LLM reads yo
 ### How knowledge is retrieved
 
 ```text
-/mmq "How does auth work?" ──> reads knowledge/ ──> answer with [[citations]]
+/mmq "How does auth work?" ──> hot cache ──> knowledge/ ──> answer with [[citations]]
 ```
 
-Run `/mmq` with a question. Memory Mason reads compiled articles, synthesizes an answer, and cites sources with `[[wikilinks]]` back to the original concepts. Your knowledge base grows with every session and becomes more useful over time.
+Run `/mmq` with a question. Memory Mason checks its hot cache for recent context first, then reads compiled articles, synthesizes an answer, and cites sources with `[[wikilinks]]` back to the original concepts. Your knowledge base grows with every session and becomes more useful over time.
 
 ## Commands
 
 | Command | What it does |
 |:--------|:-------------|
-| `/mmc` | Compile daily logs into structured knowledge articles |
-| `/mmq` | Answer questions from the knowledge base with `[[wikilink]]` citations |
-| `/mml` | Run knowledge base health checks |
-| `/mms` | Show knowledge base status and compilation coverage |
+| `/mmc` | Compile daily logs into structured knowledge articles, update hot cache and source manifest |
+| `/mmq` | Answer questions from your knowledge base with source citations |
+| `/mml` | Run knowledge base health checks (broken links, stale content, manifest integrity, and more) |
+| `/mms` | Show knowledge base status, health summary, and compilation coverage |
 | `/mma` | Archive old build log entries to keep the knowledge base log compact |
 | `/mmsetup` | First-time vault configuration (or uninstall) |
 
@@ -125,6 +128,26 @@ MEMORY_MASON_SUBFOLDER=ai-knowledge
 ```
 
 Config resolves in priority order: env var `MEMORY_MASON_VAULT_PATH` → project `memory-mason.json` → project `.env` → global `~/.memory-mason/config.json`. See [docs/README.md](docs/README.md) for details.
+
+### Pausing capture
+
+When you need to focus on debugging, run a quick experiment, or work through a session you'd rather keep out of your knowledge base, you can pause capture temporarily.
+
+Add `"sync": false` to your project's `memory-mason.json` or global `~/.memory-mason/config.json`:
+
+```json
+{
+  "vaultPath": "/path/to/your/obsidian/vault",
+  "subfolder": "ai-knowledge",
+  "sync": false
+}
+```
+
+Or set `MEMORY_MASON_SYNC=false` as a process environment variable for a single session. The environment variable takes priority over JSON config.
+
+To resume capture, set `"sync": true` or remove the field entirely. All knowledge base commands (`/mmc`, `/mmq`, etc.) remain available while capture is paused.
+
+Note: `.env` files do not support the `sync` setting. Use JSON config or a process environment variable.
 
 ## Uninstall
 
