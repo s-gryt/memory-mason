@@ -419,7 +419,7 @@ describe("resolveVaultConfig", () => {
     });
   });
 
-  it("prefers global JSON over global .env", () => {
+  it("prefers global .env over global JSON", () => {
     expect(
       resolveVaultConfig("/repo", "", "", "/home/tester", {
         globalConfigText: '{"vaultPath":"~/global-json-vault","subfolder":"json-brain"}',
@@ -427,8 +427,8 @@ describe("resolveVaultConfig", () => {
           "MEMORY_MASON_VAULT_PATH=~/global-env-vault\nMEMORY_MASON_SUBFOLDER=env-brain",
       }),
     ).toEqual({
-      vaultPath: "/home/tester/global-json-vault",
-      subfolder: "json-brain",
+      vaultPath: "/home/tester/global-env-vault",
+      subfolder: "env-brain",
       sync: true,
     });
   });
@@ -565,6 +565,99 @@ describe("resolveVaultConfig", () => {
         ).toEqual({
           vaultPath: "/home/tester/env-vault",
           subfolder: "config-subfolder",
+          sync: false,
+        });
+      });
+    });
+
+    it("project .env vault path wins over memory-mason.json vault path", () => {
+      withMemoryMasonSync(null, () => {
+        expect(
+          resolveVaultConfig(
+            "/repo",
+            "",
+            '{"vaultPath":"~/json-vault","subfolder":"json-sub"}',
+            "/home/tester",
+            { dotEnvText: "MEMORY_MASON_VAULT_PATH=~/env-vault\nMEMORY_MASON_SUBFOLDER=env-sub" },
+          ),
+        ).toEqual({
+          vaultPath: "/home/tester/env-vault",
+          subfolder: "env-sub",
+          sync: true,
+        });
+      });
+    });
+
+    it("sets sync=false from project .env MEMORY_MASON_SYNC", () => {
+      withMemoryMasonSync(null, () => {
+        expect(
+          resolveVaultConfig("/repo", "", "", "/home/tester", {
+            dotEnvText: "MEMORY_MASON_VAULT_PATH=~/vault\nMEMORY_MASON_SYNC=false",
+          }),
+        ).toEqual({
+          vaultPath: "/home/tester/vault",
+          subfolder: "ai-knowledge",
+          sync: false,
+        });
+      });
+    });
+
+    it("project .env MEMORY_MASON_SYNC overrides JSON sync:true", () => {
+      withMemoryMasonSync(null, () => {
+        expect(
+          resolveVaultConfig(
+            "/repo",
+            "",
+            '{"vaultPath":"~/vault","subfolder":"notes","sync":true}',
+            "/home/tester",
+            { dotEnvText: "MEMORY_MASON_SYNC=false" },
+          ),
+        ).toEqual({
+          vaultPath: "/home/tester/vault",
+          subfolder: "notes",
+          sync: false,
+        });
+      });
+    });
+
+    it("sets sync=false from global .env MEMORY_MASON_SYNC", () => {
+      withMemoryMasonSync(null, () => {
+        expect(
+          resolveVaultConfig("/repo", "", "", "/home/tester", {
+            globalDotEnvText: "MEMORY_MASON_VAULT_PATH=~/global-vault\nMEMORY_MASON_SYNC=false",
+          }),
+        ).toEqual({
+          vaultPath: "/home/tester/global-vault",
+          subfolder: "ai-knowledge",
+          sync: false,
+        });
+      });
+    });
+
+    it("project .env MEMORY_MASON_SYNC overrides global .env MEMORY_MASON_SYNC", () => {
+      withMemoryMasonSync(null, () => {
+        expect(
+          resolveVaultConfig("/repo", "", "", "/home/tester", {
+            globalDotEnvText: "MEMORY_MASON_VAULT_PATH=~/global-vault\nMEMORY_MASON_SYNC=false",
+            dotEnvText: "MEMORY_MASON_SYNC=true",
+          }),
+        ).toEqual({
+          vaultPath: "/home/tester/global-vault",
+          subfolder: "ai-knowledge",
+          sync: true,
+        });
+      });
+    });
+
+    it("process env MEMORY_MASON_SYNC overrides project .env MEMORY_MASON_SYNC", () => {
+      withMemoryMasonSync("false", () => {
+        expect(
+          resolveVaultConfig("/repo", "", "", "/home/tester", {
+            dotEnvText: "MEMORY_MASON_VAULT_PATH=~/vault\nMEMORY_MASON_SYNC=true",
+          }),
+        ).toEqual({
+          vaultPath: "/home/tester/vault",
+          subfolder: "ai-knowledge",
           sync: false,
         });
       });

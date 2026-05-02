@@ -289,10 +289,10 @@ const resolveFromGlobalDotEnv = (resolutionInput) => {
 const resolveVaultConfigFromAlternatives = (resolutionInput) => {
   const alternatives = [
     resolveFromEnvVaultPath,
-    resolveFromConfigText,
     resolveFromDotEnvVaultPath,
-    resolveFromGlobalConfigText,
+    resolveFromConfigText,
     resolveFromGlobalDotEnv,
+    resolveFromGlobalConfigText,
   ];
 
   return alternatives.reduce((resolvedConfig, resolveAlternative) => {
@@ -326,6 +326,9 @@ const resolveVaultConfig = (cwd, envVaultPath, configText, homedir, options = {}
     typeof parsedDotEnv.MEMORY_MASON_SUBFOLDER === "string"
       ? parsedDotEnv.MEMORY_MASON_SUBFOLDER
       : "";
+  const dotEnvSync =
+    typeof parsedDotEnv.MEMORY_MASON_SYNC === "string" ? parsedDotEnv.MEMORY_MASON_SYNC : "";
+  const syncFromDotEnv = parseEnvSyncOrNull(dotEnvSync);
   const parsedGlobalDotEnv = parseDotEnv(safeGlobalDotEnvText);
   const globalDotEnvVaultPath =
     typeof parsedGlobalDotEnv.MEMORY_MASON_VAULT_PATH === "string"
@@ -335,6 +338,11 @@ const resolveVaultConfig = (cwd, envVaultPath, configText, homedir, options = {}
     typeof parsedGlobalDotEnv.MEMORY_MASON_SUBFOLDER === "string"
       ? parsedGlobalDotEnv.MEMORY_MASON_SUBFOLDER
       : "";
+  const globalDotEnvSync =
+    typeof parsedGlobalDotEnv.MEMORY_MASON_SYNC === "string"
+      ? parsedGlobalDotEnv.MEMORY_MASON_SYNC
+      : "";
+  const syncFromGlobalDotEnv = parseEnvSyncOrNull(globalDotEnvSync);
 
   const resolutionInput = {
     homedir: safeHomedir,
@@ -353,6 +361,14 @@ const resolveVaultConfig = (cwd, envVaultPath, configText, homedir, options = {}
 
     if (typeof resolvedConfig.sync === "boolean") {
       sync = resolvedConfig.sync;
+    }
+
+    if (typeof syncFromGlobalDotEnv === "boolean") {
+      sync = syncFromGlobalDotEnv;
+    }
+
+    if (typeof syncFromDotEnv === "boolean") {
+      sync = syncFromDotEnv;
     }
 
     if (typeof syncFromEnv === "boolean") {

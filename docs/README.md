@@ -112,66 +112,34 @@ Config resolves in this order (first match wins):
 | Priority | Source | Location | Best for |
 |:--------:|:-------|:---------|:---------|
 | 1 | Env var | `MEMORY_MASON_VAULT_PATH` | CI, containers |
-| 2 | Project config | `memory-mason.json` in project root | Per-project override |
-| 3 | Project `.env` | `MEMORY_MASON_VAULT_PATH` + optional `MEMORY_MASON_SUBFOLDER` | Per-project override |
-| 4 | Global config | `~/.memory-mason/config.json` | Default for all projects |
+| 2 | Project `.env` | `MEMORY_MASON_VAULT_PATH` + optional `MEMORY_MASON_SUBFOLDER` + optional `MEMORY_MASON_SYNC` | Per-project override |
+| 3 | Project config | `memory-mason.json` in project root | Per-project override |
+| 4 | Global `.env` | `~/.memory-mason/.env` | Shared local defaults |
+| 5 | Global config | `~/.memory-mason/config.json` | Default for all projects |
 
-If no source is found, hooks throw an explicit error.
+If no source is found, hooks throw an explicit error. Config can be set globally (`~/.memory-mason/`) or per-project (project root). `/mmsetup` creates the global config automatically.
 
-### Global config (recommended for most users)
+### .env format
 
-Created automatically by `/mmsetup` or shell installers. Works across all projects.
-
-**`~/.memory-mason/config.json`:**
-
-```json
-{
-  "vaultPath": "~/ObsidianVault",
-  "subfolder": "ai-knowledge"
-}
-```
-
-### Per-project config
-
-Override the global config for a specific project. Useful when different projects write to different vaults or subfolders.
-
-**`memory-mason.json`** in project root:
-
-```json
-{
-  "vaultPath": "/path/to/your/obsidian/vault",
-  "subfolder": "my-project"
-}
-```
-
-**`.env`** in project root:
+`MEMORY_MASON_VAULT_PATH` sets the Obsidian vault location. `MEMORY_MASON_SUBFOLDER` sets the directory inside the vault. `MEMORY_MASON_SYNC` is optional — capture is enabled by default; set it to `false` to pause capture. Setting `MEMORY_MASON_SYNC` as a process environment variable overrides all config files for a single session.
 
 ```env
 MEMORY_MASON_VAULT_PATH=/path/to/your/obsidian/vault
-MEMORY_MASON_SUBFOLDER=my-project
+MEMORY_MASON_SUBFOLDER=ai-knowledge
+MEMORY_MASON_SYNC=true
 ```
 
-Both formats work identically for `vaultPath` and `subfolder`. Use `.env` if your project already has one; use `memory-mason.json` if you prefer a dedicated config file.
+### JSON format
 
-### Pausing capture
-
-When you need to focus on debugging, run a quick experiment, or work through a session you'd rather keep out of your knowledge base, you can pause capture temporarily.
-
-Add `"sync": false` to your project's `memory-mason.json` or global `~/.memory-mason/config.json`:
+`vaultPath` sets the Obsidian vault location. `subfolder` sets the directory inside the vault. `sync` is optional — capture is enabled by default; set it to `false` to pause capture. Use this format for `memory-mason.json` in a project root or `~/.memory-mason/config.json` for global config (`/mmsetup` creates the global file automatically).
 
 ```json
 {
   "vaultPath": "/path/to/your/obsidian/vault",
-  "subfolder": "my-project",
-  "sync": false
+  "subfolder": "ai-knowledge",
+  "sync": true
 }
 ```
-
-Or set `MEMORY_MASON_SYNC=false` as a process environment variable for a single session. The environment variable takes priority over JSON config.
-
-To resume capture, set `"sync": true` or remove the field entirely. All knowledge base commands (`/mmc`, `/mmq`, etc.) remain available while capture is paused — only automatic session logging is affected.
-
-Note: `.env` files do not support the `sync` setting. Use JSON config or a process environment variable.
 
 ## Uninstall
 
@@ -205,7 +173,7 @@ Memory Mason's own commands (`/mmc`, `/mmq`, `/mml`, `/mms`, `/mma`) are automat
 2. **Capture state flag** — `post-tool-use.js` and `pre-compact.js` check the `mmSuppressed` flag and skip capture while it is active. The flag resets on the next non-`/mm*` prompt.
 3. **Transcript filter** — `session-end.js` runs `filterMmTurns()` to strip any `/mm*` user turns and their paired assistant replies from the full session transcript before writing.
 
-For sessions you'd rather keep out of the knowledge base entirely — debugging, quick experiments, or focused work — you can pause capture with `"sync": false` in any JSON config file or `MEMORY_MASON_SYNC=false` as a process environment variable. Every hook checks `resolvedConfig.sync === false` early and returns without any vault I/O. The environment variable takes priority over JSON config. Knowledge base commands remain available while capture is paused. See [Pausing capture](#pausing-capture) for configuration details.
+To exclude entire sessions from capture, set `sync` to `false` in your config file. See [Per-project config](#per-project-config) for details.
 
 ### Compile
 

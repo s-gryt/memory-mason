@@ -5,13 +5,13 @@
   },
   "metadata": {
     "description": "Capture AI coding sessions and compile them into an Obsidian knowledge base.",
-    "version": "0.3.0"
+    "version": "0.3.1"
   },
   "plugins": [
     {
       "name": "memory-mason",
       "description": "Sync AI conversations to an Obsidian knowledge base with Memory Mason KB skills.",
-      "version": "0.3.0",
+      "version": "0.3.1",
       "source": "./",
       "author": {
         "name": "Sergii Grytsaienko",

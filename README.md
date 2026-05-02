@@ -100,54 +100,29 @@ See [docs/README.md](docs/README.md) for marketplace installs, workspace-level i
 
 ## Configuration
 
-Run `/mmsetup` to configure your vault path interactively. Or set it up manually using any of these methods:
+Run `/mmsetup` to configure your vault path interactively, or create a config file manually. Config can be set globally (`~/.memory-mason/`) or per-project (project root). When multiple sources exist, they resolve in priority order: `MEMORY_MASON_VAULT_PATH` env var → project `.env` → project `memory-mason.json` → global `.env` → `~/.memory-mason/config.json`. See [docs/README.md](docs/README.md) for details.
 
-**Global config** (`~/.memory-mason/config.json`):
+### .env format
 
-```json
-{
-  "vaultPath": "~/ObsidianVault",
-  "subfolder": "ai-knowledge"
-}
-```
-
-**Project `.env`** (per-project override):
+`MEMORY_MASON_VAULT_PATH` sets the Obsidian vault location. `MEMORY_MASON_SUBFOLDER` sets the directory inside the vault. `MEMORY_MASON_SYNC` is optional — capture is enabled by default; set it to `false` to pause capture. Setting `MEMORY_MASON_SYNC` as a process environment variable overrides all config files for a single session.
 
 ```env
 MEMORY_MASON_VAULT_PATH=/path/to/your/obsidian/vault
 MEMORY_MASON_SUBFOLDER=ai-knowledge
+MEMORY_MASON_SYNC=true
 ```
 
-**Project `memory-mason.json`** (per-project override):
+### JSON format
 
-```json
-{
-  "vaultPath": "/path/to/your/obsidian/vault",
-  "subfolder": "ai-knowledge"
-}
-```
-
-Config resolves in priority order: env var `MEMORY_MASON_VAULT_PATH` → project `memory-mason.json` → project `.env` → global `~/.memory-mason/config.json`. See [docs/README.md](docs/README.md) for details.
-
-### Pausing capture
-
-When you need to focus on debugging, run a quick experiment, or work through a session you'd rather keep out of your knowledge base, you can pause capture temporarily.
-
-Add `"sync": false` to your project's `memory-mason.json` or global `~/.memory-mason/config.json`:
+`vaultPath` sets the Obsidian vault location. `subfolder` sets the directory inside the vault. `sync` is optional — capture is enabled by default; set it to `false` to pause capture. Use this format for `memory-mason.json` in a project root or `~/.memory-mason/config.json` for global config (`/mmsetup` creates the global file automatically).
 
 ```json
 {
   "vaultPath": "/path/to/your/obsidian/vault",
   "subfolder": "ai-knowledge",
-  "sync": false
+  "sync": true
 }
 ```
-
-Or set `MEMORY_MASON_SYNC=false` as a process environment variable for a single session. The environment variable takes priority over JSON config.
-
-To resume capture, set `"sync": true` or remove the field entirely. All knowledge base commands (`/mmc`, `/mmq`, etc.) remain available while capture is paused.
-
-Note: `.env` files do not support the `sync` setting. Use JSON config or a process environment variable.
 
 ## Uninstall
 

@@ -9,23 +9,34 @@ Hooks resolve config in this order (first match wins):
 | Priority | Source | Location |
 |:--------:|:-------|:---------|
 | 1 | Env var | `MEMORY_MASON_VAULT_PATH` |
-| 2 | Project config | `memory-mason.json` in project root |
-| 3 | Project `.env` | `MEMORY_MASON_VAULT_PATH` + optional `MEMORY_MASON_SUBFOLDER` |
-| 4 | Global config | `~/.memory-mason/config.json` |
+| 2 | Project `.env` | `MEMORY_MASON_VAULT_PATH` + optional `MEMORY_MASON_SUBFOLDER` + optional `MEMORY_MASON_SYNC` |
+| 3 | Project config | `memory-mason.json` in project root |
+| 4 | Global `.env` | `~/.memory-mason/.env` |
+| 5 | Global config | `~/.memory-mason/config.json` |
 
 If no source is found, hooks throw. Default subfolder is `ai-knowledge` when only `MEMORY_MASON_VAULT_PATH` is set.
 
-```json
-{
-  "vaultPath": "~/ObsidianVault",
-  "subfolder": "ai-knowledge",
-  "sync": false
-}
+### .env format
+
+`MEMORY_MASON_VAULT_PATH` sets the Obsidian vault location. `MEMORY_MASON_SUBFOLDER` sets the directory inside the vault. `MEMORY_MASON_SYNC` is optional — capture is enabled by default; set it to `false` to pause capture. Setting `MEMORY_MASON_SYNC` as a process environment variable overrides all config files for a single session.
+
+```env
+MEMORY_MASON_VAULT_PATH=/path/to/your/obsidian/vault
+MEMORY_MASON_SUBFOLDER=ai-knowledge
+MEMORY_MASON_SYNC=true
 ```
 
-`"sync": false` disables all vault capture. Every hook checks `resolvedConfig.sync === false` early and returns without vault I/O. Defaults to `true` when omitted.
+### JSON format
 
-`MEMORY_MASON_SYNC=false` as a process env var also disables capture and overrides JSON config. `.env` files do not support this setting.
+`vaultPath` sets the Obsidian vault location. `subfolder` sets the directory inside the vault. `sync` is optional — capture is enabled by default; set it to `false` to pause capture. Every hook checks `resolvedConfig.sync === false` early and returns without vault I/O.
+
+```json
+{
+  "vaultPath": "/path/to/your/obsidian/vault",
+  "subfolder": "ai-knowledge",
+  "sync": true
+}
+```
 
 ## Hook Files
 

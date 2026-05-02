@@ -10,7 +10,7 @@
         "timeoutSec": 10
       }
     ],
-    "userPromptSubmitted": [
+    "UserPromptSubmit": [
       {
         "type": "command",
         "bash": "node hooks/user-prompt-submit.js",
@@ -19,7 +19,7 @@
         "timeoutSec": 5
       }
     ],
-    "postToolUse": [
+    "PostToolUse": [
       {
         "type": "command",
         "bash": "node hooks/post-tool-use.js",
@@ -28,7 +28,7 @@
         "timeoutSec": 5
       }
     ],
-    "preCompact": [
+    "PreCompact": [
       {
         "type": "command",
         "bash": "node hooks/pre-compact.js",
@@ -46,7 +46,7 @@
         "timeoutSec": 15
       }
     ],
-    "sessionEnd": [
+    "SessionEnd": [
       {
         "type": "command",
         "bash": "node hooks/session-end.js",
