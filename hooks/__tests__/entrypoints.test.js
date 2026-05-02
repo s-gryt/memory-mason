@@ -442,7 +442,7 @@ describe("user-prompt-submit.js", () => {
 
     expect(result.status).toBe(0);
     expect(result.stderr).toContain(
-      "memory-mason.json not found and MEMORY_MASON_VAULT_PATH is not set",
+      "Memory Mason config not found. Checked MEMORY_MASON_VAULT_PATH, project .env, project memory-mason.json, ~/.memory-mason/.env, and ~/.memory-mason/config.json.",
     );
   });
 
@@ -1713,7 +1713,9 @@ describe("session-start.js main", () => {
       homedir: homeDir,
     });
     expect(exitCode).toBe(0);
-    expect(errors.join("")).toContain("memory-mason.json not found");
+    expect(errors.join("")).toContain(
+      "Memory Mason config not found. Checked MEMORY_MASON_VAULT_PATH, project .env, project memory-mason.json, ~/.memory-mason/.env, and ~/.memory-mason/config.json.",
+    );
   });
 
   it("uses io fallback functions when stdout/stderr not provided", () => {
@@ -1847,7 +1849,9 @@ describe("user-prompt-submit.js main", () => {
       homedir: homeDir,
     });
     expect(exitCode).toBe(0);
-    expect(errors.join("")).toContain("memory-mason.json not found");
+    expect(errors.join("")).toContain(
+      "Memory Mason config not found. Checked MEMORY_MASON_VAULT_PATH, project .env, project memory-mason.json, ~/.memory-mason/.env, and ~/.memory-mason/config.json.",
+    );
   });
 
   it("falls back to process stdout/stderr when io functions are missing", () => {
@@ -2078,7 +2082,9 @@ describe("post-tool-use.js main", () => {
       homedir: homeDir,
     });
     expect(exitCode).toBe(0);
-    expect(errors.join("")).toContain("memory-mason.json not found");
+    expect(errors.join("")).toContain(
+      "Memory Mason config not found. Checked MEMORY_MASON_VAULT_PATH, project .env, project memory-mason.json, ~/.memory-mason/.env, and ~/.memory-mason/config.json.",
+    );
   });
 
   it("falls back to process stdout/stderr when io functions are missing", () => {

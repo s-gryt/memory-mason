@@ -383,7 +383,9 @@ const resolveVaultConfig = (cwd, envVaultPath, configText, homedir, options = {}
   }
 
   assertNonEmptyString("cwd", cwd);
-  throw new Error("memory-mason.json not found and MEMORY_MASON_VAULT_PATH is not set");
+  throw new Error(
+    "Memory Mason config not found. Checked MEMORY_MASON_VAULT_PATH, project .env, project memory-mason.json, ~/.memory-mason/.env, and ~/.memory-mason/config.json.",
+  );
 };
 
 const detectPlatform = (input) => {

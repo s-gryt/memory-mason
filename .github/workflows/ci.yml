@@ -8,7 +8,7 @@ on:
       - .github/workflows/ci.yml
       - hooks/**
       - skills/**/SKILL.md
-      - rules/kb-activate.md
+      - rules/memory-mason.md
       - .claude-plugin/plugin.json
       - VERSION
       - gemini-extension.json
@@ -19,7 +19,7 @@ on:
       - .github/workflows/ci.yml
       - hooks/**
       - skills/**/SKILL.md
-      - rules/kb-activate.md
+      - rules/memory-mason.md
       - .claude-plugin/plugin.json
       - VERSION
       - gemini-extension.json
@@ -119,22 +119,22 @@ jobs:
       - name: Sync auto-activation rules
         run: |
           mkdir -p .clinerules
-          cp rules/kb-activate.md .clinerules/memory-mason.md
+          cp rules/memory-mason.md .clinerules/memory-mason.md
 
           mkdir -p .cursor/rules
           printf '%s\n' '---' 'description: "Memory Mason knowledge base"' 'alwaysApply: true' '---' '' > .cursor/rules/memory-mason.mdc
-          cat rules/kb-activate.md >> .cursor/rules/memory-mason.mdc
+          cat rules/memory-mason.md >> .cursor/rules/memory-mason.mdc
 
           mkdir -p .windsurf/rules
           printf '%s\n' '---' 'trigger: always_on' '---' '' > .windsurf/rules/memory-mason.md
-          cat rules/kb-activate.md >> .windsurf/rules/memory-mason.md
+          cat rules/memory-mason.md >> .windsurf/rules/memory-mason.md
 
           python3 - <<'PYEOF'
           import pathlib
           import re
 
           content = pathlib.Path('.github/copilot-instructions.md').read_text(encoding='utf-8')
-          body = pathlib.Path('rules/kb-activate.md').read_text(encoding='utf-8').rstrip('\n')
+          body = pathlib.Path('rules/memory-mason.md').read_text(encoding='utf-8').rstrip('\n')
           block = f'<!-- BEGIN memory-mason -->\n{body}\n<!-- END memory-mason -->'
 
           if '<!-- BEGIN memory-mason -->' in content:

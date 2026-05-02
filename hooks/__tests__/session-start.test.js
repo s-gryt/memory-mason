@@ -717,7 +717,9 @@ describe("session-start.js main", () => {
       homedir: homeDir,
     });
     expect(exitCode).toBe(0);
-    expect(errors.join("")).toContain("memory-mason.json not found");
+    expect(errors.join("")).toContain(
+      "Memory Mason config not found. Checked MEMORY_MASON_VAULT_PATH, project .env, project memory-mason.json, ~/.memory-mason/.env, and ~/.memory-mason/config.json.",
+    );
   });
 
   it("uses io fallback functions when stdout/stderr not provided", () => {

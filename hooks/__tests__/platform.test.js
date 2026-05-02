@@ -666,7 +666,7 @@ describe("resolveVaultConfig", () => {
 
   it("fails fast when neither config source is provided", () => {
     expect(() => resolveVaultConfig("/repo", "", "", "/home/tester")).toThrow(
-      "memory-mason.json not found and MEMORY_MASON_VAULT_PATH is not set",
+      "Memory Mason config not found. Checked MEMORY_MASON_VAULT_PATH, project .env, project memory-mason.json, ~/.memory-mason/.env, and ~/.memory-mason/config.json.",
     );
   });
 
@@ -678,7 +678,7 @@ describe("resolveVaultConfig", () => {
 
   it("treats non-string env and config inputs as absent", () => {
     expect(() => resolveVaultConfig("/repo", null, null, "/home/tester", null)).toThrow(
-      "memory-mason.json not found and MEMORY_MASON_VAULT_PATH is not set",
+      "Memory Mason config not found. Checked MEMORY_MASON_VAULT_PATH, project .env, project memory-mason.json, ~/.memory-mason/.env, and ~/.memory-mason/config.json.",
     );
   });
 });

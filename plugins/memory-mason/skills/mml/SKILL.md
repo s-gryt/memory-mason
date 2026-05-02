@@ -14,15 +14,25 @@ Run nine health checks on the knowledge base and report all findings by severity
 
 ## Path Resolution
 
-Before any other reasoning, read `./memory-mason.json` from the current project root and resolve:
+Before any other reasoning, resolve vault config in this priority order:
+1. Process environment variable `MEMORY_MASON_VAULT_PATH`
+2. Project `./.env`
+3. Project `./memory-mason.json`
+4. Global `~/.memory-mason/.env`
+5. Global `~/.memory-mason/config.json`
+
+Resolve:
 - {vault}: absolute path to the Obsidian vault
 - {subfolder}: plugin-managed subfolder inside the vault
 
-Do not claim config is missing until you have attempted that read.
-If `./memory-mason.json` is missing, run one workspace search for `**/memory-mason.json`.
-- If exactly one file is found, read it and continue.
-- If multiple files are found, report the candidate paths briefly and ask which project root to use.
-- If no file is found, fail fast with an explicit error.
+Use the source that provides the vault path.
+
+Subfolder rules:
+- If the vault path comes from an `.env` file, use `MEMORY_MASON_SUBFOLDER` from that same file when present, otherwise default to `ai-knowledge`.
+- If the vault path comes from `memory-mason.json` or `~/.memory-mason/config.json`, use its `subfolder`.
+- If the vault path comes from process env `MEMORY_MASON_VAULT_PATH`, first try project `./memory-mason.json` `subfolder`, then project `./.env` `MEMORY_MASON_SUBFOLDER`, then default to `ai-knowledge`.
+
+Do not claim config is missing until you have attempted all five locations above. If none provide a vault path, fail fast with an explicit error that names every location checked.
 
 Use these paths:
 - Knowledge root: {vault}/{subfolder}/knowledge/

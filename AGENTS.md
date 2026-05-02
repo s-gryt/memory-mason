@@ -12,7 +12,9 @@
 ## Knowledge Base Structure
 
 This project syncs AI conversations to an Obsidian vault. Configure the vault
-path in `memory-mason.json` or via `MEMORY_MASON_VAULT_PATH` environment variable.
+path with any supported Memory Mason config source: `MEMORY_MASON_VAULT_PATH`,
+project `.env`, project `memory-mason.json`, `~/.memory-mason/.env`, or
+`~/.memory-mason/config.json`.
 
 Vault layout:
 

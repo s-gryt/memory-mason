@@ -44,11 +44,12 @@ If already installed: report status and skip unless user says "reinstall" or "fo
 
 ### Step 3: Configure Vault
 
-Check if vault is already configured (in priority order):
+Check if vault is already configured (vault-path priority order):
 1. Env var `MEMORY_MASON_VAULT_PATH` is set
-2. `memory-mason.json` exists in project root
-3. `.env` in project root contains `MEMORY_MASON_VAULT_PATH`
-4. `~/.memory-mason/config.json` exists
+2. `.env` in project root contains `MEMORY_MASON_VAULT_PATH`
+3. `memory-mason.json` exists in project root
+4. `~/.memory-mason/.env` contains `MEMORY_MASON_VAULT_PATH`
+5. `~/.memory-mason/config.json` exists
 
 If none found, ask user and create global config:
 1. Ask: "What is the absolute path to your Obsidian vault?"
@@ -59,6 +60,12 @@ If none found, ask user and create global config:
 ```
 
 Alternatively, user can create a `.env` in their project root:
+```env
+MEMORY_MASON_VAULT_PATH=/path/to/vault
+MEMORY_MASON_SUBFOLDER=ai-knowledge
+```
+
+Or a `~/.memory-mason/.env` file:
 ```env
 MEMORY_MASON_VAULT_PATH=/path/to/vault
 MEMORY_MASON_SUBFOLDER=ai-knowledge
