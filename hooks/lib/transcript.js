@@ -1,5 +1,6 @@
 "use strict";
 
+const { isMmCommand } = require("./prompt");
 const { truncateContext } = require("./vault");
 
 const assertNonEmptyString = (name, value) => {
@@ -210,8 +211,7 @@ const filterMmTurns = (turns) => {
   const filteredTurns = [];
 
   turns.forEach((turn) => {
-    const isUserMmCommand =
-      turn.role === "user" && typeof turn.content === "string" && turn.content.startsWith("/mm");
+    const isUserMmCommand = turn.role === "user" && isMmCommand(turn.content);
 
     if (isUserMmCommand) {
       skipAssistantAfterMm = true;

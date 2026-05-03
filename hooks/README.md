@@ -50,13 +50,13 @@ MEMORY_MASON_SYNC=true
 
 `user-prompt-submit.js` still understands `UserPromptExpansion` input, but Memory Mason does not auto-register that event because current Claude plugin validation can reject the key.
 
-## /mm* Command Suppression
+## Memory Mason Command Suppression
 
-Memory Mason commands (`/mmc`, `/mmq`, `/mml`, `/mms`, `/mma`) are excluded from capture through three layers:
+Memory Mason commands are excluded from capture through three layers. This applies only to short-form commands `/mma`, `/mmc`, `/mml`, `/mms`, `/mmq`, and `/mmsetup`, plus their namespaced forms such as `/memory-mason:mmc`.
 
-1. **Prompt skip** — `user-prompt-submit.js` detects `/mm*` prefix, sets `mmSuppressed` in `capture-state.json`, and skips writing the prompt.
-2. **Capture state flag** — `post-tool-use.js` and `pre-compact.js` check `mmSuppressed` and skip capture while active. The flag resets on the next non-`/mm*` prompt.
-3. **Transcript filter** — `session-end.js` SessionEnd handler runs `filterMmTurns()` to strip `/mm*` user turns and their paired assistant replies from the transcript.
+1. **Prompt skip** — `user-prompt-submit.js` detects a Memory Mason command, sets `mmSuppressed` in `capture-state.json`, and skips writing the prompt.
+2. **Capture state flag** — `post-tool-use.js` and `pre-compact.js` check `mmSuppressed` and skip capture while active. The flag resets on the next non-Memory Mason prompt.
+3. **Transcript filter** — `session-end.js` SessionEnd handler runs `filterMmTurns()` to strip Memory Mason user turns and their paired assistant replies from the transcript.
 
 This prevents Memory Mason output from appearing in daily logs and avoids duplicate content in the knowledge base.
 

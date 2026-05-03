@@ -6,6 +6,36 @@ const firstNonEmptyString = (values) => {
   return typeof match === "string" ? match.trim() : "";
 };
 
+const MM_COMMAND_NAMES = Object.freeze(["mma", "mmc", "mml", "mms", "mmq", "mmsetup"]);
+
+const MM_COMMAND_TOKENS = new Set(
+  MM_COMMAND_NAMES.flatMap((commandName) => [`/${commandName}`, `/memory-mason:${commandName}`]),
+);
+
+const getMmCommandToken = (value) => {
+  if (typeof value !== "string") {
+    return "";
+  }
+
+  const trimmedValue = value.trim();
+  if (trimmedValue === "") {
+    return "";
+  }
+
+  const normalizedValue = trimmedValue.startsWith("/") ? trimmedValue : `/${trimmedValue}`;
+  return MM_COMMAND_TOKENS.has(normalizedValue) ? normalizedValue : "";
+};
+
+const isMmCommand = (value) => {
+  if (typeof value !== "string") {
+    return false;
+  }
+
+  const trimmedValue = value.trim();
+  const firstToken = trimmedValue.split(/\s+/, 1)[0];
+  return MM_COMMAND_TOKENS.has(firstToken);
+};
+
 const extractHookEventName = (input) =>
   firstNonEmptyString([
     input !== null && typeof input === "object" && !Array.isArray(input)
@@ -20,9 +50,11 @@ const buildPromptExpansionText = (input) => {
   const commandName = firstNonEmptyString([input.command_name, input.commandName]);
   const commandArgs = firstNonEmptyString([input.command_args, input.commandArgs]);
   const commandSource = firstNonEmptyString([input.command_source, input.commandSource]);
+  const mmCommandToken = prompt === "" ? getMmCommandToken(commandName) : "";
 
   return [
     prompt,
+    mmCommandToken,
     expansionType === "" ? "" : `type: ${expansionType}`,
     commandName === "" ? "" : `command: ${commandName}`,
     commandArgs === "" ? "" : `args: ${commandArgs}`,
@@ -61,6 +93,8 @@ const extractPromptEntry = (platform, input) => {
 module.exports = {
   extractHookEventName,
   buildPromptExpansionText,
+  getMmCommandToken,
+  isMmCommand,
   extractPromptText,
   extractPromptEntry,
 };

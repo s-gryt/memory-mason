@@ -306,10 +306,38 @@ describe("filterMmTurns", () => {
     expect(filterMmTurns(turns)).toEqual([]);
   });
 
+  it("filters user turn starting with /memory-mason:mmc", () => {
+    const turns = [{ role: "user", content: "/memory-mason:mmc" }];
+
+    expect(filterMmTurns(turns)).toEqual([]);
+  });
+
+  it("filters user turn starting with /memory-mason:mmsetup", () => {
+    const turns = [{ role: "user", content: "/memory-mason:mmsetup repo" }];
+
+    expect(filterMmTurns(turns)).toEqual([]);
+  });
+
+  it("does not filter unknown /mm-style user turn", () => {
+    const turns = [{ role: "user", content: "/mmwhatever repo" }];
+
+    expect(filterMmTurns(turns)).toEqual(turns);
+  });
+
   it("also filters the next assistant turn after /mm user turn", () => {
     const turns = [
       { role: "user", content: "/mmc" },
       { role: "assistant", content: "done" },
+      { role: "user", content: "normal" },
+    ];
+
+    expect(filterMmTurns(turns)).toEqual([{ role: "user", content: "normal" }]);
+  });
+
+  it("also filters the next assistant turn after /memory-mason user turn", () => {
+    const turns = [
+      { role: "user", content: "/memory-mason:mmq what changed" },
+      { role: "assistant", content: "hidden" },
       { role: "user", content: "normal" },
     ];
 

@@ -157,6 +157,29 @@ describe("user-prompt-submit.js", () => {
     expect(dailyContent).toContain("source: plugin");
   });
 
+  it("suppresses Memory Mason Claude prompt expansion when prompt field is empty", () => {
+    const homeDir = createTempDir("memory-mason-home-");
+    const vaultPath = createTempDir("memory-mason-vault-");
+
+    const result = runScript("user-prompt-submit.js", {
+      payload: {
+        hook_event_name: "UserPromptExpansion",
+        cwd: hooksRoot,
+        prompt: "",
+        expansion_type: "skill",
+        command_name: "memory-mason:mmc",
+      },
+      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+    });
+
+    const statePath = resolveCaptureStatePath(vaultPath, "ai-knowledge");
+    const state = JSON.parse(fs.readFileSync(statePath, "utf-8"));
+
+    expect(result.status).toBe(0);
+    expect(fs.existsSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1))).toBe(false);
+    expect(state.mmSuppressed).toBe(true);
+  });
+
   it("uses custom subfolder from memory-mason.json when env vault path is set", () => {
     const cwd = createTempDir("memory-mason-cwd-");
     const homeDir = createTempDir("memory-mason-home-");
@@ -501,6 +524,13 @@ describe("run - mm command filtering", () => {
     expect(result.status).toBe(0);
     expect(appendToDailySpy).toHaveBeenCalledTimes(1);
   });
+
+  it("does NOT skip for unknown /mm-style prompts", () => {
+    const { result, appendToDailySpy } = runWithPrompt("/mmwhatever now");
+
+    expect(result.status).toBe(0);
+    expect(appendToDailySpy).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("run - mm suppression state management", () => {
@@ -545,6 +575,27 @@ describe("run - mm suppression state management", () => {
 
     expect(result.status).toBe(0);
     expect(fs.existsSync(statePath)).toBe(true);
+    expect(state.mmSuppressed).toBe(true);
+  });
+
+  it("sets mmSuppressed=true in capture state when /memory-mason command is received", () => {
+    const homeDir = createTempDir("memory-mason-home-");
+    const vaultPath = createTempDir("memory-mason-vault-");
+
+    const result = runScript("user-prompt-submit.js", {
+      payload: {
+        hookEventName: "user-prompt-submit",
+        cwd: hooksRoot,
+        prompt: "/memory-mason:mmc",
+      },
+      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+    });
+
+    const statePath = resolveCaptureStatePath(vaultPath, "ai-knowledge");
+    const state = JSON.parse(fs.readFileSync(statePath, "utf-8"));
+
+    expect(result.status).toBe(0);
+    expect(fs.existsSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1))).toBe(false);
     expect(state.mmSuppressed).toBe(true);
   });
 
@@ -626,6 +677,14 @@ describe("run - sync flag", () => {
 
   it("does not write capture state when sync is false on /mm* prompt", () => {
     const { result, statePath, dailyPath } = runWithSyncDisabled("/mmc");
+
+    expect(result.status).toBe(0);
+    expect(fs.existsSync(statePath)).toBe(false);
+    expect(fs.existsSync(dailyPath)).toBe(false);
+  });
+
+  it("does not write capture state when sync is false on /memory-mason prompt", () => {
+    const { result, statePath, dailyPath } = runWithSyncDisabled("/memory-mason:mmc");
 
     expect(result.status).toBe(0);
     expect(fs.existsSync(statePath)).toBe(false);

@@ -8,7 +8,7 @@ const { parseJsonInput, detectPlatform, resolveVaultConfig } = require("./lib/co
 const { buildCommandErrorResult, writeIfPresent } = require("./lib/cli");
 const { buildDailyEntry, localNow } = require("./lib/vault");
 const { appendToDaily } = require("./lib/writer");
-const { extractPromptEntry } = require("./lib/prompt");
+const { extractPromptEntry, isMmCommand } = require("./lib/prompt");
 const { parseJsonlTranscript } = require("./lib/transcript");
 const {
   loadCaptureState,
@@ -208,7 +208,7 @@ function run(rawStdin, runtime = {}) {
 
     const captureState = loadCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder);
 
-    if (plan.promptEntry.text.startsWith("/mm")) {
+    if (isMmCommand(plan.promptEntry.text)) {
       const suppressedState = setMmSuppressed(captureState, true);
       saveCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder, suppressedState);
       return { status: 0, stdout: "", stderr: "" };

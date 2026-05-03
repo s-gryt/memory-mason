@@ -3,9 +3,13 @@
 const {
   extractHookEventName,
   buildPromptExpansionText,
+  getMmCommandToken,
+  isMmCommand,
   extractPromptText,
   extractPromptEntry,
 } = require("../lib/prompt");
+
+const MM_COMMAND_NAMES = ["mma", "mmc", "mml", "mms", "mmq", "mmsetup"];
 
 describe("prompt helpers", () => {
   it("extracts hook event name from known fields", () => {
@@ -48,6 +52,16 @@ describe("prompt helpers", () => {
     ).toBe("/model");
   });
 
+  it("prepends Memory Mason command token for empty prompt expansion", () => {
+    expect(
+      buildPromptExpansionText({
+        prompt: "",
+        expansion_type: "skill",
+        command_name: "memory-mason:mmc",
+      }),
+    ).toBe("/memory-mason:mmc\ntype: skill\ncommand: memory-mason:mmc");
+  });
+
   it("returns prompt expansion entry for Claude UserPromptExpansion", () => {
     expect(
       extractPromptEntry("claude-code", {
@@ -59,6 +73,49 @@ describe("prompt helpers", () => {
       entryName: "UserPromptExpansion",
       text: "/caveman explain\ncommand: caveman:caveman",
     });
+  });
+
+  it("returns Memory Mason prompt expansion entry with derived command token", () => {
+    expect(
+      extractPromptEntry("claude-code", {
+        hook_event_name: "UserPromptExpansion",
+        prompt: "",
+        expansion_type: "skill",
+        command_name: "memory-mason:mmq",
+      }),
+    ).toEqual({
+      entryName: "UserPromptExpansion",
+      text: "/memory-mason:mmq\ntype: skill\ncommand: memory-mason:mmq",
+    });
+  });
+
+  it("normalizes allowlisted Memory Mason command tokens", () => {
+    MM_COMMAND_NAMES.forEach((commandName) => {
+      expect(getMmCommandToken(commandName)).toBe(`/${commandName}`);
+      expect(getMmCommandToken(`/${commandName}`)).toBe(`/${commandName}`);
+      expect(getMmCommandToken(`memory-mason:${commandName}`)).toBe(`/memory-mason:${commandName}`);
+      expect(getMmCommandToken(`/memory-mason:${commandName}`)).toBe(
+        `/memory-mason:${commandName}`,
+      );
+    });
+  });
+
+  it("detects all short and namespaced Memory Mason commands", () => {
+    MM_COMMAND_NAMES.forEach((commandName) => {
+      expect(isMmCommand(`/${commandName}`)).toBe(true);
+      expect(isMmCommand(` /memory-mason:${commandName} `)).toBe(true);
+    });
+  });
+
+  it("does not detect non-Memory Mason commands", () => {
+    expect(getMmCommandToken(null)).toBe("");
+    expect(getMmCommandToken("   ")).toBe("");
+    expect(getMmCommandToken("memory-mason:mmwhatever")).toBe("");
+    expect(isMmCommand("/caveman:caveman")).toBe(false);
+    expect(isMmCommand("/mmwhatever")).toBe(false);
+    expect(isMmCommand("/memory-mason:mmwhatever arg")).toBe(false);
+    expect(isMmCommand("normal prompt")).toBe(false);
+    expect(isMmCommand(null)).toBe(false);
   });
 });
 
