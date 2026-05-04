@@ -1,12 +1,27 @@
 {
   "name": "memory-mason",
-  "version": "0.3.3",
-  "description": "Sync AI conversations to an Obsidian knowledge base with Memory Mason KB skills.",
+  "version": "0.3.4",
+  "description": "Sync AI conversations to an Obsidian knowledge base with Memory Mason knowledge base skills.",
   "author": {
     "name": "Sergii Grytsaienko",
     "url": "https://github.com/s-gryt"
   },
   "homepage": "https://github.com/s-gryt/memory-mason",
   "repository": "https://github.com/s-gryt/memory-mason",
+  "keywords": [
+    "obsidian",
+    "knowledge-base",
+    "knowledge-management",
+    "second-brain",
+    "wiki",
+    "llm",
+    "ai",
+    "notes",
+    "memory",
+    "session-capture",
+    "vault",
+    "ai-coding",
+    "annotations"
+  ],
   "skills": "./skills/"
 }

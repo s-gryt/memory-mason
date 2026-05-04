@@ -92,6 +92,22 @@ const parseSyncFieldFromConfigObject = (parsedConfig) => {
   throw new Error(`config sync must be a boolean, got: ${describeValueType(parsedConfig.sync)}`);
 };
 
+const VALID_CAPTURE_MODES = Object.freeze(["lite", "full"]);
+
+const parseCaptureModeFromConfigObject = (parsedConfig) => {
+  if (!Object.hasOwn(parsedConfig, "captureMode")) {
+    return null;
+  }
+
+  const value = parsedConfig.captureMode;
+  if (VALID_CAPTURE_MODES.includes(value)) {
+    return value;
+  }
+
+  const invalidValueDescription = typeof value === "string" ? value : describeValueType(value);
+  throw new Error(`config captureMode must be 'lite' or 'full', got: ${invalidValueDescription}`);
+};
+
 const parseConfigObjectOrNull = (configText) => {
   if (configText === "") {
     return null;
@@ -118,6 +134,15 @@ const parseConfigSyncOrNull = (configText) => {
   return parseSyncFieldFromConfigObject(parsedConfig);
 };
 
+const parseConfigCaptureModeOrNull = (configText) => {
+  const parsedConfig = parseConfigObjectOrNull(configText);
+  if (parsedConfig === null) {
+    return null;
+  }
+
+  return parseCaptureModeFromConfigObject(parsedConfig);
+};
+
 const parseEnvSyncOrNull = (envSyncValue) => {
   if (typeof envSyncValue !== "string" || envSyncValue === "") {
     return null;
@@ -132,6 +157,18 @@ const parseEnvSyncOrNull = (envSyncValue) => {
   }
 
   throw new Error(`MEMORY_MASON_SYNC must be 'true' or 'false', got: ${envSyncValue}`);
+};
+
+const parseEnvCaptureModeOrNull = (envValue) => {
+  if (typeof envValue !== "string" || envValue === "") {
+    return null;
+  }
+
+  if (VALID_CAPTURE_MODES.includes(envValue)) {
+    return envValue;
+  }
+
+  throw new Error(`MEMORY_MASON_CAPTURE_MODE must be 'lite' or 'full', got: ${envValue}`);
 };
 
 const stripDotEnvComment = (valueText) => {
@@ -311,12 +348,19 @@ const resolveVaultConfig = (cwd, envVaultPath, configText, homedir, options = {}
   const safeOptions = options !== null && typeof options === "object" ? options : {};
   const safeEnvSync =
     typeof process.env.MEMORY_MASON_SYNC === "string" ? process.env.MEMORY_MASON_SYNC : "";
+  const safeEnvCaptureMode =
+    typeof process.env.MEMORY_MASON_CAPTURE_MODE === "string"
+      ? process.env.MEMORY_MASON_CAPTURE_MODE
+      : "";
   const safeDotEnvText = typeof safeOptions.dotEnvText === "string" ? safeOptions.dotEnvText : "";
   const safeGlobalConfigText =
     typeof safeOptions.globalConfigText === "string" ? safeOptions.globalConfigText : "";
   const safeGlobalDotEnvText =
     typeof safeOptions.globalDotEnvText === "string" ? safeOptions.globalDotEnvText : "";
   const syncFromEnv = parseEnvSyncOrNull(safeEnvSync);
+  const envCaptureMode = parseEnvCaptureModeOrNull(safeEnvCaptureMode);
+  const globalConfigCaptureMode = parseConfigCaptureModeOrNull(safeGlobalConfigText);
+  const configCaptureMode = parseConfigCaptureModeOrNull(safeConfigText);
   const parsedDotEnv = parseDotEnv(safeDotEnvText);
   const dotEnvVaultPath =
     typeof parsedDotEnv.MEMORY_MASON_VAULT_PATH === "string"
@@ -328,7 +372,12 @@ const resolveVaultConfig = (cwd, envVaultPath, configText, homedir, options = {}
       : "";
   const dotEnvSync =
     typeof parsedDotEnv.MEMORY_MASON_SYNC === "string" ? parsedDotEnv.MEMORY_MASON_SYNC : "";
+  const dotEnvCaptureMode =
+    typeof parsedDotEnv.MEMORY_MASON_CAPTURE_MODE === "string"
+      ? parsedDotEnv.MEMORY_MASON_CAPTURE_MODE
+      : "";
   const syncFromDotEnv = parseEnvSyncOrNull(dotEnvSync);
+  const captureModeFromDotEnv = parseEnvCaptureModeOrNull(dotEnvCaptureMode);
   const parsedGlobalDotEnv = parseDotEnv(safeGlobalDotEnvText);
   const globalDotEnvVaultPath =
     typeof parsedGlobalDotEnv.MEMORY_MASON_VAULT_PATH === "string"
@@ -342,7 +391,12 @@ const resolveVaultConfig = (cwd, envVaultPath, configText, homedir, options = {}
     typeof parsedGlobalDotEnv.MEMORY_MASON_SYNC === "string"
       ? parsedGlobalDotEnv.MEMORY_MASON_SYNC
       : "";
+  const globalDotEnvCaptureMode =
+    typeof parsedGlobalDotEnv.MEMORY_MASON_CAPTURE_MODE === "string"
+      ? parsedGlobalDotEnv.MEMORY_MASON_CAPTURE_MODE
+      : "";
   const syncFromGlobalDotEnv = parseEnvSyncOrNull(globalDotEnvSync);
+  const captureModeFromGlobalDotEnv = parseEnvCaptureModeOrNull(globalDotEnvCaptureMode);
 
   const resolutionInput = {
     homedir: safeHomedir,
@@ -358,27 +412,49 @@ const resolveVaultConfig = (cwd, envVaultPath, configText, homedir, options = {}
   const resolvedConfig = resolveVaultConfigFromAlternatives(resolutionInput);
   if (resolvedConfig !== null) {
     let sync = true;
+    let captureMode = "lite";
 
     if (typeof resolvedConfig.sync === "boolean") {
       sync = resolvedConfig.sync;
+    }
+
+    if (typeof globalConfigCaptureMode === "string") {
+      captureMode = globalConfigCaptureMode;
+    }
+
+    if (typeof configCaptureMode === "string") {
+      captureMode = configCaptureMode;
     }
 
     if (typeof syncFromGlobalDotEnv === "boolean") {
       sync = syncFromGlobalDotEnv;
     }
 
+    if (typeof captureModeFromGlobalDotEnv === "string") {
+      captureMode = captureModeFromGlobalDotEnv;
+    }
+
     if (typeof syncFromDotEnv === "boolean") {
       sync = syncFromDotEnv;
+    }
+
+    if (typeof captureModeFromDotEnv === "string") {
+      captureMode = captureModeFromDotEnv;
     }
 
     if (typeof syncFromEnv === "boolean") {
       sync = syncFromEnv;
     }
 
+    if (typeof envCaptureMode === "string") {
+      captureMode = envCaptureMode;
+    }
+
     return {
       vaultPath: resolvedConfig.vaultPath,
       subfolder: resolvedConfig.subfolder,
       sync,
+      captureMode,
     };
   }
 

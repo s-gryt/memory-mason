@@ -2,88 +2,22 @@
 
 Cross-LLM Obsidian sync. Hook-based capture + reusable knowledge base skills across Claude Code, GitHub Copilot, Codex, Gemini CLI, Cursor, Windsurf, Cline, and other Agent Skills hosts.
 
-## Plugin Install
+## Install
 
-Install Memory Mason as a plugin. Hooks and skills auto-wire on install. Run `/mmsetup` after install to configure your vault path.
+See the [main README](../README.md) for plugin and shell install commands. Run `/mmsetup` after install to configure your vault path.
 
-### Claude Code
+> **VS Code Copilot tip:** To add Memory Mason to `@agentPlugins` search, add this to VS Code settings:
+> ```json
+> "chat.plugins.marketplaces": [
+>   "s-gryt/memory-mason"
+> ]
+> ```
 
-```
-/plugin marketplace add s-gryt/memory-mason
-/plugin install memory-mason@s-gryt
-```
+Skills-only hosts (Cursor, Windsurf, Cline, and other [Agent Skills](https://agentskills.io) hosts): `npx skills add s-gryt/memory-mason -a <agent> -s '*' -y`. Installs knowledge base commands (`/mmc`, `/mmq`, `/mml`, `/mms`, `/mma`, `/mmsetup`) only — hooks require plugin or shell install.
 
-Restart Claude Code. Plugin cache lives under `~/.claude/plugins/`.
+## Shell Install
 
-### GitHub Copilot
-
-GitHub Copilot CLI:
-
-```
-copilot plugin marketplace add s-gryt/memory-mason
-copilot plugin install memory-mason@s-gryt
-```
-
-VS Code:
-
-1. Open Command Palette.
-2. Run `Chat: Install Plugin From Source`.
-3. Enter `https://github.com/s-gryt/memory-mason`.
-
-To add Memory Mason to `@agentPlugins` search, add this to VS Code settings:
-
-```json
-"chat.plugins.marketplaces": [
-  "s-gryt/memory-mason"
-]
-```
-
-### Codex
-
-Open `/plugins`, search `Memory Mason`, install.
-
-### Gemini CLI
-
-```bash
-gemini extensions install https://github.com/s-gryt/memory-mason
-```
-
-## Skills Install (npx)
-
-For Cursor, Windsurf, Cline, and other [Agent Skills](https://agentskills.io) hosts:
-
-```bash
-npx skills add s-gryt/memory-mason -a cursor -s '*' -y
-npx skills add s-gryt/memory-mason -a windsurf -s '*' -y
-npx skills add s-gryt/memory-mason -a cline -s '*' -y
-npx skills add s-gryt/memory-mason -a github-copilot
-npx skills add s-gryt/memory-mason              # any host
-```
-
-`npx skills add` installs knowledge base commands (`/mmc`, `/mmq`, `/mml`, `/mms`, `/mma`, `/mmsetup`) but does **not** install hooks or configure your vault.
-
-Run `/mmsetup` after install. It configures your vault path and installs capture hooks via the shell installer for your OS. Platforms without a native hook system (Cursor, Windsurf, Cline) get knowledge base commands only.
-
-## Shell Install (backup)
-
-Shell installers copy hook runtime, wire events, and create vault config in one step. Use these if you prefer not to use the plugin system.
-
-```bash
-# macOS / Linux
-bash <(curl -fsSL https://raw.githubusercontent.com/s-gryt/memory-mason/main/install.sh) --agent <name>
-
-# Windows PowerShell
-& ([scriptblock]::Create((iwr https://raw.githubusercontent.com/s-gryt/memory-mason/main/install.ps1 -UseBasicParsing).Content)) -Agent <name>
-```
-
-Replace `<name>` with `claude`, `copilot`, `codex`, or `all`.
-
-From a local clone:
-
-```bash
-bash install.sh --agent <name>
-powershell -File install.ps1 -Agent <name>
-```
+Shell installers copy hook runtime, wire events, and create vault config in one step.
 
 ### Installer Flags
 
@@ -93,7 +27,7 @@ powershell -File install.ps1 -Agent <name>
 | `--workspace <path>` | Install Copilot/Codex hooks at workspace level |
 | `-Force` (PowerShell) | Reinstall even if already installed |
 
-> Remote PowerShell parameters do not flow through `iwr ... | iex`; use the `scriptblock` form shown above.
+> Remote PowerShell parameters do not flow through `iwr ... | iex`; use the `scriptblock` form shown in the main README.
 
 ### What Gets Installed
 
@@ -107,6 +41,8 @@ powershell -File install.ps1 -Agent <name>
 
 Run `/mmsetup` to configure your vault path interactively. Or set it up manually using any of these methods.
 
+`captureMode` controls how much session detail gets written. `lite` is default and keeps capture compact. Set `MEMORY_MASON_CAPTURE_MODE=full` or `"captureMode": "full"` when you want detailed tool output in daily logs.
+
 Config resolves in this order (first match wins):
 
 | Priority | Source | Location | Best for |
@@ -117,35 +53,35 @@ Config resolves in this order (first match wins):
 | 4 | Global `.env` | `~/.memory-mason/.env` | Shared local defaults |
 | 5 | Global config | `~/.memory-mason/config.json` | Default for all projects |
 
-If no source is found, hooks throw an explicit error. Config can be set globally (`~/.memory-mason/`) or per-project (project root). `/mmsetup` creates the global config automatically.
+If no source is found, hooks throw an explicit error. `/mmsetup` creates the global config automatically.
 
 ### .env format
 
-`MEMORY_MASON_VAULT_PATH` sets the Obsidian vault location. `MEMORY_MASON_SUBFOLDER` sets the directory inside the vault. `MEMORY_MASON_SYNC` is optional — capture is enabled by default; set it to `false` to pause capture. Setting `MEMORY_MASON_SYNC` as a process environment variable overrides all config files for a single session.
+`MEMORY_MASON_VAULT_PATH` sets the Obsidian vault location. `MEMORY_MASON_SUBFOLDER` sets the directory inside the vault. `MEMORY_MASON_SYNC` is optional — capture is enabled by default; set it to `false` to pause capture. `MEMORY_MASON_CAPTURE_MODE` is optional — set it to `full` to keep detailed tool output, or leave it at the default `lite` mode for compact capture. Setting `MEMORY_MASON_SYNC` as a process environment variable overrides all config files for a single session.
 
 ```env
 MEMORY_MASON_VAULT_PATH=/path/to/your/obsidian/vault
 MEMORY_MASON_SUBFOLDER=ai-knowledge
 MEMORY_MASON_SYNC=true
+MEMORY_MASON_CAPTURE_MODE=full
 ```
 
 ### JSON format
 
-`vaultPath` sets the Obsidian vault location. `subfolder` sets the directory inside the vault. `sync` is optional — capture is enabled by default; set it to `false` to pause capture. Use this format for `memory-mason.json` in a project root or `~/.memory-mason/config.json` for global config (`/mmsetup` creates the global file automatically).
+`vaultPath` sets the Obsidian vault location. `subfolder` sets the directory inside the vault. `sync` is optional — capture is enabled by default; set it to `false` to pause capture. `captureMode` is optional — set it to `full` to keep detailed tool output, or leave it at the default `lite` mode for compact capture. Use this format for `memory-mason.json` in a project root or `~/.memory-mason/config.json` for global config (`/mmsetup` creates the global file automatically).
 
 ```json
 {
   "vaultPath": "/path/to/your/obsidian/vault",
   "subfolder": "ai-knowledge",
-  "sync": true
+  "sync": true,
+  "captureMode": "full"
 }
 ```
 
 ## Uninstall
 
-Run `/mmsetup` and say "uninstall" for guided removal. Your vault content (daily logs, knowledge articles) is never deleted.
-
-Platform-specific alternatives:
+Platform-specific removal:
 
 | Agent | Uninstall method |
 |:------|:-----------------|
@@ -155,7 +91,7 @@ Platform-specific alternatives:
 | **Codex** | `/mmsetup` uninstall (removes hook files + `.codex/hooks.json` entries) |
 | **Cursor / Windsurf / Cline** | `npx skills remove s-gryt/memory-mason -a <agent>` |
 
-To also remove global config: delete `~/.memory-mason/config.json`.
+To also remove global config: delete `~/.memory-mason/config.json`. Vault content (daily logs, knowledge articles) is never deleted.
 
 ## How It Works
 
@@ -173,7 +109,7 @@ Memory Mason's own commands (`/mmc`, `/mmq`, `/mml`, `/mms`, `/mma`) are automat
 2. **Capture state flag** — `post-tool-use.js` and `pre-compact.js` check the `mmSuppressed` flag and skip capture while it is active. The flag resets on the next non-`/mm*` prompt.
 3. **Transcript filter** — `session-end.js` runs `filterMmTurns()` to strip any `/mm*` user turns and their paired assistant replies from the full session transcript before writing.
 
-To exclude entire sessions from capture, set `sync` to `false` in your config file. See [Per-project config](#per-project-config) for details.
+To exclude entire sessions from capture, set `sync` to `false` in your config file.
 
 ### Compile
 
@@ -196,17 +132,6 @@ Run `/mmq` with a question. Memory Mason checks the hot cache first for recent c
 ```text
 /mmq "How does X work?" ──> hot cache ──> knowledge/ ──> answer with [[citations]]
 ```
-
-### Commands
-
-| Command | Action |
-|:--------|:-------|
-| `/mmc` | Compile daily logs into structured knowledge articles, update hot cache and source manifest |
-| `/mmq` | Answer questions from your knowledge base with source citations (reads hot cache first) |
-| `/mml` | Run 9 knowledge base health checks: broken links, orphans, stale content, manifest integrity, hot cache freshness |
-| `/mms` | Show knowledge base status: article counts, compilation coverage, manifest status, hot cache freshness |
-| `/mma` | Archive old build log entries to keep knowledge base log compact |
-| `/mmsetup` | First-time vault configuration (or uninstall) |
 
 ## Vault Layout
 
@@ -244,6 +169,56 @@ Run `/mmq` with a question. Memory Mason checks the hot cache first for recent c
 | SessionEnd | Y | Y | — |
 
 `session-end.js` handles both events: `Stop` appends latest assistant turns; `SessionEnd` captures the full transcript.
+
+## Capture Behavior
+
+`captureMode` controls how much session detail is written to the vault. Set via `MEMORY_MASON_CAPTURE_MODE` env var or `captureMode` in config. Default is `lite`.
+
+### Hook × CaptureMode
+
+| Hook | Script | Lite | Full |
+|:-----|:-------|:-----|:-----|
+| SessionStart | session-start.js | Runs — outputs context to AI | Runs — outputs context to AI |
+| UserPromptSubmit | user-prompt-submit.js | Captures every user prompt | Captures every user prompt |
+| PostToolUse | post-tool-use.js | Allowlist: `AskUserQuestion` only | Blocklist: skip `NOISY_TOOLS` only |
+| Stop | session-end.js | Captures final assistant turn only | Captures all new assistant turns since last Stop |
+| PreCompact | pre-compact.js | Skips entirely | Captures full transcript (skipped if < 5 turns or duplicate within 60 s) |
+| SessionEnd | session-end.js | Skips entirely | Captures filtered transcript (MM turns removed, duplicate-guarded) |
+
+### PostToolUse Tool Filter
+
+Tool name matching is exact and case-sensitive.
+
+| Tool | Lite | Full | Reason |
+|:-----|:-----|:-----|:-------|
+| `AskUserQuestion` | Captured | Captured | In `USER_INPUT_TOOLS` allowlist |
+| `Bash`, `Edit`, `Write`, `Grep`, `Agent`, `WebFetch`, `WebSearch`, `ExitPlanMode` | Skipped | Captured | Not in either set |
+| `Read`, `Glob`, `LS`, `List`, `ls`, `read`, `glob` | Skipped | Skipped | In `NOISY_TOOLS` blocklist |
+| All other MCP tools | Skipped | Captured | Not in either set |
+| *(empty tool name)* | Skipped | Skipped | Always skipped |
+
+### Content Filtering
+
+Applied by `normalizeTranscriptText` during JSONL transcript parsing.
+
+| Content | Lite | Full |
+|:--------|:-----|:-----|
+| `<thinking>` blocks | Stripped | Preserved |
+| `<system-reminder>` blocks | Stripped | Preserved |
+| Consecutive assistant turns | Collapsed — last in each consecutive run kept | Preserved |
+| Local command stdout | Extracted and ANSI-stripped | Extracted and ANSI-stripped |
+| Other text | Passed through | Passed through |
+
+### What Reaches the Vault
+
+| Signal | Lite | Full |
+|:-------|:-----|:-----|
+| User prompts | Every prompt | Every prompt |
+| `AskUserQuestion` Q+A | Every answer (full JSON: question + answer + annotations) | Every answer (full JSON) |
+| Final assistant reply | 1 per Stop | All new turns since last Stop |
+| Tool outputs | Never | Most (except `NOISY_TOOLS`) |
+| Full transcript dump | Never | On SessionEnd + PreCompact |
+| `<thinking>` / `<system-reminder>` | Never | Preserved inline |
 
 ## Platform Manifests
 

@@ -1,7 +1,7 @@
 {
   "name": "memory-mason",
-  "version": "0.3.3",
-  "description": "Sync AI conversations to an Obsidian knowledge base and run Memory Mason KB workflows.",
+  "version": "0.3.4",
+  "description": "Sync AI conversations to an Obsidian knowledge base and run Memory Mason knowledge base workflows.",
   "author": {
     "name": "Sergii Grytsaienko",
     "url": "https://github.com/s-gryt"
@@ -12,14 +12,24 @@
   "keywords": [
     "obsidian",
     "knowledge-base",
+    "knowledge-management",
+    "second-brain",
+    "wiki",
+    "llm",
+    "ai",
+    "notes",
     "memory",
-    "productivity"
+    "productivity",
+    "session-capture",
+    "vault",
+    "ai-coding",
+    "annotations"
   ],
   "skills": "./skills/",
   "interface": {
     "displayName": "Memory Mason",
     "shortDescription": "Keep an Obsidian knowledge base in sync across AI coding tools.",
-    "longDescription": "Memory Mason adds KB compile, query, lint, and status workflows for Codex while the shared knowledge base lives in Obsidian.",
+    "longDescription": "Memory Mason adds knowledge base compile, query, lint, and status workflows for Codex while the shared knowledge base lives in Obsidian.",
     "developerName": "Sergii Grytsaienko",
     "category": "Productivity",
     "capabilities": [

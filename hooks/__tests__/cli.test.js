@@ -118,10 +118,13 @@ describe("CLI direct execution", () => {
       input: JSON.stringify({
         hook_event_name: "PostToolUse",
         cwd: hooksRoot,
-        tool_name: "Bash",
+        tool_name: "Write",
         tool_response: "cli tool output",
       }),
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, {
+        MEMORY_MASON_VAULT_PATH: vaultPath,
+        MEMORY_MASON_CAPTURE_MODE: "full",
+      }),
     });
 
     expect(result.status).toBe(0);
@@ -155,7 +158,10 @@ describe("CLI direct execution", () => {
         session_id: "cli-session",
         source: "stop",
       }),
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, {
+        MEMORY_MASON_VAULT_PATH: vaultPath,
+        MEMORY_MASON_CAPTURE_MODE: "full",
+      }),
     });
 
     expect(result.status).toBe(0);

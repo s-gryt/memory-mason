@@ -4,6 +4,7 @@ const {
   extractTagText,
   stripAnsiEscapeSequences,
   normalizeTranscriptText,
+  collapseIntermediateAssistants,
   parseJsonlTranscript,
   filterMmTurns,
   selectRecentTurns,
@@ -55,6 +56,113 @@ describe("transcript normalization helpers", () => {
 
   it("returns empty string when normalizing non-string transcript content", () => {
     expect(normalizeTranscriptText(null)).toBe("");
+  });
+});
+
+describe("normalizeTranscriptText with captureMode", () => {
+  it("preserves <thinking> block in lite mode", () => {
+    const input = "a<thinking>hidden</thinking>b";
+
+    expect(normalizeTranscriptText(input, "lite")).toBe(input);
+  });
+
+  it("preserves <system-reminder> block in lite mode", () => {
+    const input = "a<system-reminder>hidden</system-reminder>b";
+
+    expect(normalizeTranscriptText(input, "lite")).toBe(input);
+  });
+
+  it("preserves both tags and surrounding text in lite mode", () => {
+    const input =
+      "start<thinking>hidden-a</thinking>mid<system-reminder>hidden-b</system-reminder>end";
+
+    expect(normalizeTranscriptText(input, "lite")).toBe(input);
+  });
+
+  it("preserves multiple <thinking> blocks in lite mode", () => {
+    const input = "x<thinking>a</thinking>y<thinking>b</thinking>z";
+
+    expect(normalizeTranscriptText(input, "lite")).toBe(input);
+  });
+
+  it("preserves <thinking> in full mode", () => {
+    const input = "x<thinking>hidden</thinking>y";
+
+    expect(normalizeTranscriptText(input, "full")).toBe(input);
+  });
+
+  it("preserves <system-reminder> in full mode", () => {
+    const input = "x<system-reminder>hidden</system-reminder>y";
+
+    expect(normalizeTranscriptText(input, "full")).toBe(input);
+  });
+});
+
+describe("collapseIntermediateAssistants", () => {
+  it("throws when input is not an array", () => {
+    expect(() => collapseIntermediateAssistants(null)).toThrow("turns must be an array");
+    expect(() => collapseIntermediateAssistants("str")).toThrow("turns must be an array");
+  });
+
+  it("returns empty array unchanged", () => {
+    expect(collapseIntermediateAssistants([])).toEqual([]);
+  });
+
+  it("preserves alternating user and assistant turns", () => {
+    const turns = [
+      { role: "user", content: "u1" },
+      { role: "assistant", content: "a1" },
+      { role: "user", content: "u2" },
+      { role: "assistant", content: "a2" },
+    ];
+    expect(collapseIntermediateAssistants(turns)).toEqual(turns);
+  });
+
+  it("collapses consecutive assistant turns keeping only last", () => {
+    const turns = [
+      { role: "user", content: "u1" },
+      { role: "assistant", content: "intermediate 1" },
+      { role: "assistant", content: "intermediate 2" },
+      { role: "assistant", content: "final answer" },
+    ];
+    expect(collapseIntermediateAssistants(turns)).toEqual([
+      { role: "user", content: "u1" },
+      { role: "assistant", content: "final answer" },
+    ]);
+  });
+
+  it("collapses multiple consecutive assistant runs independently", () => {
+    const turns = [
+      { role: "user", content: "u1" },
+      { role: "assistant", content: "a1-inter" },
+      { role: "assistant", content: "a1-final" },
+      { role: "user", content: "u2" },
+      { role: "assistant", content: "a2-inter" },
+      { role: "assistant", content: "a2-final" },
+    ];
+    expect(collapseIntermediateAssistants(turns)).toEqual([
+      { role: "user", content: "u1" },
+      { role: "assistant", content: "a1-final" },
+      { role: "user", content: "u2" },
+      { role: "assistant", content: "a2-final" },
+    ]);
+  });
+
+  it("keeps trailing assistant turn when no following user turn", () => {
+    const turns = [
+      { role: "user", content: "u1" },
+      { role: "assistant", content: "inter" },
+      { role: "assistant", content: "last" },
+    ];
+    expect(collapseIntermediateAssistants(turns)).toEqual([
+      { role: "user", content: "u1" },
+      { role: "assistant", content: "last" },
+    ]);
+  });
+
+  it("handles single assistant turn without preceding user turn", () => {
+    const turns = [{ role: "assistant", content: "a1" }];
+    expect(collapseIntermediateAssistants(turns)).toEqual([{ role: "assistant", content: "a1" }]);
   });
 });
 
@@ -281,6 +389,81 @@ describe("parseJsonlTranscript", () => {
     const input = JSON.stringify({ message: { role: "user", content: { text: "ignored" } } });
 
     expect(parseJsonlTranscript(input)).toEqual([]);
+  });
+
+  it("collapses consecutive assistant turns in lite mode", () => {
+    const input = [
+      JSON.stringify({ message: { role: "user", content: "question" } }),
+      JSON.stringify({ message: { role: "assistant", content: "thinking..." } }),
+      JSON.stringify({ message: { role: "assistant", content: "intermediate step" } }),
+      JSON.stringify({ message: { role: "assistant", content: "final answer" } }),
+    ].join("\n");
+
+    expect(parseJsonlTranscript(input, "lite")).toEqual([
+      { role: "user", content: "question" },
+      { role: "assistant", content: "final answer" },
+    ]);
+  });
+
+  it("preserves all consecutive assistant turns in full mode", () => {
+    const input = [
+      JSON.stringify({ message: { role: "user", content: "question" } }),
+      JSON.stringify({ message: { role: "assistant", content: "thinking..." } }),
+      JSON.stringify({ message: { role: "assistant", content: "final answer" } }),
+    ].join("\n");
+
+    expect(parseJsonlTranscript(input, "full")).toEqual([
+      { role: "user", content: "question" },
+      { role: "assistant", content: "thinking..." },
+      { role: "assistant", content: "final answer" },
+    ]);
+  });
+});
+
+describe("parseJsonlTranscript with captureMode", () => {
+  it("preserves tags from string content in lite", () => {
+    const input = JSON.stringify({
+      message: {
+        role: "assistant",
+        content: "visible<thinking>hidden</thinking>",
+      },
+    });
+
+    expect(parseJsonlTranscript(input, "lite")).toEqual([
+      { role: "assistant", content: "visible<thinking>hidden</thinking>" },
+    ]);
+  });
+
+  it("preserves tags from block-array content in lite", () => {
+    const input = JSON.stringify({
+      message: {
+        role: "assistant",
+        content: [
+          { type: "text", text: "a<system-reminder>hidden</system-reminder>b" },
+          { type: "text", text: "<thinking>secret</thinking>c" },
+        ],
+      },
+    });
+
+    expect(parseJsonlTranscript(input, "lite")).toEqual([
+      {
+        role: "assistant",
+        content: "a<system-reminder>hidden</system-reminder>b\n<thinking>secret</thinking>c",
+      },
+    ]);
+  });
+
+  it("preserves tags in full mode", () => {
+    const input = JSON.stringify({
+      message: {
+        role: "assistant",
+        content: "visible<thinking>hidden</thinking>",
+      },
+    });
+
+    expect(parseJsonlTranscript(input, "full")).toEqual([
+      { role: "assistant", content: "visible<thinking>hidden</thinking>" },
+    ]);
   });
 });
 
@@ -556,6 +739,22 @@ describe("buildFullTranscript", () => {
   });
 });
 
+describe("buildFullTranscript with captureMode", () => {
+  it("passes captureMode through, full mode preserves tags", () => {
+    const input = JSON.stringify({
+      message: {
+        role: "assistant",
+        content: "reply<thinking>hidden</thinking>",
+      },
+    });
+
+    const result = buildFullTranscript(input, "full");
+
+    expect(result.turnCount).toBe(1);
+    expect(result.markdown).toContain("<thinking>hidden</thinking>");
+  });
+});
+
 describe("buildTranscriptExcerpt", () => {
   it("returns markdown and turn count for valid JSONL", () => {
     const input = [
@@ -608,5 +807,21 @@ describe("buildTranscriptExcerpt", () => {
     expect(result.turnCount).toBe(3);
     expect(result.markdown.includes("turn-10")).toBe(true);
     expect(result.markdown.includes("turn-01")).toBe(false);
+  });
+});
+
+describe("buildTranscriptExcerpt with captureMode", () => {
+  it("passes captureMode through, full mode preserves tags", () => {
+    const input = JSON.stringify({
+      message: {
+        role: "assistant",
+        content: "reply<thinking>hidden</thinking>",
+      },
+    });
+
+    const result = buildTranscriptExcerpt(input, 5, 2000, "full");
+
+    expect(result.turnCount).toBe(1);
+    expect(result.markdown).toContain("<thinking>hidden</thinking>");
   });
 });

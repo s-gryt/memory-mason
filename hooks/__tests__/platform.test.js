@@ -218,6 +218,8 @@ describe("parseDotEnv", () => {
 describe("resolveVaultConfig", () => {
   let originalMemoryMasonSyncIsSet = false;
   let originalMemoryMasonSync = "";
+  let originalMemoryMasonCaptureModeIsSet = false;
+  let originalMemoryMasonCaptureMode = "";
 
   const withMemoryMasonSync = (value, callback) => {
     const hadSync = Object.hasOwn(process.env, "MEMORY_MASON_SYNC");
@@ -240,11 +242,38 @@ describe("resolveVaultConfig", () => {
     }
   };
 
+  const withMemoryMasonCaptureMode = (value, callback) => {
+    const hadCaptureMode = Object.hasOwn(process.env, "MEMORY_MASON_CAPTURE_MODE");
+    const previousCaptureMode = process.env.MEMORY_MASON_CAPTURE_MODE;
+
+    if (typeof value === "string") {
+      process.env.MEMORY_MASON_CAPTURE_MODE = value;
+    } else {
+      delete process.env.MEMORY_MASON_CAPTURE_MODE;
+    }
+
+    try {
+      return callback();
+    } finally {
+      if (hadCaptureMode && typeof previousCaptureMode === "string") {
+        process.env.MEMORY_MASON_CAPTURE_MODE = previousCaptureMode;
+      } else {
+        delete process.env.MEMORY_MASON_CAPTURE_MODE;
+      }
+    }
+  };
+
   beforeEach(() => {
     originalMemoryMasonSyncIsSet = Object.hasOwn(process.env, "MEMORY_MASON_SYNC");
     originalMemoryMasonSync =
       typeof process.env.MEMORY_MASON_SYNC === "string" ? process.env.MEMORY_MASON_SYNC : "";
+    originalMemoryMasonCaptureModeIsSet = Object.hasOwn(process.env, "MEMORY_MASON_CAPTURE_MODE");
+    originalMemoryMasonCaptureMode =
+      typeof process.env.MEMORY_MASON_CAPTURE_MODE === "string"
+        ? process.env.MEMORY_MASON_CAPTURE_MODE
+        : "";
     delete process.env.MEMORY_MASON_SYNC;
+    delete process.env.MEMORY_MASON_CAPTURE_MODE;
   });
 
   afterEach(() => {
@@ -252,6 +281,12 @@ describe("resolveVaultConfig", () => {
       process.env.MEMORY_MASON_SYNC = originalMemoryMasonSync;
     } else {
       delete process.env.MEMORY_MASON_SYNC;
+    }
+
+    if (originalMemoryMasonCaptureModeIsSet) {
+      process.env.MEMORY_MASON_CAPTURE_MODE = originalMemoryMasonCaptureMode;
+    } else {
+      delete process.env.MEMORY_MASON_CAPTURE_MODE;
     }
   });
 
@@ -267,6 +302,7 @@ describe("resolveVaultConfig", () => {
       vaultPath: "/home/tester/vault",
       subfolder: "my-brain",
       sync: true,
+      captureMode: "lite",
     });
   });
 
@@ -279,6 +315,7 @@ describe("resolveVaultConfig", () => {
       vaultPath: "/home/tester/vault",
       subfolder: "from-env-file",
       sync: true,
+      captureMode: "lite",
     });
   });
 
@@ -287,6 +324,7 @@ describe("resolveVaultConfig", () => {
       vaultPath: "/home/tester/vault",
       subfolder: "ai-knowledge",
       sync: true,
+      captureMode: "lite",
     });
   });
 
@@ -299,6 +337,7 @@ describe("resolveVaultConfig", () => {
       vaultPath: "/home/tester/vault",
       subfolder: "from-dotenv",
       sync: true,
+      captureMode: "lite",
     });
   });
 
@@ -307,6 +346,7 @@ describe("resolveVaultConfig", () => {
       vaultPath: "/home/tester/vault",
       subfolder: "ai-knowledge",
       sync: true,
+      captureMode: "lite",
     });
   });
 
@@ -322,6 +362,7 @@ describe("resolveVaultConfig", () => {
       vaultPath: "/home/tester/vault",
       subfolder: "notes",
       sync: true,
+      captureMode: "lite",
     });
   });
 
@@ -334,6 +375,7 @@ describe("resolveVaultConfig", () => {
       vaultPath: "/home/tester/vault",
       subfolder: "notes",
       sync: true,
+      captureMode: "lite",
     });
   });
 
@@ -346,6 +388,7 @@ describe("resolveVaultConfig", () => {
       vaultPath: "/home/tester/vault",
       subfolder: "ai-knowledge",
       sync: true,
+      captureMode: "lite",
     });
   });
 
@@ -358,6 +401,7 @@ describe("resolveVaultConfig", () => {
       vaultPath: "/home/tester/global-vault",
       subfolder: "global-brain",
       sync: true,
+      captureMode: "lite",
     });
   });
 
@@ -370,6 +414,7 @@ describe("resolveVaultConfig", () => {
       vaultPath: "/home/tester/global-vault",
       subfolder: "global-brain",
       sync: false,
+      captureMode: "lite",
     });
   });
 
@@ -378,6 +423,7 @@ describe("resolveVaultConfig", () => {
       vaultPath: "/home/tester/vault",
       subfolder: "ai-knowledge",
       sync: true,
+      captureMode: "lite",
     });
   });
 
@@ -391,6 +437,7 @@ describe("resolveVaultConfig", () => {
       vaultPath: "/home/tester/global-vault",
       subfolder: "global-brain",
       sync: true,
+      captureMode: "lite",
     });
   });
 
@@ -404,6 +451,7 @@ describe("resolveVaultConfig", () => {
       vaultPath: "/home/tester/global-env-vault",
       subfolder: "global-env-brain",
       sync: true,
+      captureMode: "lite",
     });
   });
 
@@ -416,6 +464,7 @@ describe("resolveVaultConfig", () => {
       vaultPath: "/home/tester/global-env-vault",
       subfolder: "ai-knowledge",
       sync: true,
+      captureMode: "lite",
     });
   });
 
@@ -430,6 +479,7 @@ describe("resolveVaultConfig", () => {
       vaultPath: "/home/tester/global-env-vault",
       subfolder: "env-brain",
       sync: true,
+      captureMode: "lite",
     });
   });
 
@@ -440,6 +490,7 @@ describe("resolveVaultConfig", () => {
           vaultPath: "/home/tester/vault",
           subfolder: "ai-knowledge",
           sync: true,
+          captureMode: "lite",
         });
       });
     });
@@ -450,6 +501,7 @@ describe("resolveVaultConfig", () => {
           vaultPath: "/home/tester/vault",
           subfolder: "ai-knowledge",
           sync: false,
+          captureMode: "lite",
         });
       });
     });
@@ -460,6 +512,7 @@ describe("resolveVaultConfig", () => {
           vaultPath: "/home/tester/vault",
           subfolder: "ai-knowledge",
           sync: true,
+          captureMode: "lite",
         });
       });
     });
@@ -477,6 +530,7 @@ describe("resolveVaultConfig", () => {
           vaultPath: "/home/tester/vault",
           subfolder: "my-brain",
           sync: false,
+          captureMode: "lite",
         });
       });
     });
@@ -494,6 +548,7 @@ describe("resolveVaultConfig", () => {
           vaultPath: "/home/tester/vault",
           subfolder: "my-brain",
           sync: true,
+          captureMode: "lite",
         });
       });
     });
@@ -519,6 +574,7 @@ describe("resolveVaultConfig", () => {
           vaultPath: "/home/tester/vault",
           subfolder: "notes",
           sync: false,
+          captureMode: "lite",
         });
       });
     });
@@ -536,6 +592,7 @@ describe("resolveVaultConfig", () => {
           vaultPath: "/home/tester/vault",
           subfolder: "notes",
           sync: true,
+          captureMode: "lite",
         });
       });
     });
@@ -566,6 +623,7 @@ describe("resolveVaultConfig", () => {
           vaultPath: "/home/tester/env-vault",
           subfolder: "config-subfolder",
           sync: false,
+          captureMode: "lite",
         });
       });
     });
@@ -584,6 +642,7 @@ describe("resolveVaultConfig", () => {
           vaultPath: "/home/tester/env-vault",
           subfolder: "env-sub",
           sync: true,
+          captureMode: "lite",
         });
       });
     });
@@ -598,6 +657,7 @@ describe("resolveVaultConfig", () => {
           vaultPath: "/home/tester/vault",
           subfolder: "ai-knowledge",
           sync: false,
+          captureMode: "lite",
         });
       });
     });
@@ -616,6 +676,7 @@ describe("resolveVaultConfig", () => {
           vaultPath: "/home/tester/vault",
           subfolder: "notes",
           sync: false,
+          captureMode: "lite",
         });
       });
     });
@@ -630,6 +691,7 @@ describe("resolveVaultConfig", () => {
           vaultPath: "/home/tester/global-vault",
           subfolder: "ai-knowledge",
           sync: false,
+          captureMode: "lite",
         });
       });
     });
@@ -645,6 +707,7 @@ describe("resolveVaultConfig", () => {
           vaultPath: "/home/tester/global-vault",
           subfolder: "ai-knowledge",
           sync: true,
+          captureMode: "lite",
         });
       });
     });
@@ -659,6 +722,199 @@ describe("resolveVaultConfig", () => {
           vaultPath: "/home/tester/vault",
           subfolder: "ai-knowledge",
           sync: false,
+          captureMode: "lite",
+        });
+      });
+    });
+  });
+
+  describe("captureMode resolution", () => {
+    it("defaults to lite", () => {
+      expect(resolveVaultConfig("/repo", "~/vault", "", "/home/tester")).toEqual({
+        vaultPath: "/home/tester/vault",
+        subfolder: "ai-knowledge",
+        sync: true,
+        captureMode: "lite",
+      });
+    });
+
+    it("resolves lite from project JSON", () => {
+      expect(
+        resolveVaultConfig(
+          "/repo",
+          "",
+          '{"vaultPath":"~/vault","subfolder":"notes","captureMode":"lite"}',
+          "/home/tester",
+        ),
+      ).toEqual({
+        vaultPath: "/home/tester/vault",
+        subfolder: "notes",
+        sync: true,
+        captureMode: "lite",
+      });
+    });
+
+    it("resolves full from project JSON", () => {
+      expect(
+        resolveVaultConfig(
+          "/repo",
+          "",
+          '{"vaultPath":"~/vault","subfolder":"notes","captureMode":"full"}',
+          "/home/tester",
+        ),
+      ).toEqual({
+        vaultPath: "/home/tester/vault",
+        subfolder: "notes",
+        sync: true,
+        captureMode: "full",
+      });
+    });
+
+    it("env MEMORY_MASON_CAPTURE_MODE=full overrides project JSON lite", () => {
+      withMemoryMasonCaptureMode("full", () => {
+        expect(
+          resolveVaultConfig(
+            "/repo",
+            "",
+            '{"vaultPath":"~/vault","subfolder":"notes","captureMode":"lite"}',
+            "/home/tester",
+          ),
+        ).toEqual({
+          vaultPath: "/home/tester/vault",
+          subfolder: "notes",
+          sync: true,
+          captureMode: "full",
+        });
+      });
+    });
+
+    it("env MEMORY_MASON_CAPTURE_MODE=lite overrides project JSON full", () => {
+      withMemoryMasonCaptureMode("lite", () => {
+        expect(
+          resolveVaultConfig(
+            "/repo",
+            "",
+            '{"vaultPath":"~/vault","subfolder":"notes","captureMode":"full"}',
+            "/home/tester",
+          ),
+        ).toEqual({
+          vaultPath: "/home/tester/vault",
+          subfolder: "notes",
+          sync: true,
+          captureMode: "lite",
+        });
+      });
+    });
+
+    it("throws on invalid env value", () => {
+      withMemoryMasonCaptureMode("verbose", () => {
+        expect(() => resolveVaultConfig("/repo", "~/vault", "", "/home/tester")).toThrow(
+          "MEMORY_MASON_CAPTURE_MODE must be 'lite' or 'full', got: verbose",
+        );
+      });
+    });
+
+    it("throws on invalid project JSON captureMode string", () => {
+      expect(() =>
+        resolveVaultConfig(
+          "/repo",
+          "",
+          '{"vaultPath":"~/vault","subfolder":"notes","captureMode":"verbose"}',
+          "/home/tester",
+        ),
+      ).toThrow("config captureMode must be 'lite' or 'full', got: verbose");
+    });
+
+    it("throws on invalid project JSON captureMode type", () => {
+      expect(() =>
+        resolveVaultConfig(
+          "/repo",
+          "",
+          '{"vaultPath":"~/vault","subfolder":"notes","captureMode":1}',
+          "/home/tester",
+        ),
+      ).toThrow("config captureMode must be 'lite' or 'full', got: number");
+    });
+
+    it("resolves captureMode from project .env", () => {
+      expect(
+        resolveVaultConfig("/repo", "", "", "/home/tester", {
+          dotEnvText:
+            "MEMORY_MASON_VAULT_PATH=~/vault\nMEMORY_MASON_SUBFOLDER=notes\nMEMORY_MASON_CAPTURE_MODE=full",
+        }),
+      ).toEqual({
+        vaultPath: "/home/tester/vault",
+        subfolder: "notes",
+        sync: true,
+        captureMode: "full",
+      });
+    });
+
+    it("resolves captureMode from global .env", () => {
+      expect(
+        resolveVaultConfig("/repo", "", "", "/home/tester", {
+          globalDotEnvText:
+            "MEMORY_MASON_VAULT_PATH=~/global-vault\nMEMORY_MASON_SUBFOLDER=global-brain\nMEMORY_MASON_CAPTURE_MODE=full",
+        }),
+      ).toEqual({
+        vaultPath: "/home/tester/global-vault",
+        subfolder: "global-brain",
+        sync: true,
+        captureMode: "full",
+      });
+    });
+
+    it("resolves captureMode from global config", () => {
+      expect(
+        resolveVaultConfig("/repo", "", "", "/home/tester", {
+          globalConfigText:
+            '{"vaultPath":"~/global-vault","subfolder":"global-brain","captureMode":"full"}',
+        }),
+      ).toEqual({
+        vaultPath: "/home/tester/global-vault",
+        subfolder: "global-brain",
+        sync: true,
+        captureMode: "full",
+      });
+    });
+
+    it("project .env captureMode overrides global config captureMode", () => {
+      expect(
+        resolveVaultConfig("/repo", "", "", "/home/tester", {
+          dotEnvText:
+            "MEMORY_MASON_VAULT_PATH=~/vault\nMEMORY_MASON_SUBFOLDER=notes\nMEMORY_MASON_CAPTURE_MODE=lite",
+          globalConfigText:
+            '{"vaultPath":"~/global-vault","subfolder":"global-brain","captureMode":"full"}',
+        }),
+      ).toEqual({
+        vaultPath: "/home/tester/vault",
+        subfolder: "notes",
+        sync: true,
+        captureMode: "lite",
+      });
+    });
+
+    it("throws on invalid project .env captureMode", () => {
+      expect(() =>
+        resolveVaultConfig("/repo", "", "", "/home/tester", {
+          dotEnvText:
+            "MEMORY_MASON_VAULT_PATH=~/vault\nMEMORY_MASON_SUBFOLDER=notes\nMEMORY_MASON_CAPTURE_MODE=verbose",
+        }),
+      ).toThrow("MEMORY_MASON_CAPTURE_MODE must be 'lite' or 'full', got: verbose");
+    });
+
+    it("env captureMode overrides project .env captureMode", () => {
+      withMemoryMasonCaptureMode("full", () => {
+        expect(
+          resolveVaultConfig("/repo", "", "", "/home/tester", {
+            dotEnvText:
+              "MEMORY_MASON_VAULT_PATH=~/vault\nMEMORY_MASON_SUBFOLDER=notes\nMEMORY_MASON_CAPTURE_MODE=lite",
+          }),
+        ).toEqual({
+          vaultPath: "/home/tester/vault",
+          subfolder: "notes",
+          sync: true,
+          captureMode: "full",
         });
       });
     });

@@ -16,6 +16,7 @@ const {
   isDuplicateCapture,
   getMmSuppressed,
 } = require("./lib/capture-state");
+const { CAPTURE_MODE_LITE } = require("./lib/constants");
 
 const DUPLICATE_CAPTURE_WINDOW_MS = 60000;
 
@@ -202,6 +203,10 @@ function run(rawStdin, runtime = {}) {
       return { status: 0, stdout: "", stderr: "" };
     }
 
+    if (resolvedConfig.captureMode === CAPTURE_MODE_LITE) {
+      return { status: 0, stdout: "", stderr: "" };
+    }
+
     const captureState = loadCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder);
 
     if (getMmSuppressed(captureState)) {
@@ -209,7 +214,7 @@ function run(rawStdin, runtime = {}) {
     }
 
     const transcriptContent = fs.readFileSync(transcriptPath, "utf-8");
-    const fullTranscript = buildFullTranscript(transcriptContent);
+    const fullTranscript = buildFullTranscript(transcriptContent, resolvedConfig.captureMode);
 
     if (shouldSkipShortTranscript(fullTranscript)) {
       return { status: 0, stdout: "", stderr: "" };

@@ -104,23 +104,25 @@ Run `/mmsetup` to configure your vault path interactively, or create a config fi
 
 ### .env format
 
-`MEMORY_MASON_VAULT_PATH` sets the Obsidian vault location. `MEMORY_MASON_SUBFOLDER` sets the directory inside the vault. `MEMORY_MASON_SYNC` is optional — capture is enabled by default; set it to `false` to pause capture. Setting `MEMORY_MASON_SYNC` as a process environment variable overrides all config files for a single session.
+`MEMORY_MASON_VAULT_PATH` sets the Obsidian vault location. `MEMORY_MASON_SUBFOLDER` sets the directory inside the vault. `MEMORY_MASON_SYNC` is optional — capture is enabled by default; set it to `false` to pause capture. `MEMORY_MASON_CAPTURE_MODE` is optional — set to `full` for detailed tool output, or leave unset for the default `lite` compact mode.
 
 ```env
 MEMORY_MASON_VAULT_PATH=/path/to/your/obsidian/vault
 MEMORY_MASON_SUBFOLDER=ai-knowledge
 MEMORY_MASON_SYNC=true
+MEMORY_MASON_CAPTURE_MODE=lite
 ```
 
 ### JSON format
 
-`vaultPath` sets the Obsidian vault location. `subfolder` sets the directory inside the vault. `sync` is optional — capture is enabled by default; set it to `false` to pause capture. Use this format for `memory-mason.json` in a project root or `~/.memory-mason/config.json` for global config (`/mmsetup` creates the global file automatically).
+`vaultPath` sets the Obsidian vault location. `subfolder` sets the directory inside the vault. `sync` is optional — capture is enabled by default; set it to `false` to pause capture. `captureMode` is optional — `full` keeps detailed tool output, default `lite` keeps capture compact. Use this format for `memory-mason.json` in a project root or `~/.memory-mason/config.json` for global config (`/mmsetup` creates the global file automatically).
 
 ```json
 {
   "vaultPath": "/path/to/your/obsidian/vault",
   "subfolder": "ai-knowledge",
-  "sync": true
+  "sync": true,
+  "captureMode": "lite"
 }
 ```
 

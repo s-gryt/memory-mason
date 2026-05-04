@@ -85,6 +85,27 @@ const buildEnv = (homeDir, overrides = {}) => ({
   ...overrides,
 });
 
+const withMemoryMasonCaptureMode = (value, callback) => {
+  const hadCaptureMode = Object.hasOwn(process.env, "MEMORY_MASON_CAPTURE_MODE");
+  const previousCaptureMode = process.env.MEMORY_MASON_CAPTURE_MODE;
+
+  if (typeof value === "string") {
+    process.env.MEMORY_MASON_CAPTURE_MODE = value;
+  } else {
+    delete process.env.MEMORY_MASON_CAPTURE_MODE;
+  }
+
+  try {
+    return callback();
+  } finally {
+    if (hadCaptureMode && typeof previousCaptureMode === "string") {
+      process.env.MEMORY_MASON_CAPTURE_MODE = previousCaptureMode;
+    } else {
+      delete process.env.MEMORY_MASON_CAPTURE_MODE;
+    }
+  }
+};
+
 const runScript = (scriptName, options = {}) => {
   const scriptModule = scriptModules[scriptName];
   let stdinText = "";
@@ -639,116 +660,126 @@ describe("user-prompt-submit.js", () => {
 
 describe("post-tool-use.js", () => {
   it("writes tool output for copilot vscode payloads", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
+    withMemoryMasonCaptureMode("full", () => {
+      const homeDir = createTempDir("memory-mason-home-");
+      const vaultPath = createTempDir("memory-mason-vault-");
 
-    const result = runScript("post-tool-use.js", {
-      payload: {
-        hookEventName: "post-tool-use",
-        cwd: hooksRoot,
-        tool_name: "Edit",
-        tool_response: "patched file",
-      },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      const result = runScript("post-tool-use.js", {
+        payload: {
+          hookEventName: "post-tool-use",
+          cwd: hooksRoot,
+          tool_name: "Edit",
+          tool_response: "patched file",
+        },
+        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      });
+
+      expect(result.status).toBe(0);
+      expect(
+        fs.readFileSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1), "utf-8"),
+      ).toContain("patched file");
     });
-
-    expect(result.status).toBe(0);
-    expect(
-      fs.readFileSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1), "utf-8"),
-    ).toContain("patched file");
   });
 
   it("writes structured tool output for claude payloads", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
+    withMemoryMasonCaptureMode("full", () => {
+      const homeDir = createTempDir("memory-mason-home-");
+      const vaultPath = createTempDir("memory-mason-vault-");
 
-    const result = runScript("post-tool-use.js", {
-      payload: {
-        hook_event_name: "PostToolUse",
-        cwd: hooksRoot,
-        tool_name: "Bash",
-        tool_response: {
-          stdout: "grep hit 1\ngrep hit 2",
-          stderr: "",
-          interrupted: false,
-          isImage: false,
+      const result = runScript("post-tool-use.js", {
+        payload: {
+          hook_event_name: "PostToolUse",
+          cwd: hooksRoot,
+          tool_name: "Write",
+          tool_response: {
+            stdout: "grep hit 1\ngrep hit 2",
+            stderr: "",
+            interrupted: false,
+            isImage: false,
+          },
         },
-      },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
-    });
+        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      });
 
-    expect(result.status).toBe(0);
-    expect(
-      fs.readFileSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1), "utf-8"),
-    ).toContain("grep hit 1");
-    expect(
-      fs.readFileSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1), "utf-8"),
-    ).toContain("stdout");
+      expect(result.status).toBe(0);
+      expect(
+        fs.readFileSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1), "utf-8"),
+      ).toContain("grep hit 1");
+      expect(
+        fs.readFileSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1), "utf-8"),
+      ).toContain("stdout");
+    });
   });
 
   it("writes text blocks for structured claude tool outputs", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
+    withMemoryMasonCaptureMode("full", () => {
+      const homeDir = createTempDir("memory-mason-home-");
+      const vaultPath = createTempDir("memory-mason-vault-");
 
-    const result = runScript("post-tool-use.js", {
-      payload: {
-        hook_event_name: "PostToolUse",
-        cwd: hooksRoot,
-        tool_name: "mcp__plugin_claude-mem_mcp-search__search",
-        tool_response: [
-          { type: "text", text: "match 1" },
-          { type: "text", text: "match 2" },
-        ],
-      },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      const result = runScript("post-tool-use.js", {
+        payload: {
+          hook_event_name: "PostToolUse",
+          cwd: hooksRoot,
+          tool_name: "apply_patch",
+          tool_response: [
+            { type: "text", text: "match 1" },
+            { type: "text", text: "match 2" },
+          ],
+        },
+        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      });
+
+      expect(result.status).toBe(0);
+      expect(
+        fs.readFileSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1), "utf-8"),
+      ).toContain("match 1");
+      expect(
+        fs.readFileSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1), "utf-8"),
+      ).toContain("match 2");
     });
-
-    expect(result.status).toBe(0);
-    expect(
-      fs.readFileSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1), "utf-8"),
-    ).toContain("match 1");
-    expect(
-      fs.readFileSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1), "utf-8"),
-    ).toContain("match 2");
   });
 
   it("writes tool output for copilot cli payloads", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
+    withMemoryMasonCaptureMode("full", () => {
+      const homeDir = createTempDir("memory-mason-home-");
+      const vaultPath = createTempDir("memory-mason-vault-");
 
-    runScript("post-tool-use.js", {
-      payload: {
-        timestamp: "2026-04-27T10:00:00.000Z",
-        cwd: hooksRoot,
-        toolName: "apply_patch",
-        toolResult: { textResultForLlm: "patch ok" },
-      },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      runScript("post-tool-use.js", {
+        payload: {
+          timestamp: "2026-04-27T10:00:00.000Z",
+          cwd: hooksRoot,
+          toolName: "apply_patch",
+          toolResult: { textResultForLlm: "patch ok" },
+        },
+        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      });
+
+      expect(
+        fs.readFileSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1), "utf-8"),
+      ).toContain("patch ok");
     });
-
-    expect(
-      fs.readFileSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1), "utf-8"),
-    ).toContain("patch ok");
   });
 
   it("writes tool output for codex payloads", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
+    withMemoryMasonCaptureMode("full", () => {
+      const homeDir = createTempDir("memory-mason-home-");
+      const vaultPath = createTempDir("memory-mason-vault-");
 
-    runScript("post-tool-use.js", {
-      payload: {
-        hook_event_name: "post_tool_use",
-        turn_id: "turn-1",
-        cwd: hooksRoot,
-        tool_name: "Shell",
-        tool_result: "codex result",
-      },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      runScript("post-tool-use.js", {
+        payload: {
+          hook_event_name: "post_tool_use",
+          turn_id: "turn-1",
+          cwd: hooksRoot,
+          tool_name: "apply_patch",
+          tool_result: "codex result",
+        },
+        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      });
+
+      expect(
+        fs.readFileSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1), "utf-8"),
+      ).toContain("codex result");
     });
-
-    expect(
-      fs.readFileSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1), "utf-8"),
-    ).toContain("codex result");
   });
 
   it("skips noisy tools", () => {
@@ -833,71 +864,79 @@ describe("pre-compact.js", () => {
   });
 
   it("writes excerpt and capture state for valid transcript", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
-    const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
+    withMemoryMasonCaptureMode("full", () => {
+      const homeDir = createTempDir("memory-mason-home-");
+      const vaultPath = createTempDir("memory-mason-vault-");
+      const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
 
-    writeText(transcriptPath, buildTranscript(6));
+      writeText(transcriptPath, buildTranscript(6));
 
-    const result = runScript("pre-compact.js", {
-      payload: { cwd: hooksRoot, transcript_path: transcriptPath, session_id: "session-1" },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      const result = runScript("pre-compact.js", {
+        payload: { cwd: hooksRoot, transcript_path: transcriptPath, session_id: "session-1" },
+        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      });
+
+      const dailyPath = buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1);
+      const statePath = resolveCaptureStatePath(vaultPath, "ai-knowledge");
+      expect(result.status).toBe(0);
+      expect(fs.readFileSync(dailyPath, "utf-8")).toContain("session-1 / pre-compact");
+      expect(fs.readFileSync(dailyPath, "utf-8")).toContain("**User:** user turn");
+      expect(JSON.parse(fs.readFileSync(statePath, "utf-8")).lastCapture.source).toBe(
+        "pre-compact",
+      );
     });
-
-    const dailyPath = buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1);
-    const statePath = resolveCaptureStatePath(vaultPath, "ai-knowledge");
-    expect(result.status).toBe(0);
-    expect(fs.readFileSync(dailyPath, "utf-8")).toContain("session-1 / pre-compact");
-    expect(fs.readFileSync(dailyPath, "utf-8")).toContain("**User:** user turn");
-    expect(JSON.parse(fs.readFileSync(statePath, "utf-8")).lastCapture.source).toBe("pre-compact");
   });
 
   it("writes full transcript without turn or character truncation", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
-    const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
-    const longFirstTurn = `first-user-turn-${"x".repeat(17000)}`;
+    withMemoryMasonCaptureMode("full", () => {
+      const homeDir = createTempDir("memory-mason-home-");
+      const vaultPath = createTempDir("memory-mason-vault-");
+      const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
+      const longFirstTurn = `first-user-turn-${"x".repeat(17000)}`;
 
-    writeText(transcriptPath, buildTranscript(40, longFirstTurn));
+      writeText(transcriptPath, buildTranscript(40, longFirstTurn));
 
-    const result = runScript("pre-compact.js", {
-      payload: {
-        cwd: hooksRoot,
-        transcript_path: transcriptPath,
-        session_id: "session-full-pre-compact",
-      },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      const result = runScript("pre-compact.js", {
+        payload: {
+          cwd: hooksRoot,
+          transcript_path: transcriptPath,
+          session_id: "session-full-pre-compact",
+        },
+        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      });
+
+      const dailyPath = buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1);
+      const dailyContent = fs.readFileSync(dailyPath, "utf-8");
+
+      expect(result.status).toBe(0);
+      expect(dailyContent).toContain(longFirstTurn);
+      expect(dailyContent).toContain("assistant turn 39");
+      expect(dailyContent).not.toContain("...(truncated)");
     });
-
-    const dailyPath = buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1);
-    const dailyContent = fs.readFileSync(dailyPath, "utf-8");
-
-    expect(result.status).toBe(0);
-    expect(dailyContent).toContain(longFirstTurn);
-    expect(dailyContent).toContain("assistant turn 39");
-    expect(dailyContent).not.toContain("...(truncated)");
   });
 
   it("skips duplicate capture within duplicate window", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
-    const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
+    withMemoryMasonCaptureMode("full", () => {
+      const homeDir = createTempDir("memory-mason-home-");
+      const vaultPath = createTempDir("memory-mason-vault-");
+      const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
 
-    writeText(transcriptPath, buildTranscript(6));
+      writeText(transcriptPath, buildTranscript(6));
 
-    runScript("pre-compact.js", {
-      payload: { cwd: hooksRoot, transcript_path: transcriptPath, session_id: "session-1" },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      runScript("pre-compact.js", {
+        payload: { cwd: hooksRoot, transcript_path: transcriptPath, session_id: "session-1" },
+        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      });
+      const dailyPath = buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1);
+      const firstContent = fs.readFileSync(dailyPath, "utf-8");
+
+      runScript("pre-compact.js", {
+        payload: { cwd: hooksRoot, transcript_path: transcriptPath, session_id: "session-1" },
+        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      });
+
+      expect(fs.readFileSync(dailyPath, "utf-8")).toBe(firstContent);
     });
-    const dailyPath = buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1);
-    const firstContent = fs.readFileSync(dailyPath, "utf-8");
-
-    runScript("pre-compact.js", {
-      payload: { cwd: hooksRoot, transcript_path: transcriptPath, session_id: "session-1" },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
-    });
-
-    expect(fs.readFileSync(dailyPath, "utf-8")).toBe(firstContent);
   });
 
   it("reports invalid stdin to stderr", () => {
@@ -1181,98 +1220,112 @@ describe("session-end.js", () => {
   });
 
   it("writes transcript from explicit transcript path", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
-    const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
+    withMemoryMasonCaptureMode("full", () => {
+      const homeDir = createTempDir("memory-mason-home-");
+      const vaultPath = createTempDir("memory-mason-vault-");
+      const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
 
-    writeText(transcriptPath, buildTranscript(2));
+      writeText(transcriptPath, buildTranscript(2));
 
-    const result = runScript("session-end.js", {
-      payload: {
-        hook_event_name: "session_end",
-        cwd: hooksRoot,
-        transcript_path: transcriptPath,
-        session_id: "session-1",
-        source: "stop",
-      },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      const result = runScript("session-end.js", {
+        payload: {
+          hook_event_name: "session_end",
+          cwd: hooksRoot,
+          transcript_path: transcriptPath,
+          session_id: "session-1",
+          source: "stop",
+        },
+        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      });
+
+      const dailyPath = buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1);
+      expect(result.status).toBe(0);
+      expect(fs.readFileSync(dailyPath, "utf-8")).toContain("session-1 / stop");
     });
-
-    const dailyPath = buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1);
-    expect(result.status).toBe(0);
-    expect(fs.readFileSync(dailyPath, "utf-8")).toContain("session-1 / stop");
   });
 
   it("writes full transcript from explicit path without truncation", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
-    const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
-    const longFirstTurn = `session-end-first-user-${"y".repeat(17000)}`;
+    withMemoryMasonCaptureMode("full", () => {
+      const homeDir = createTempDir("memory-mason-home-");
+      const vaultPath = createTempDir("memory-mason-vault-");
+      const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
+      const longFirstTurn = `session-end-first-user-${"y".repeat(17000)}`;
 
-    writeText(transcriptPath, buildTranscript(40, longFirstTurn));
+      writeText(transcriptPath, buildTranscript(40, longFirstTurn));
 
-    const result = runScript("session-end.js", {
-      payload: {
-        hook_event_name: "session_end",
-        cwd: hooksRoot,
-        transcript_path: transcriptPath,
-        session_id: "session-full-session-end",
-        source: "stop",
-      },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      const result = runScript("session-end.js", {
+        payload: {
+          hook_event_name: "session_end",
+          cwd: hooksRoot,
+          transcript_path: transcriptPath,
+          session_id: "session-full-session-end",
+          source: "stop",
+        },
+        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      });
+
+      const dailyPath = buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1);
+      const dailyContent = fs.readFileSync(dailyPath, "utf-8");
+
+      expect(result.status).toBe(0);
+      expect(dailyContent).toContain(longFirstTurn);
+      expect(dailyContent).toContain("assistant turn 39");
+      expect(dailyContent).not.toContain("...(truncated)");
     });
-
-    const dailyPath = buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1);
-    const dailyContent = fs.readFileSync(dailyPath, "utf-8");
-
-    expect(result.status).toBe(0);
-    expect(dailyContent).toContain(longFirstTurn);
-    expect(dailyContent).toContain("assistant turn 39");
-    expect(dailyContent).not.toContain("...(truncated)");
   });
 
   it("falls back to codex session files when transcript path missing", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
-    const codexFile = path.join(homeDir, ".codex", "sessions", "session-2", "session-2-log.jsonl");
+    withMemoryMasonCaptureMode("full", () => {
+      const homeDir = createTempDir("memory-mason-home-");
+      const vaultPath = createTempDir("memory-mason-vault-");
+      const codexFile = path.join(
+        homeDir,
+        ".codex",
+        "sessions",
+        "session-2",
+        "session-2-log.jsonl",
+      );
 
-    writeText(codexFile, buildTranscript(2));
+      writeText(codexFile, buildTranscript(2));
 
-    runScript("session-end.js", {
-      payload: {
-        hook_event_name: "session_end",
-        turn_id: "turn-1",
-        cwd: hooksRoot,
-        session_id: "session-2",
-      },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      runScript("session-end.js", {
+        payload: {
+          hook_event_name: "session_end",
+          turn_id: "turn-1",
+          cwd: hooksRoot,
+          session_id: "session-2",
+        },
+        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      });
+
+      expect(
+        fs.readFileSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1), "utf-8"),
+      ).toContain("session-2 / codex");
     });
-
-    expect(
-      fs.readFileSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1), "utf-8"),
-    ).toContain("session-2 / codex");
   });
 
   it("falls back to Copilot CLI session-state content", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
-    const sessionDir = path.join(homeDir, ".copilot", "session-state", "session-a");
-    const cwd = createTempDir("memory-mason-cwd-");
-    const transcriptPath = path.join(sessionDir, "state.jsonl");
+    withMemoryMasonCaptureMode("full", () => {
+      const homeDir = createTempDir("memory-mason-home-");
+      const vaultPath = createTempDir("memory-mason-vault-");
+      const sessionDir = path.join(homeDir, ".copilot", "session-state", "session-a");
+      const cwd = createTempDir("memory-mason-cwd-");
+      const transcriptPath = path.join(sessionDir, "state.jsonl");
 
-    writeText(transcriptPath, buildTranscript(2, cwd));
+      writeText(transcriptPath, buildTranscript(2, cwd));
 
-    runScript("session-end.js", {
-      payload: {
-        timestamp: "2026-04-27T10:00:00.000Z",
-        cwd,
-      },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      runScript("session-end.js", {
+        payload: {
+          timestamp: "2026-04-27T10:00:00.000Z",
+          cwd,
+        },
+        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      });
+
+      expect(
+        fs.readFileSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1), "utf-8"),
+      ).toContain("unknown / copilot-cli");
     });
-
-    expect(
-      fs.readFileSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1), "utf-8"),
-    ).toContain("unknown / copilot-cli");
   });
 
   it("skips when Copilot CLI session-state is missing", () => {
@@ -1292,36 +1345,38 @@ describe("session-end.js", () => {
   });
 
   it("skips duplicate transcript capture within duplicate window", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
-    const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
+    withMemoryMasonCaptureMode("full", () => {
+      const homeDir = createTempDir("memory-mason-home-");
+      const vaultPath = createTempDir("memory-mason-vault-");
+      const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
 
-    writeText(transcriptPath, buildTranscript(2));
+      writeText(transcriptPath, buildTranscript(2));
 
-    runScript("session-end.js", {
-      payload: {
-        hook_event_name: "session_end",
-        cwd: hooksRoot,
-        transcript_path: transcriptPath,
-        session_id: "session-3",
-      },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      runScript("session-end.js", {
+        payload: {
+          hook_event_name: "session_end",
+          cwd: hooksRoot,
+          transcript_path: transcriptPath,
+          session_id: "session-3",
+        },
+        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      });
+
+      const dailyPath = buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1);
+      const firstContent = fs.readFileSync(dailyPath, "utf-8");
+
+      runScript("session-end.js", {
+        payload: {
+          hook_event_name: "session_end",
+          cwd: hooksRoot,
+          transcript_path: transcriptPath,
+          session_id: "session-3",
+        },
+        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      });
+
+      expect(fs.readFileSync(dailyPath, "utf-8")).toBe(firstContent);
     });
-
-    const dailyPath = buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1);
-    const firstContent = fs.readFileSync(dailyPath, "utf-8");
-
-    runScript("session-end.js", {
-      payload: {
-        hook_event_name: "session_end",
-        cwd: hooksRoot,
-        transcript_path: transcriptPath,
-        session_id: "session-3",
-      },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
-    });
-
-    expect(fs.readFileSync(dailyPath, "utf-8")).toBe(firstContent);
   });
 
   it("reports invalid stdin to stderr", () => {

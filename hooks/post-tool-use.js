@@ -6,6 +6,7 @@ const path = require("node:path");
 const os = require("node:os");
 const { parseJsonInput, detectPlatform, resolveVaultConfig } = require("./lib/config");
 const { buildCommandErrorResult, writeIfPresent } = require("./lib/cli");
+const { CAPTURE_MODE_LITE, NOISY_TOOLS, USER_INPUT_TOOLS } = require("./lib/constants");
 const { buildDailyEntry, localNow } = require("./lib/vault");
 const { appendToDaily } = require("./lib/writer");
 const { loadCaptureState, getMmSuppressed } = require("./lib/capture-state");
@@ -188,13 +189,17 @@ function buildCaptureTimestamp() {
   };
 }
 
-function buildNoisyToolList() {
-  return ["Read", "Glob", "LS", "List", "ls", "read", "glob"];
-}
+const shouldSkipToolPayload = (payload, captureMode) => {
+  if (payload.toolName === "") {
+    return true;
+  }
 
-function shouldSkipToolPayload(payload, noisyTools) {
-  return payload.toolName === "" || noisyTools.includes(payload.toolName);
-}
+  if (captureMode === CAPTURE_MODE_LITE) {
+    return !USER_INPUT_TOOLS.has(payload.toolName);
+  }
+
+  return NOISY_TOOLS.has(payload.toolName);
+};
 
 function buildRunPlan(rawStdin, runtime = {}) {
   const env = resolveRuntimeEnv(runtime);
@@ -212,7 +217,6 @@ function buildRunPlan(rawStdin, runtime = {}) {
     payload,
     today: captureTimestamp.today,
     timestamp: captureTimestamp.timestamp,
-    noisyTools: buildNoisyToolList(),
   };
 }
 
@@ -246,7 +250,7 @@ function run(rawStdin, runtime = {}) {
       return { status: 0, stdout: "", stderr: "" };
     }
 
-    if (shouldSkipToolPayload(plan.payload, plan.noisyTools)) {
+    if (shouldSkipToolPayload(plan.payload, resolvedConfig.captureMode)) {
       return { status: 0, stdout: "", stderr: "" };
     }
 
@@ -283,6 +287,7 @@ module.exports = {
   readStdin,
   serializeToolResponse,
   extractToolPayload,
+  shouldSkipToolPayload,
   readDotEnvText,
   readGlobalConfigText,
   readGlobalDotEnvText,

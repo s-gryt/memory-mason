@@ -25,6 +25,27 @@ const buildEnv = (homeDir, overrides = {}) => ({
   ...overrides,
 });
 
+const withProcessCaptureMode = (value, callback) => {
+  const hadCaptureMode = Object.hasOwn(process.env, "MEMORY_MASON_CAPTURE_MODE");
+  const previousCaptureMode = process.env.MEMORY_MASON_CAPTURE_MODE;
+
+  if (typeof value === "string") {
+    process.env.MEMORY_MASON_CAPTURE_MODE = value;
+  } else {
+    delete process.env.MEMORY_MASON_CAPTURE_MODE;
+  }
+
+  try {
+    return callback();
+  } finally {
+    if (hadCaptureMode && typeof previousCaptureMode === "string") {
+      process.env.MEMORY_MASON_CAPTURE_MODE = previousCaptureMode;
+    } else {
+      delete process.env.MEMORY_MASON_CAPTURE_MODE;
+    }
+  }
+};
+
 const writeText = (filePath, content) => {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, content, "utf-8");
@@ -114,7 +135,7 @@ describe("entrypoint config readers", () => {
 
     writeText(
       path.join(cwd, "memory-mason.json"),
-      JSON.stringify({ vaultPath, subfolder: "ai-knowledge" }),
+      JSON.stringify({ vaultPath, subfolder: "ai-knowledge", captureMode: "full" }),
     );
     writeText(transcriptPath, buildTranscript(6));
 
@@ -183,73 +204,195 @@ describe("pre-compact.js", () => {
     expect(fs.existsSync(buildDailyFilePath(vaultPath, "ai-knowledge", today()))).toBe(false);
   });
 
-  it("writes excerpt and capture state for valid transcript", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
-    const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
+  it("skips when transcript excerpt too small in full mode", () => {
+    withProcessCaptureMode("full", () => {
+      const homeDir = createTempDir("memory-mason-home-");
+      const vaultPath = createTempDir("memory-mason-vault-");
+      const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
 
-    writeText(transcriptPath, buildTranscript(6));
+      writeText(transcriptPath, buildTranscript(4));
 
-    const result = runScript("pre-compact.js", {
-      payload: { cwd: hooksRoot, transcript_path: transcriptPath, session_id: "session-1" },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      const result = runScript("pre-compact.js", {
+        payload: {
+          cwd: hooksRoot,
+          transcript_path: transcriptPath,
+          session_id: "session-short-full",
+        },
+        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      });
+
+      expect(result.status).toBe(0);
+      expect(fs.existsSync(buildDailyFilePath(vaultPath, "ai-knowledge", today()))).toBe(false);
     });
-
-    const dailyPath = buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1);
-    const statePath = resolveCaptureStatePath(vaultPath, "ai-knowledge");
-    expect(result.status).toBe(0);
-    expect(fs.readFileSync(dailyPath, "utf-8")).toContain("session-1 / pre-compact");
-    expect(fs.readFileSync(dailyPath, "utf-8")).toContain("**User:** user turn");
-    expect(JSON.parse(fs.readFileSync(statePath, "utf-8")).lastCapture.source).toBe("pre-compact");
   });
 
-  it("writes full transcript without turn or character truncation", () => {
+  it("writes excerpt and capture state for valid transcript", () =>
+    withProcessCaptureMode("full", () => {
+      const homeDir = createTempDir("memory-mason-home-");
+      const vaultPath = createTempDir("memory-mason-vault-");
+      const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
+
+      writeText(transcriptPath, buildTranscript(6));
+
+      const result = runScript("pre-compact.js", {
+        payload: { cwd: hooksRoot, transcript_path: transcriptPath, session_id: "session-1" },
+        env: buildEnv(homeDir, {
+          MEMORY_MASON_VAULT_PATH: vaultPath,
+        }),
+      });
+
+      const dailyPath = buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1);
+      const statePath = resolveCaptureStatePath(vaultPath, "ai-knowledge");
+      expect(result.status).toBe(0);
+      expect(fs.readFileSync(dailyPath, "utf-8")).toContain("session-1 / pre-compact");
+      expect(fs.readFileSync(dailyPath, "utf-8")).toContain("**User:** user turn");
+      expect(JSON.parse(fs.readFileSync(statePath, "utf-8")).lastCapture.source).toBe(
+        "pre-compact",
+      );
+    }));
+
+  it("writes full transcript without turn or character truncation", () =>
+    withProcessCaptureMode("full", () => {
+      const homeDir = createTempDir("memory-mason-home-");
+      const vaultPath = createTempDir("memory-mason-vault-");
+      const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
+      const longFirstTurn = `first-user-turn-${"x".repeat(17000)}`;
+
+      writeText(transcriptPath, buildTranscript(40, longFirstTurn));
+
+      const result = runScript("pre-compact.js", {
+        payload: {
+          cwd: hooksRoot,
+          transcript_path: transcriptPath,
+          session_id: "session-full-pre-compact",
+        },
+        env: buildEnv(homeDir, {
+          MEMORY_MASON_VAULT_PATH: vaultPath,
+        }),
+      });
+
+      const dailyPath = buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1);
+      const dailyContent = fs.readFileSync(dailyPath, "utf-8");
+
+      expect(result.status).toBe(0);
+      expect(dailyContent).toContain(longFirstTurn);
+      expect(dailyContent).toContain("assistant turn 39");
+      expect(dailyContent).not.toContain("...(truncated)");
+    }));
+
+  it("lite mode skips pre-compact entirely", () => {
     const homeDir = createTempDir("memory-mason-home-");
     const vaultPath = createTempDir("memory-mason-vault-");
     const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
-    const longFirstTurn = `first-user-turn-${"x".repeat(17000)}`;
+    const transcript = [
+      JSON.stringify({ message: { role: "user", content: "u1" } }),
+      JSON.stringify({ message: { role: "assistant", content: "a1" } }),
+      JSON.stringify({ message: { role: "user", content: "u2" } }),
+      JSON.stringify({ message: { role: "assistant", content: "a2" } }),
+      JSON.stringify({ message: { role: "user", content: "u3" } }),
+      JSON.stringify({ message: { role: "assistant", content: "a3" } }),
+    ].join("\n");
 
-    writeText(transcriptPath, buildTranscript(40, longFirstTurn));
+    writeText(transcriptPath, transcript);
 
     const result = runScript("pre-compact.js", {
       payload: {
         cwd: hooksRoot,
         transcript_path: transcriptPath,
-        session_id: "session-full-pre-compact",
+        session_id: "session-lite-skip",
       },
       env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
     });
 
-    const dailyPath = buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1);
-    const dailyContent = fs.readFileSync(dailyPath, "utf-8");
-
     expect(result.status).toBe(0);
-    expect(dailyContent).toContain(longFirstTurn);
-    expect(dailyContent).toContain("assistant turn 39");
-    expect(dailyContent).not.toContain("...(truncated)");
+    expect(fs.existsSync(buildDailyFilePath(vaultPath, "ai-knowledge", today()))).toBe(false);
   });
 
-  it("skips duplicate capture within duplicate window", () => {
+  it("lite mode skips pre-compact (system-reminder test)", () => {
     const homeDir = createTempDir("memory-mason-home-");
     const vaultPath = createTempDir("memory-mason-vault-");
     const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
 
     writeText(transcriptPath, buildTranscript(6));
 
-    runScript("pre-compact.js", {
-      payload: { cwd: hooksRoot, transcript_path: transcriptPath, session_id: "session-1" },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
-    });
-    const dailyPath = buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1);
-    const firstContent = fs.readFileSync(dailyPath, "utf-8");
-
-    runScript("pre-compact.js", {
-      payload: { cwd: hooksRoot, transcript_path: transcriptPath, session_id: "session-1" },
+    const result = runScript("pre-compact.js", {
+      payload: {
+        cwd: hooksRoot,
+        transcript_path: transcriptPath,
+        session_id: "session-lite-skip-2",
+      },
       env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
     });
 
-    expect(fs.readFileSync(dailyPath, "utf-8")).toBe(firstContent);
+    expect(result.status).toBe(0);
+    expect(fs.existsSync(buildDailyFilePath(vaultPath, "ai-knowledge", today()))).toBe(false);
   });
+
+  it("full mode via project JSON preserves tags in persisted markdown", () => {
+    const cwd = createTempDir("memory-mason-cwd-");
+    const homeDir = createTempDir("memory-mason-home-");
+    const vaultPath = createTempDir("memory-mason-vault-");
+    const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
+    const transcript = [
+      JSON.stringify({ message: { role: "user", content: "u1<thinking>hidden</thinking>" } }),
+      JSON.stringify({ message: { role: "assistant", content: "a1" } }),
+      JSON.stringify({ message: { role: "user", content: "u2" } }),
+      JSON.stringify({ message: { role: "assistant", content: "a2" } }),
+      JSON.stringify({ message: { role: "user", content: "u3" } }),
+      JSON.stringify({ message: { role: "assistant", content: "a3" } }),
+    ].join("\n");
+
+    writeText(
+      path.join(cwd, "memory-mason.json"),
+      JSON.stringify({ vaultPath, subfolder: "ai-knowledge", captureMode: "full" }, null, 2),
+    );
+    writeText(transcriptPath, transcript);
+
+    const result = runScript("pre-compact.js", {
+      payload: {
+        cwd,
+        transcript_path: transcriptPath,
+        session_id: "session-full-preserve-tags",
+      },
+      cwd,
+      env: buildEnv(homeDir),
+    });
+
+    const dailyContent = fs.readFileSync(
+      buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1),
+      "utf-8",
+    );
+
+    expect(result.status).toBe(0);
+    expect(dailyContent).toContain("<thinking>hidden</thinking>");
+  });
+
+  it("skips duplicate capture within duplicate window", () =>
+    withProcessCaptureMode("full", () => {
+      const homeDir = createTempDir("memory-mason-home-");
+      const vaultPath = createTempDir("memory-mason-vault-");
+      const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
+
+      writeText(transcriptPath, buildTranscript(6));
+
+      runScript("pre-compact.js", {
+        payload: { cwd: hooksRoot, transcript_path: transcriptPath, session_id: "session-1" },
+        env: buildEnv(homeDir, {
+          MEMORY_MASON_VAULT_PATH: vaultPath,
+        }),
+      });
+      const dailyPath = buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1);
+      const firstContent = fs.readFileSync(dailyPath, "utf-8");
+
+      runScript("pre-compact.js", {
+        payload: { cwd: hooksRoot, transcript_path: transcriptPath, session_id: "session-1" },
+        env: buildEnv(homeDir, {
+          MEMORY_MASON_VAULT_PATH: vaultPath,
+        }),
+      });
+
+      expect(fs.readFileSync(dailyPath, "utf-8")).toBe(firstContent);
+    }));
 
   it("reports invalid stdin to stderr", () => {
     const result = runScript("pre-compact.js", {
@@ -291,42 +434,69 @@ describe("run - mm suppression", () => {
     expect(fs.existsSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1))).toBe(false);
   });
 
-  it("continues pre-compact capture when mmSuppressed is false", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
-    const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
-    const statePath = resolveCaptureStatePath(vaultPath, "ai-knowledge");
+  it("skips pre-compact capture in full mode when mmSuppressed is true", () => {
+    withProcessCaptureMode("full", () => {
+      const homeDir = createTempDir("memory-mason-home-");
+      const vaultPath = createTempDir("memory-mason-vault-");
+      const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
+      const statePath = resolveCaptureStatePath(vaultPath, "ai-knowledge");
 
-    writeText(transcriptPath, buildTranscript(6));
-    writeText(
-      statePath,
-      JSON.stringify(
-        {
-          lastCapture: null,
-          mmSuppressed: false,
+      writeText(transcriptPath, buildTranscript(6));
+      writeText(statePath, JSON.stringify({ lastCapture: null, mmSuppressed: true }, null, 2));
+
+      const result = runScript("pre-compact.js", {
+        payload: {
+          cwd: hooksRoot,
+          transcript_path: transcriptPath,
+          session_id: "session-mm-full-true",
         },
-        null,
-        2,
-      ),
-    );
+        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      });
 
-    const result = runScript("pre-compact.js", {
-      payload: {
-        cwd: hooksRoot,
-        transcript_path: transcriptPath,
-        session_id: "session-mm-false",
-      },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      expect(result.status).toBe(0);
+      expect(fs.existsSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1))).toBe(false);
     });
-
-    const dailyContent = fs.readFileSync(
-      buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1),
-      "utf-8",
-    );
-
-    expect(result.status).toBe(0);
-    expect(dailyContent).toContain("session-mm-false / pre-compact");
   });
+
+  it("continues pre-compact capture when mmSuppressed is false", () =>
+    withProcessCaptureMode("full", () => {
+      const homeDir = createTempDir("memory-mason-home-");
+      const vaultPath = createTempDir("memory-mason-vault-");
+      const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
+      const statePath = resolveCaptureStatePath(vaultPath, "ai-knowledge");
+
+      writeText(transcriptPath, buildTranscript(6));
+      writeText(
+        statePath,
+        JSON.stringify(
+          {
+            lastCapture: null,
+            mmSuppressed: false,
+          },
+          null,
+          2,
+        ),
+      );
+
+      const result = runScript("pre-compact.js", {
+        payload: {
+          cwd: hooksRoot,
+          transcript_path: transcriptPath,
+          session_id: "session-mm-false",
+        },
+        env: buildEnv(homeDir, {
+          MEMORY_MASON_VAULT_PATH: vaultPath,
+        }),
+      });
+
+      const dailyContent = fs.readFileSync(
+        buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1),
+        "utf-8",
+      );
+
+      expect(result.status).toBe(0);
+      expect(dailyContent).toContain("session-mm-false / pre-compact");
+    }));
 });
 
 describe("run - sync flag", () => {
@@ -420,45 +590,48 @@ describe("pre-compact.js runtime fallback branches", () => {
 });
 
 describe("pre-compact.js main", () => {
-  it("reads stdin via mock fs and calls exit", () => {
-    const homeDir = createTempDir("mm-home-");
-    const vaultPath = createTempDir("mm-vault-");
-    const transcriptPath = path.join(createTempDir("mm-tr-"), "session.jsonl");
-    writeText(transcriptPath, buildTranscript(6));
-    const payload = JSON.stringify({
-      cwd: hooksRoot,
-      transcript_path: transcriptPath,
-      session_id: "session-main",
-    });
-    const buf = Buffer.from(payload);
-    let rc = 0;
-    const errors = [];
-    let exitCode = null;
-    preCompact.main({
-      fs: {
-        readSync(_fd, chunk) {
-          if (rc === 0) {
-            rc++;
-            buf.copy(chunk);
-            return buf.length;
-          }
-          return 0;
+  it("reads stdin via mock fs and calls exit", () =>
+    withProcessCaptureMode("full", () => {
+      const homeDir = createTempDir("mm-home-");
+      const vaultPath = createTempDir("mm-vault-");
+      const transcriptPath = path.join(createTempDir("mm-tr-"), "session.jsonl");
+      writeText(transcriptPath, buildTranscript(6));
+      const payload = JSON.stringify({
+        cwd: hooksRoot,
+        transcript_path: transcriptPath,
+        session_id: "session-main",
+      });
+      const buf = Buffer.from(payload);
+      let rc = 0;
+      const errors = [];
+      let exitCode = null;
+      preCompact.main({
+        fs: {
+          readSync(_fd, chunk) {
+            if (rc === 0) {
+              rc++;
+              buf.copy(chunk);
+              return buf.length;
+            }
+            return 0;
+          },
         },
-      },
-      cwd: hooksRoot,
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
-      homedir: homeDir,
-      io: {
-        stdout: () => {},
-        stderr: (t) => errors.push(t),
-        exit: (c) => {
-          exitCode = c;
+        cwd: hooksRoot,
+        env: buildEnv(homeDir, {
+          MEMORY_MASON_VAULT_PATH: vaultPath,
+        }),
+        homedir: homeDir,
+        io: {
+          stdout: () => {},
+          stderr: (t) => errors.push(t),
+          exit: (c) => {
+            exitCode = c;
+          },
         },
-      },
-    });
-    expect(exitCode).toBe(0);
-    expect(errors).toHaveLength(0);
-  });
+      });
+      expect(exitCode).toBe(0);
+      expect(errors).toHaveLength(0);
+    }));
 
   it("writes stderr on error", () => {
     const buf = Buffer.from("{bad-json");

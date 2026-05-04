@@ -6,7 +6,12 @@ const path = require("node:path");
 const os = require("node:os");
 const { parseJsonInput, detectPlatform, resolveVaultConfig } = require("./lib/config");
 const { buildCommandErrorResult, writeIfPresent } = require("./lib/cli");
-const { parseJsonlTranscript, filterMmTurns, renderTurnsAsMarkdown } = require("./lib/transcript");
+const {
+  parseJsonlTranscript,
+  filterMmTurns,
+  renderTurnsAsMarkdown,
+  normalizeTranscriptText,
+} = require("./lib/transcript");
 const { buildSessionHeader, buildAssistantReplyEntry, localNow } = require("./lib/vault");
 const { appendToDaily } = require("./lib/writer");
 const {
@@ -18,8 +23,11 @@ const {
   setTranscriptTurnCount,
   getMmSuppressed,
 } = require("./lib/capture-state");
-
-const DUPLICATE_CAPTURE_WINDOW_MS = 60000;
+const {
+  CAPTURE_MODE_LITE,
+  HOOK_EVENT_STOP,
+  DUPLICATE_CAPTURE_WINDOW_MS,
+} = require("./lib/constants");
 
 function readStdin(fsApi = fs) {
   const fd = 0;
@@ -273,15 +281,15 @@ function discoverTranscriptContent(platform, transcriptFromPath, homedir, sessio
   return resolveTranscriptContent(platform, transcriptFromPath, codexContent, copilotCliContent);
 }
 
-function parseTranscriptTurns(transcriptContent) {
+function parseTranscriptTurns(transcriptContent, captureMode = "lite") {
   if (transcriptContent === "") {
     return [];
   }
 
-  return parseJsonlTranscript(transcriptContent);
+  return parseJsonlTranscript(transcriptContent, captureMode);
 }
 
-function buildStopAssistantSelection(turns, lastCount, lastAssistantMessage) {
+function buildStopAssistantSelection(turns, lastCount, lastAssistantMessage, captureMode) {
   const stopStartIndex = lastCount > 0 ? lastCount : Math.max(0, turns.length - 1);
   const assistantContents = collectAssistantTurnContents(turns, stopStartIndex);
   const lastTranscriptAssistantContent = getLastAssistantTurnContent(turns);
@@ -289,14 +297,17 @@ function buildStopAssistantSelection(turns, lastCount, lastAssistantMessage) {
     lastAssistantMessage !== "" &&
     !assistantContents.includes(lastAssistantMessage) &&
     lastTranscriptAssistantContent !== lastAssistantMessage;
-  const selectedTurns = shouldAppendPayloadAssistant
+  const allSelectedTurns = shouldAppendPayloadAssistant
     ? assistantContents.concat([lastAssistantMessage])
     : assistantContents;
 
-  return {
-    selectedTurns,
-    shouldAppendPayloadAssistant,
-  };
+  if (captureMode === CAPTURE_MODE_LITE) {
+    const liteSelectedTurns =
+      allSelectedTurns.length > 0 ? [allSelectedTurns[allSelectedTurns.length - 1]] : [];
+    return { selectedTurns: liteSelectedTurns, shouldAppendPayloadAssistant };
+  }
+
+  return { selectedTurns: allSelectedTurns, shouldAppendPayloadAssistant };
 }
 
 function calculateNextTurnCount(shouldAppendPayloadAssistant, turns, lastCount) {
@@ -361,7 +372,13 @@ function run(rawStdin, runtime = {}) {
       return { status: 0, stdout: "", stderr: "" };
     }
 
+    const captureMode = resolvedConfig.captureMode;
+
     const sessionIdRaw = resolveSessionId(input);
+
+    if (captureMode === CAPTURE_MODE_LITE && normalizedHookEventName !== HOOK_EVENT_STOP) {
+      return { status: 0, stdout: "", stderr: "" };
+    }
 
     if (normalizedHookEventName === "stop") {
       if (sessionIdRaw === "") {
@@ -383,10 +400,18 @@ function run(rawStdin, runtime = {}) {
         cwd,
       );
 
-      const turns = parseTranscriptTurns(transcriptContent);
+      const turns = parseTranscriptTurns(transcriptContent, captureMode);
       const lastCount = getTranscriptTurnCount(stopCaptureState, sessionIdRaw);
-      const lastAssistantMessage = resolveLastAssistantMessage(input);
-      const stopSelection = buildStopAssistantSelection(turns, lastCount, lastAssistantMessage);
+      const lastAssistantMessage = normalizeTranscriptText(
+        resolveLastAssistantMessage(input),
+        captureMode,
+      );
+      const stopSelection = buildStopAssistantSelection(
+        turns,
+        lastCount,
+        lastAssistantMessage,
+        captureMode,
+      );
       const stopAssistantContents = stopSelection.selectedTurns;
 
       writeAssistantTurns(
@@ -420,7 +445,7 @@ function run(rawStdin, runtime = {}) {
       return { status: 0, stdout: "", stderr: "" };
     }
 
-    const allTurns = parseJsonlTranscript(transcriptContent);
+    const allTurns = parseJsonlTranscript(transcriptContent, captureMode);
     const filteredTurns = filterMmTurns(allTurns);
     if (filteredTurns.length < 1) {
       return { status: 0, stdout: "", stderr: "" };
@@ -490,6 +515,7 @@ module.exports = {
   readDotEnvText,
   readGlobalConfigText,
   readGlobalDotEnvText,
+  buildStopAssistantSelection,
   run,
   main,
 };

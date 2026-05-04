@@ -2,6 +2,7 @@
 
 const { isMmCommand } = require("./prompt");
 const { truncateContext } = require("./vault");
+const { CAPTURE_MODE_LITE } = require("./constants");
 
 const assertNonEmptyString = (name, value) => {
   if (typeof value !== "string" || value === "") {
@@ -64,7 +65,7 @@ const stripAnsiEscapeSequences = (content) => {
   return result;
 };
 
-const normalizeTranscriptText = (content) => {
+const normalizeTranscriptText = (content, _captureMode = "lite") => {
   if (typeof content !== "string") {
     return "";
   }
@@ -127,15 +128,15 @@ const isTranscriptTextBlock = (block) =>
   block.type === "text" &&
   typeof block.text === "string";
 
-const extractTextContentFromString = (rawContent) => {
+const extractTextContentFromString = (rawContent, captureMode = "lite") => {
   if (typeof rawContent !== "string") {
     return "";
   }
 
-  return normalizeTranscriptText(rawContent);
+  return normalizeTranscriptText(rawContent, captureMode);
 };
 
-const extractTextContentFromBlockArray = (rawContent) => {
+const extractTextContentFromBlockArray = (rawContent, captureMode = "lite") => {
   if (!Array.isArray(rawContent)) {
     return "";
   }
@@ -145,13 +146,14 @@ const extractTextContentFromBlockArray = (rawContent) => {
       .filter((block) => isTranscriptTextBlock(block))
       .map((block) => block.text)
       .join("\n"),
+    captureMode,
   );
 };
 
-const extractTextContent = (rawContent) => {
+const extractTextContent = (rawContent, captureMode = "lite") => {
   const extractionStrategies = [extractTextContentFromString, extractTextContentFromBlockArray];
   const extractedContent = extractionStrategies
-    .map((extractContent) => extractContent(rawContent))
+    .map((extractContent) => extractContent(rawContent, captureMode))
     .find((content) => content !== "");
 
   if (typeof extractedContent === "string") {
@@ -171,13 +173,13 @@ const parseJsonlLine = (line) => {
 
 const isSupportedTranscriptRole = (role) => role === "user" || role === "assistant";
 
-const mapEntryToTranscriptTurn = (entry) => {
+const mapEntryToTranscriptTurn = (entry, captureMode = "lite") => {
   const payload = extractEntryPayload(entry);
   if (!isSupportedTranscriptRole(payload.role)) {
     return null;
   }
 
-  const textContent = extractTextContent(payload.content);
+  const textContent = extractTextContent(payload.content, captureMode);
   if (textContent.trim() === "") {
     return null;
   }
@@ -190,16 +192,45 @@ const mapEntryToTranscriptTurn = (entry) => {
 
 const isNotNull = (value) => value !== null;
 
-const parseJsonlTranscript = (content) => {
+const collapseIntermediateAssistants = (turns) => {
+  if (!Array.isArray(turns)) {
+    throw new Error("turns must be an array");
+  }
+
+  let pendingAssistant = null;
+  const result = [];
+
+  turns.forEach((turn) => {
+    if (turn.role === "assistant") {
+      pendingAssistant = turn;
+      return;
+    }
+    if (pendingAssistant !== null) {
+      result.push(pendingAssistant);
+      pendingAssistant = null;
+    }
+    result.push(turn);
+  });
+
+  if (pendingAssistant !== null) {
+    result.push(pendingAssistant);
+  }
+
+  return result;
+};
+
+const parseJsonlTranscript = (content, captureMode = CAPTURE_MODE_LITE) => {
   assertNonEmptyString("content", content);
 
-  return content
+  const turns = content
     .split("\n")
     .filter((line) => line.trim() !== "")
     .map((line) => parseJsonlLine(line))
     .filter((entry) => isNotNull(entry))
-    .map((entry) => mapEntryToTranscriptTurn(entry))
+    .map((entry) => mapEntryToTranscriptTurn(entry, captureMode))
     .filter((turn) => isNotNull(turn));
+
+  return captureMode === CAPTURE_MODE_LITE ? collapseIntermediateAssistants(turns) : turns;
 };
 
 const filterMmTurns = (turns) => {
@@ -272,7 +303,7 @@ const renderTurnsAsMarkdown = (turns) => {
   return markdownLines.join("\n");
 };
 
-const buildFullTranscript = (content) => {
+const buildFullTranscript = (content, captureMode = "lite") => {
   if (content === "") {
     return {
       markdown: "",
@@ -280,7 +311,7 @@ const buildFullTranscript = (content) => {
     };
   }
 
-  const turns = parseJsonlTranscript(content);
+  const turns = parseJsonlTranscript(content, captureMode);
 
   if (turns.length === 0) {
     return {
@@ -295,11 +326,11 @@ const buildFullTranscript = (content) => {
   };
 };
 
-const buildTranscriptExcerpt = (content, maxTurns, maxChars) => {
+const buildTranscriptExcerpt = (content, maxTurns, maxChars, captureMode = "lite") => {
   assertPositiveInteger("maxTurns", maxTurns);
   assertPositiveInteger("maxChars", maxChars);
 
-  const turns = parseJsonlTranscript(content);
+  const turns = parseJsonlTranscript(content, captureMode);
   const recentTurns = selectRecentTurns(turns, maxTurns);
 
   if (recentTurns.length === 0) {
@@ -322,6 +353,7 @@ module.exports = {
   extractTagText,
   stripAnsiEscapeSequences,
   normalizeTranscriptText,
+  collapseIntermediateAssistants,
   parseJsonlTranscript,
   filterMmTurns,
   selectRecentTurns,
