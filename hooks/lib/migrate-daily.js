@@ -2,6 +2,19 @@
 
 const path = require("node:path");
 const {
+  DEFAULT_DAILY_CHUNK_CAP_BYTES,
+  MAX_DAILY_CHUNK_COUNT,
+  CHUNK_ID_WIDTH,
+} = require("./constants");
+const {
+  assertString,
+  assertNonEmptyString,
+  assertPositiveInteger,
+  assertBoolean,
+  isPlainObject,
+  assertSyncFsApi,
+} = require("./assert");
+const {
   buildDailyFilePath,
   buildDailyFolderPath,
   buildDailyIndexPath,
@@ -15,57 +28,6 @@ const {
 const SESSION_HEADER_PATTERN =
   /^## Session \[[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?(?:Z)?\] .+ \/ .+$/;
 const FENCE_MARKER_PATTERN = /^```(?!`)/;
-
-const assertString = (name, value) => {
-  if (typeof value !== "string") {
-    throw new Error(`${name} must be a string`);
-  }
-  return value;
-};
-
-const assertNonEmptyString = (name, value) => {
-  if (typeof value !== "string" || value === "") {
-    throw new Error(`${name} must be a non-empty string`);
-  }
-  return value;
-};
-
-const assertPositiveInteger = (name, value) => {
-  if (!Number.isInteger(value) || value <= 0) {
-    throw new Error(`${name} must be a positive integer`);
-  }
-  return value;
-};
-
-const assertBoolean = (name, value) => {
-  if (typeof value !== "boolean") {
-    throw new Error(`${name} must be a boolean`);
-  }
-  return value;
-};
-
-const isPlainObject = (value) => {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    return false;
-  }
-  const prototype = Object.getPrototypeOf(value);
-  return prototype === Object.prototype || prototype === null;
-};
-
-const assertFsApiShape = (fsApi) => {
-  const requiredMethods = ["existsSync", "statSync", "readFileSync", "mkdirSync", "writeFileSync"];
-
-  const hasAllMethods =
-    fsApi !== null &&
-    typeof fsApi === "object" &&
-    requiredMethods.every((methodName) => typeof fsApi[methodName] === "function");
-
-  if (!hasAllMethods) {
-    throw new Error("fsApi must provide required sync methods");
-  }
-
-  return fsApi;
-};
 
 const splitDailyBodyIntoBlocks = (bodyText) => {
   const safeBodyText = assertString("bodyText", bodyText);
@@ -128,7 +90,7 @@ const groupBlocksIntoChunkBodies = (blocks, dateIso, capBytes) => {
     if (nextSize > safeCapBytes) {
       chunkBodies.push(currentBody);
       chunkNum += 1;
-      if (chunkNum > 999) {
+      if (chunkNum > MAX_DAILY_CHUNK_COUNT) {
         throw new Error("chunk count exceeds 999");
       }
       currentBody = nextBlock;
@@ -151,12 +113,19 @@ const migrateFlatToChunked = (vaultPath, subfolder, dateIso, options = {}) => {
   }
 
   const commit = typeof options.commit === "undefined" ? false : options.commit;
-  const capBytes = typeof options.capBytes === "undefined" ? 512000 : options.capBytes;
+  const capBytes =
+    typeof options.capBytes === "undefined" ? DEFAULT_DAILY_CHUNK_CAP_BYTES : options.capBytes;
   const fsApi = typeof options.fsApi === "undefined" ? require("node:fs") : options.fsApi;
 
   const safeCommit = assertBoolean("options.commit", commit);
   const safeCapBytes = assertPositiveInteger("capBytes", capBytes);
-  const safeFsApi = assertFsApiShape(fsApi);
+  const safeFsApi = assertSyncFsApi(fsApi, [
+    "existsSync",
+    "statSync",
+    "readFileSync",
+    "mkdirSync",
+    "writeFileSync",
+  ]);
 
   const flatPath = buildDailyFilePath(safeVaultPath, safeSubfolder, safeDateIso);
   const folderPath = buildDailyFolderPath(safeVaultPath, safeSubfolder, safeDateIso);
@@ -205,7 +174,7 @@ const migrateFlatToChunked = (vaultPath, subfolder, dateIso, options = {}) => {
     safeFsApi.writeFileSync(chunkPath, chunkText, "utf-8");
 
     const chunkSizeBytes = Buffer.byteLength(chunkText, "utf-8");
-    const padded = String(chunkNum).padStart(3, "0");
+    const padded = String(chunkNum).padStart(CHUNK_ID_WIDTH, "0");
     entries.push({
       id: padded,
       file: path.basename(chunkPath),

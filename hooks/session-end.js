@@ -3,9 +3,8 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
-const os = require("node:os");
-const { parseJsonInput, detectPlatform, resolveVaultConfig } = require("./lib/config");
-const { buildCommandErrorResult, writeIfPresent } = require("./lib/cli");
+const { parseJsonInput, detectPlatform } = require("./lib/config");
+const { buildCommandErrorResult } = require("./lib/cli");
 const {
   parseJsonlTranscript,
   filterMmTurns,
@@ -28,70 +27,34 @@ const {
   HOOK_EVENT_STOP,
   DUPLICATE_CAPTURE_WINDOW_MS,
 } = require("./lib/constants");
-
-function readStdin(fsApi = fs) {
-  const fd = 0;
-
-  function readChunks() {
-    const chunk = Buffer.alloc(65536);
-    const bytesRead = fsApi.readSync(fd, chunk, 0, chunk.length, null);
-    if (bytesRead <= 0) {
-      return [];
-    }
-    return [chunk.slice(0, bytesRead)].concat(readChunks());
-  }
-
-  return Buffer.concat(readChunks()).toString("utf-8");
-}
-
-function toStringOrEmpty(value) {
-  return typeof value === "string" ? value : "";
-}
+const {
+  readStdin,
+  toStringOrEmpty,
+  firstNonEmptyString: firstNonEmptyStringFromRuntime,
+  resolveTranscriptPath,
+  resolveRuntimeEnv,
+  resolveFallbackCwd,
+  resolveRuntimeHomedir,
+  resolveInputCwd,
+  resolveRuntimeConfig,
+  buildSuccessResult,
+  runStdinMain,
+  readDotEnvText,
+  readGlobalConfigText,
+  readGlobalDotEnvText,
+} = require("./lib/hook-runtime");
 
 function firstNonEmptyString(values) {
   if (!Array.isArray(values)) {
     throw new Error("values must be an array");
   }
-  const match = values.find((value) => typeof value === "string" && value !== "");
-  return typeof match === "string" ? match : "";
+  return firstNonEmptyStringFromRuntime(values);
 }
 
 function normalizeHookEventName(eventName) {
   return toStringOrEmpty(eventName)
     .toLowerCase()
     .replace(/[\s_-]/g, "");
-}
-
-function readConfigText(cwd) {
-  const configPath = path.join(cwd, "memory-mason.json");
-  if (!fs.existsSync(configPath)) {
-    return "";
-  }
-  return fs.readFileSync(configPath, "utf-8");
-}
-
-function readDotEnvText(cwd) {
-  const envPath = path.join(cwd, ".env");
-  if (!fs.existsSync(envPath)) {
-    return "";
-  }
-  return fs.readFileSync(envPath, "utf-8");
-}
-
-function readGlobalConfigText(homedir) {
-  const globalConfigPath = path.join(homedir, ".memory-mason", "config.json");
-  if (!fs.existsSync(globalConfigPath)) {
-    return "";
-  }
-  return fs.readFileSync(globalConfigPath, "utf-8");
-}
-
-function readGlobalDotEnvText(homedir) {
-  const globalEnvPath = path.join(homedir, ".memory-mason", ".env");
-  if (!fs.existsSync(globalEnvPath)) {
-    return "";
-  }
-  return fs.readFileSync(globalEnvPath, "utf-8");
 }
 
 function readTranscriptFromPath(transcriptPath) {
@@ -216,13 +179,6 @@ function getLastAssistantTurnContent(turns) {
   return assistantContents.length > 0 ? assistantContents[assistantContents.length - 1] : "";
 }
 
-function resolveTranscriptPath(input) {
-  return firstNonEmptyString([
-    toStringOrEmpty(input.transcript_path),
-    toStringOrEmpty(input.transcriptPath),
-  ]);
-}
-
 function resolveSessionId(input) {
   return firstNonEmptyString([toStringOrEmpty(input.session_id), toStringOrEmpty(input.sessionId)]);
 }
@@ -335,12 +291,12 @@ function writeAssistantTurns(vaultPath, subfolder, assistantContents) {
 }
 
 function run(rawStdin, runtime = {}) {
-  const env = runtime.env !== null && typeof runtime.env === "object" ? runtime.env : process.env;
-  const fallbackCwd = typeof runtime.cwd === "string" ? runtime.cwd : process.cwd();
-  const homedir = typeof runtime.homedir === "string" ? runtime.homedir : os.homedir();
+  const env = resolveRuntimeEnv(runtime);
+  const fallbackCwd = resolveFallbackCwd(runtime);
+  const homedir = resolveRuntimeHomedir(runtime);
 
   if (toStringOrEmpty(env.MEMORY_MASON_INVOKED_BY) !== "") {
-    return { status: 0, stdout: "", stderr: "" };
+    return buildSuccessResult();
   }
 
   try {
@@ -351,19 +307,11 @@ function run(rawStdin, runtime = {}) {
       toStringOrEmpty(input.hook_event_name),
     ]);
     const normalizedHookEventName = normalizeHookEventName(hookEventName);
-    const cwd = firstNonEmptyString([toStringOrEmpty(input.cwd), fallbackCwd]);
-    const configText = readConfigText(cwd);
-    const dotEnvText = readDotEnvText(cwd);
-    const globalConfigText = readGlobalConfigText(homedir);
-    const globalDotEnvText = readGlobalDotEnvText(homedir);
-    const resolvedConfig = resolveVaultConfig(cwd, configText, homedir, {
-      dotEnvText,
-      globalConfigText,
-      globalDotEnvText,
-    });
+    const cwd = resolveInputCwd(input, fallbackCwd);
+    const resolvedConfig = resolveRuntimeConfig(cwd, homedir);
 
     if (resolvedConfig.sync === false) {
-      return { status: 0, stdout: "", stderr: "" };
+      return buildSuccessResult();
     }
 
     const captureMode = resolvedConfig.captureMode;
@@ -371,17 +319,17 @@ function run(rawStdin, runtime = {}) {
     const sessionIdRaw = resolveSessionId(input);
 
     if (captureMode === CAPTURE_MODE_LITE && normalizedHookEventName !== HOOK_EVENT_STOP) {
-      return { status: 0, stdout: "", stderr: "" };
+      return buildSuccessResult();
     }
 
     if (normalizedHookEventName === "stop") {
       if (sessionIdRaw === "") {
-        return { status: 0, stdout: "", stderr: "" };
+        return buildSuccessResult();
       }
 
       const stopCaptureState = loadCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder);
       if (getMmSuppressed(stopCaptureState)) {
-        return { status: 0, stdout: "", stderr: "" };
+        return buildSuccessResult();
       }
 
       const transcriptPath = resolveTranscriptPath(input);
@@ -421,7 +369,7 @@ function run(rawStdin, runtime = {}) {
       );
       const updatedState = setTranscriptTurnCount(stopCaptureState, sessionIdRaw, nextTurnCount);
       saveCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder, updatedState);
-      return { status: 0, stdout: "", stderr: "" };
+      return buildSuccessResult();
     }
 
     const captureState = loadCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder);
@@ -436,13 +384,13 @@ function run(rawStdin, runtime = {}) {
     );
 
     if (transcriptContent === "") {
-      return { status: 0, stdout: "", stderr: "" };
+      return buildSuccessResult();
     }
 
     const allTurns = parseJsonlTranscript(transcriptContent, captureMode);
     const filteredTurns = filterMmTurns(allTurns);
     if (filteredTurns.length < 1) {
-      return { status: 0, stdout: "", stderr: "" };
+      return buildSuccessResult();
     }
 
     const fullTranscriptMarkdown = renderTurnsAsMarkdown(filteredTurns);
@@ -453,7 +401,7 @@ function run(rawStdin, runtime = {}) {
     const captureRecord = buildCaptureRecord(sessionId, source, fullTranscriptMarkdown, Date.now());
 
     if (isDuplicateCapture(captureState.lastCapture, captureRecord, DUPLICATE_CAPTURE_WINDOW_MS)) {
-      return { status: 0, stdout: "", stderr: "" };
+      return buildSuccessResult();
     }
 
     const now = localNow();
@@ -468,27 +416,14 @@ function run(rawStdin, runtime = {}) {
       ...captureState,
       lastCapture: captureRecord,
     });
-    return { status: 0, stdout: "", stderr: "" };
+    return buildSuccessResult();
   } catch (error) {
     return buildCommandErrorResult(error);
   }
 }
 
 function main(runtime = {}) {
-  /* c8 ignore start */
-  const io = runtime.io !== null && typeof runtime.io === "object" ? runtime.io : {};
-  const stdout = typeof io.stdout === "function" ? io.stdout : (text) => process.stdout.write(text);
-  const stderr = typeof io.stderr === "function" ? io.stderr : (text) => process.stderr.write(text);
-  const exit = typeof io.exit === "function" ? io.exit : (code) => process.exit(code);
-  const fsApi = runtime.fs !== null && typeof runtime.fs === "object" ? runtime.fs : fs;
-  /* c8 ignore stop */
-  const result = run(readStdin(fsApi), runtime);
-  /* c8 ignore start */
-  writeIfPresent(result.stdout, stdout);
-  writeIfPresent(result.stderr, stderr);
-  exit(result.status);
-  /* c8 ignore stop */
-  return result;
+  return runStdinMain(runtime, run);
 }
 
 /* c8 ignore next 3 */

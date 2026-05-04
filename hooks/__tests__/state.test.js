@@ -1,27 +1,14 @@
 "use strict";
 
 const fs = require("node:fs");
-const os = require("node:os");
 const path = require("node:path");
+const { createTempVaultFixture } = require("./helpers/fs-mock");
 const { defaultState, resolveStatePath, loadState, saveState } = require("../lib/state");
 
-let tempDirectories = [];
-
-const trackTempDirectory = (directoryPath) => {
-  tempDirectories = tempDirectories.concat([directoryPath]);
-  return directoryPath;
-};
-
-const createTempVaultPath = () =>
-  trackTempDirectory(fs.mkdtempSync(path.join(os.tmpdir(), "state-test-")));
+const { createTempVaultPath, cleanupTempVaultPaths } = createTempVaultFixture("state-test-");
 
 afterEach(() => {
-  tempDirectories.forEach((directoryPath) => {
-    if (fs.existsSync(directoryPath)) {
-      fs.rmSync(directoryPath, { recursive: true, force: true });
-    }
-  });
-  tempDirectories = [];
+  cleanupTempVaultPaths();
 });
 
 describe("defaultState", () => {

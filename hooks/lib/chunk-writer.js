@@ -2,6 +2,18 @@
 
 const path = require("node:path");
 const {
+  DEFAULT_DAILY_CHUNK_CAP_BYTES,
+  MAX_DAILY_CHUNK_COUNT,
+  CHUNK_ID_WIDTH,
+} = require("./constants");
+const {
+  assertNonEmptyString,
+  assertNonNegativeInteger,
+  assertPositiveInteger,
+  isPlainObject,
+  assertSyncFsApi,
+} = require("./assert");
+const {
   buildDailyFolderPath,
   buildDailyChunkPath,
   buildDailyIndexPath,
@@ -9,39 +21,9 @@ const {
   buildChunkIndexContent,
 } = require("./vault");
 
-const CHUNK_ID_PATTERN = /^\d{3}$/;
-const CHUNK_FILE_PATTERN = /^\d{3}\.md$/;
+const CHUNK_ID_PATTERN = new RegExp(`^\\d{${CHUNK_ID_WIDTH}}$`);
+const CHUNK_FILE_PATTERN = new RegExp(`^\\d{${CHUNK_ID_WIDTH}}\\.md$`);
 const ISO_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
-
-const assertNonEmptyString = (name, value) => {
-  if (typeof value !== "string" || value === "") {
-    throw new Error(`${name} must be a non-empty string`);
-  }
-  return value;
-};
-
-const assertNonNegativeInteger = (name, value) => {
-  if (!Number.isInteger(value) || value < 0) {
-    throw new Error(`${name} must be a non-negative integer`);
-  }
-  return value;
-};
-
-const assertPositiveInteger = (name, value) => {
-  if (!Number.isInteger(value) || value <= 0) {
-    throw new Error(`${name} must be a positive integer`);
-  }
-  return value;
-};
-
-const isPlainObject = (value) => {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    return false;
-  }
-
-  const prototype = Object.getPrototypeOf(value);
-  return prototype === Object.prototype || prototype === null;
-};
 
 const assertMetaShape = (meta) => {
   if (!isPlainObject(meta) || !Array.isArray(meta.chunks)) {
@@ -84,7 +66,7 @@ const validateChunk = (chunk) => {
 
 const validateContiguousChunkIds = (chunks) => {
   const isContiguous = chunks.every(
-    (chunk, index) => chunk.id === String(index + 1).padStart(3, "0"),
+    (chunk, index) => chunk.id === String(index + 1).padStart(CHUNK_ID_WIDTH, "0"),
   );
   if (!isContiguous) {
     throw new Error("chunk ids must be contiguous starting at 001");
@@ -166,47 +148,25 @@ const needsNewChunk = (currentChunk, contentByteLength, capBytes) => {
 
 const nextChunkNum = (meta) => {
   const safeMeta = assertMetaShape(meta);
-  if (safeMeta.chunks.length >= 999) {
+  if (safeMeta.chunks.length >= MAX_DAILY_CHUNK_COUNT) {
     throw new Error("chunk count exceeds 999");
   }
   return safeMeta.chunks.length + 1;
 };
 
 const buildChunkEntry = (chunkNum, sizeBytes) => {
-  if (!Number.isInteger(chunkNum) || chunkNum < 1 || chunkNum > 999) {
+  if (!Number.isInteger(chunkNum) || chunkNum < 1 || chunkNum > MAX_DAILY_CHUNK_COUNT) {
     throw new Error("chunkNum must be an integer from 1 to 999");
   }
 
   const safeSizeBytes = assertNonNegativeInteger("sizeBytes", sizeBytes);
-  const id = String(chunkNum).padStart(3, "0");
+  const id = String(chunkNum).padStart(CHUNK_ID_WIDTH, "0");
   return {
     id,
     file: `${id}.md`,
     sizeBytes: safeSizeBytes,
     createdAt: new Date().toISOString(),
   };
-};
-
-const assertFsApiShape = (fsApi) => {
-  const requiredMethods = [
-    "existsSync",
-    "statSync",
-    "readdirSync",
-    "mkdirSync",
-    "readFileSync",
-    "writeFileSync",
-    "appendFileSync",
-  ];
-
-  const hasAllMethods =
-    fsApi !== null &&
-    typeof fsApi === "object" &&
-    requiredMethods.every((methodName) => typeof fsApi[methodName] === "function");
-
-  if (!hasAllMethods) {
-    throw new Error("fsApi must provide required sync methods");
-  }
-  return fsApi;
 };
 
 const appendToChunked = (vaultPath, subfolder, today, content, options = {}) => {
@@ -219,10 +179,21 @@ const appendToChunked = (vaultPath, subfolder, today, content, options = {}) => 
   }
 
   const safeOptions = options !== null && typeof options === "object" ? options : {};
-  const capBytes = typeof safeOptions.capBytes === "undefined" ? 512000 : safeOptions.capBytes;
+  const capBytes =
+    typeof safeOptions.capBytes === "undefined"
+      ? DEFAULT_DAILY_CHUNK_CAP_BYTES
+      : safeOptions.capBytes;
   const fsApi = typeof safeOptions.fsApi === "undefined" ? require("node:fs") : safeOptions.fsApi;
   const safeCapBytes = assertPositiveInteger("capBytes", capBytes);
-  const safeFsApi = assertFsApiShape(fsApi);
+  const safeFsApi = assertSyncFsApi(fsApi, [
+    "existsSync",
+    "statSync",
+    "readdirSync",
+    "mkdirSync",
+    "readFileSync",
+    "writeFileSync",
+    "appendFileSync",
+  ]);
 
   const folderPath = buildDailyFolderPath(safeVaultPath, safeSubfolder, safeToday);
   const indexPath = buildDailyIndexPath(safeVaultPath, safeSubfolder, safeToday);
@@ -243,8 +214,9 @@ const appendToChunked = (vaultPath, subfolder, today, content, options = {}) => 
 
   if (folderExistedBefore && meta.chunks.length === 0) {
     const filesInFolder = safeFsApi.readdirSync(folderPath);
+    const chunkFilePattern = new RegExp(`^\\d{${CHUNK_ID_WIDTH}}\\.md$`);
     const hasChunkArtifacts = filesInFolder.some(
-      (fileName) => /^\d{3}\.md$/.test(fileName) || fileName === "index.md",
+      (fileName) => chunkFilePattern.test(fileName) || fileName === "index.md",
     );
     if (hasChunkArtifacts) {
       throw new Error(`meta.json missing for existing chunk folder: ${folderPath}`);

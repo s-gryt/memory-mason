@@ -1,106 +1,22 @@
 "use strict";
 
 const fs = require("node:fs");
-const os = require("node:os");
 const path = require("node:path");
 const { buildDailyChunkPath, buildDailyFilePath } = require("../lib/vault");
 const { resolveCaptureStatePath } = require("../lib/capture-state");
 const postToolUse = require("../post-tool-use");
 const { USER_INPUT_TOOLS, NOISY_TOOLS } = require("../lib/constants");
 const { materializeProjectDotEnvConfig } = require("./helpers/project-dot-env");
+const {
+  generatedEnvPaths,
+  createTempDir,
+  buildEnv,
+  writeText,
+  today,
+  cleanupGeneratedArtifacts,
+  runHookEntrypoint,
+} = require("./helpers/entrypoint-runtime");
 const hooksRoot = path.resolve(__dirname, "..");
-
-const tempDirs = [];
-const generatedEnvPaths = [];
-
-const createTempDir = (prefix) => {
-  const dirPath = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  tempDirs.push(dirPath);
-  return dirPath;
-};
-
-const buildEnv = (homeDir, overrides = {}) => ({
-  ...process.env,
-  PATH: "",
-  Path: "",
-  HOME: homeDir,
-  USERPROFILE: homeDir,
-  ...overrides,
-});
-
-const hasEnvVaultPath = (env) =>
-  env !== null &&
-  typeof env === "object" &&
-  typeof env.MEMORY_MASON_VAULT_PATH === "string" &&
-  env.MEMORY_MASON_VAULT_PATH !== "";
-
-const remapHooksRootCwd = (targetCwd, isolatedProjectCwd) =>
-  targetCwd === hooksRoot && isolatedProjectCwd !== "" ? isolatedProjectCwd : targetCwd;
-
-const writeText = (filePath, content) => {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, content, "utf-8");
-};
-
-const today = () => {
-  const now = new Date();
-  const pad = (n) => String(n).padStart(2, "0");
-  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-};
-
-const runScript = (scriptNameOrOptions, maybeOptions = {}) => {
-  let options = {};
-  if (typeof scriptNameOrOptions === "string") {
-    options = maybeOptions;
-  } else if (scriptNameOrOptions !== null && typeof scriptNameOrOptions === "object") {
-    options = scriptNameOrOptions;
-  }
-
-  const env = typeof options.env === "object" && options.env !== null ? options.env : process.env;
-  const homedir =
-    typeof env.USERPROFILE === "string" && env.USERPROFILE !== "" ? env.USERPROFILE : os.homedir();
-  const extraRuntime =
-    typeof options.runtime === "object" && options.runtime !== null ? options.runtime : {};
-  const requestedRuntimeCwd = typeof options.cwd === "string" ? options.cwd : hooksRoot;
-  const payload =
-    typeof options.payload === "object" &&
-    options.payload !== null &&
-    !Array.isArray(options.payload)
-      ? options.payload
-      : null;
-  const runtime = {
-    cwd: requestedRuntimeCwd,
-    env,
-    homedir,
-    ...extraRuntime,
-  };
-
-  const payloadCwd = payload !== null && typeof payload.cwd === "string" ? payload.cwd : "";
-  const isolatedProjectCwd =
-    hasEnvVaultPath(env) && (requestedRuntimeCwd === hooksRoot || payloadCwd === hooksRoot)
-      ? createTempDir("mm-cwd-")
-      : "";
-  const resolvedPayload =
-    payload !== null && payloadCwd !== ""
-      ? { ...payload, cwd: remapHooksRootCwd(payloadCwd, isolatedProjectCwd) }
-      : payload;
-  let stdinText = "";
-  if (typeof options.stdinText === "string") {
-    stdinText = options.stdinText;
-  } else if (resolvedPayload !== null) {
-    stdinText = JSON.stringify(resolvedPayload);
-  }
-  runtime.cwd = remapHooksRootCwd(runtime.cwd, isolatedProjectCwd);
-
-  materializeProjectDotEnvConfig(runtime.cwd, env, generatedEnvPaths);
-  const resolvedPayloadCwd =
-    resolvedPayload !== null && typeof resolvedPayload.cwd === "string" ? resolvedPayload.cwd : "";
-  if (resolvedPayloadCwd !== "" && resolvedPayloadCwd !== runtime.cwd) {
-    materializeProjectDotEnvConfig(resolvedPayloadCwd, env, generatedEnvPaths);
-  }
-
-  return postToolUse.run(stdinText, runtime);
-};
 
 const withProcessCaptureMode = (value, callback) => {
   const hadCaptureMode = Object.hasOwn(process.env, "MEMORY_MASON_CAPTURE_MODE");
@@ -124,13 +40,7 @@ const withProcessCaptureMode = (value, callback) => {
 };
 
 afterEach(() => {
-  while (tempDirs.length > 0) {
-    fs.rmSync(tempDirs.pop(), { recursive: true, force: true });
-  }
-
-  while (generatedEnvPaths.length > 0) {
-    fs.rmSync(generatedEnvPaths.pop(), { force: true });
-  }
+  cleanupGeneratedArtifacts();
 });
 
 describe("entrypoint config readers", () => {
@@ -174,7 +84,7 @@ describe("post-tool-use.js", () => {
       const homeDir = createTempDir("memory-mason-home-");
       const vaultPath = createTempDir("memory-mason-vault-");
 
-      const result = runScript("post-tool-use.js", {
+      const result = runHookEntrypoint("post-tool-use.js", {
         payload: {
           hookEventName: "post-tool-use",
           cwd: hooksRoot,
@@ -196,7 +106,7 @@ describe("post-tool-use.js", () => {
       const homeDir = createTempDir("memory-mason-home-");
       const vaultPath = createTempDir("memory-mason-vault-");
 
-      const result = runScript("post-tool-use.js", {
+      const result = runHookEntrypoint("post-tool-use.js", {
         payload: {
           hook_event_name: "PostToolUse",
           cwd: hooksRoot,
@@ -226,7 +136,7 @@ describe("post-tool-use.js", () => {
       const homeDir = createTempDir("memory-mason-home-");
       const vaultPath = createTempDir("memory-mason-vault-");
 
-      const result = runScript("post-tool-use.js", {
+      const result = runHookEntrypoint("post-tool-use.js", {
         payload: {
           hook_event_name: "PostToolUse",
           cwd: hooksRoot,
@@ -254,7 +164,7 @@ describe("post-tool-use.js", () => {
       const homeDir = createTempDir("memory-mason-home-");
       const vaultPath = createTempDir("memory-mason-vault-");
 
-      runScript("post-tool-use.js", {
+      runHookEntrypoint("post-tool-use.js", {
         payload: {
           timestamp: "2026-04-27T10:00:00.000Z",
           cwd: hooksRoot,
@@ -275,7 +185,7 @@ describe("post-tool-use.js", () => {
       const homeDir = createTempDir("memory-mason-home-");
       const vaultPath = createTempDir("memory-mason-vault-");
 
-      runScript("post-tool-use.js", {
+      runHookEntrypoint("post-tool-use.js", {
         payload: {
           hook_event_name: "post_tool_use",
           turn_id: "turn-1",
@@ -296,7 +206,7 @@ describe("post-tool-use.js", () => {
     const homeDir = createTempDir("memory-mason-home-");
     const vaultPath = createTempDir("memory-mason-vault-");
 
-    const result = runScript("post-tool-use.js", {
+    const result = runHookEntrypoint("post-tool-use.js", {
       payload: {
         hook_event_name: "PostToolUse",
         cwd: hooksRoot,
@@ -314,7 +224,7 @@ describe("post-tool-use.js", () => {
     const homeDir = createTempDir("memory-mason-home-");
     const vaultPath = createTempDir("memory-mason-vault-");
 
-    const result = runScript("post-tool-use.js", {
+    const result = runHookEntrypoint("post-tool-use.js", {
       payload: {
         hook_event_name: "PostToolUse",
         cwd: hooksRoot,
@@ -335,7 +245,7 @@ describe("post-tool-use.js", () => {
       const homeDir = createTempDir("memory-mason-home-");
       const vaultPath = createTempDir("memory-mason-vault-");
 
-      const result = runScript("post-tool-use.js", {
+      const result = runHookEntrypoint("post-tool-use.js", {
         payload: {
           hookEventName: "post-tool-use",
           cwd: hooksRoot,
@@ -355,7 +265,7 @@ describe("post-tool-use.js", () => {
       const homeDir = createTempDir("memory-mason-home-");
       const vaultPath = createTempDir("memory-mason-vault-");
 
-      const result = runScript("post-tool-use.js", {
+      const result = runHookEntrypoint("post-tool-use.js", {
         payload: {
           hookEventName: "post-tool-use",
           cwd: hooksRoot,
@@ -376,7 +286,7 @@ describe("post-tool-use.js", () => {
   });
 
   it("reports invalid payloads to stderr", () => {
-    const result = runScript("post-tool-use.js", {
+    const result = runHookEntrypoint("post-tool-use.js", {
       payload: { cwd: hooksRoot },
       env: buildEnv(createTempDir("memory-mason-home-")),
     });
@@ -404,7 +314,7 @@ describe("run - mm suppression", () => {
       ),
     );
 
-    const result = runScript("post-tool-use.js", {
+    const result = runHookEntrypoint("post-tool-use.js", {
       payload: {
         hook_event_name: "PostToolUse",
         cwd: hooksRoot,
@@ -436,7 +346,7 @@ describe("run - mm suppression", () => {
         ),
       );
 
-      const result = runScript("post-tool-use.js", {
+      const result = runHookEntrypoint("post-tool-use.js", {
         payload: {
           hook_event_name: "PostToolUse",
           cwd: hooksRoot,
@@ -461,7 +371,7 @@ describe("run - mm suppression", () => {
       const homeDir = createTempDir("memory-mason-home-");
       const vaultPath = createTempDir("memory-mason-vault-");
 
-      const result = runScript("post-tool-use.js", {
+      const result = runHookEntrypoint("post-tool-use.js", {
         payload: {
           hook_event_name: "PostToolUse",
           cwd: hooksRoot,
@@ -501,7 +411,7 @@ describe("run - sync flag", () => {
       ),
     );
 
-    const result = runScript("post-tool-use.js", {
+    const result = runHookEntrypoint("post-tool-use.js", {
       payload: {
         hook_event_name: "PostToolUse",
         cwd,
@@ -535,7 +445,7 @@ describe("run - sync flag", () => {
       ),
     );
 
-    const result = runScript("post-tool-use.js", {
+    const result = runHookEntrypoint("post-tool-use.js", {
       payload: {
         hook_event_name: "PostToolUse",
         cwd,
@@ -808,7 +718,7 @@ describe("post-tool-use.js readConfigText with existing file", () => {
       JSON.stringify({ vaultPath, subfolder: "ai-knowledge", captureMode: "full" }),
     );
 
-    const result = runScript("post-tool-use.js", {
+    const result = runHookEntrypoint("post-tool-use.js", {
       payload: { hook_event_name: "PostToolUse", cwd, tool_name: "Write", tool_response: "output" },
       cwd,
       env: buildEnv(homeDir),

@@ -3,9 +3,8 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
-const os = require("node:os");
-const { parseJsonInput, resolveVaultConfig } = require("./lib/config");
-const { buildCommandErrorResult, writeIfPresent } = require("./lib/cli");
+const { parseJsonInput } = require("./lib/config");
+const { buildCommandErrorResult } = require("./lib/cli");
 const {
   buildKnowledgeIndexPath,
   buildDailyFolderPath,
@@ -17,57 +16,22 @@ const {
   localNow,
   localYesterday,
 } = require("./lib/vault");
-
-function readStdin(fsApi = fs) {
-  const fd = 0;
-
-  function readChunks() {
-    const chunk = Buffer.alloc(65536);
-    const bytesRead = fsApi.readSync(fd, chunk, 0, chunk.length, null);
-    if (bytesRead <= 0) {
-      return [];
-    }
-    return [chunk.slice(0, bytesRead)].concat(readChunks());
-  }
-
-  return Buffer.concat(readChunks()).toString("utf-8");
-}
-
-function toStringOrEmpty(value) {
-  return typeof value === "string" ? value : "";
-}
-
-function readConfigText(cwd) {
-  const configPath = path.join(cwd, "memory-mason.json");
-  if (!fs.existsSync(configPath)) {
-    return "";
-  }
-  return fs.readFileSync(configPath, "utf-8");
-}
-
-function readDotEnvText(cwd) {
-  const envPath = path.join(cwd, ".env");
-  if (!fs.existsSync(envPath)) {
-    return "";
-  }
-  return fs.readFileSync(envPath, "utf-8");
-}
-
-function readGlobalConfigText(homedir) {
-  const globalConfigPath = path.join(homedir, ".memory-mason", "config.json");
-  if (!fs.existsSync(globalConfigPath)) {
-    return "";
-  }
-  return fs.readFileSync(globalConfigPath, "utf-8");
-}
-
-function readGlobalDotEnvText(homedir) {
-  const globalEnvPath = path.join(homedir, ".memory-mason", ".env");
-  if (!fs.existsSync(globalEnvPath)) {
-    return "";
-  }
-  return fs.readFileSync(globalEnvPath, "utf-8");
-}
+const {
+  readStdin,
+  readDotEnvText,
+  readGlobalConfigText,
+  readGlobalDotEnvText,
+  resolveFallbackCwd,
+  resolveRuntimeHomedir,
+  resolveInputCwd,
+  resolveRuntimeConfig,
+  runStdinMain,
+} = require("./lib/hook-runtime");
+const {
+  SESSION_START_RECENT_LOG_LINES,
+  HOT_CACHE_CONTEXT_MAX_CHARS,
+  INDEX_CONTEXT_MAX_CHARS,
+} = require("./lib/constants");
 
 function readFileOrEmpty(filePath) {
   try {
@@ -117,46 +81,15 @@ function readRecentDailyLog(vaultPath, subfolder, fsApi = fs) {
 
   const todayText = readDailyLogText(vaultPath, subfolder, today, fsApi);
   if (todayText !== "") {
-    return takeLastLines(todayText, 30);
+    return takeLastLines(todayText, SESSION_START_RECENT_LOG_LINES);
   }
 
   const yesterdayText = readDailyLogText(vaultPath, subfolder, yesterday, fsApi);
   if (yesterdayText !== "") {
-    return takeLastLines(yesterdayText, 30);
+    return takeLastLines(yesterdayText, SESSION_START_RECENT_LOG_LINES);
   }
 
   return "";
-}
-
-function resolveFallbackCwd(runtime) {
-  return typeof runtime.cwd === "string" ? runtime.cwd : process.cwd();
-}
-
-function resolveRuntimeHomedir(runtime) {
-  return typeof runtime.homedir === "string" ? runtime.homedir : os.homedir();
-}
-
-function resolveInputCwd(input, fallbackCwd) {
-  const inputCwd = toStringOrEmpty(input.cwd);
-  return inputCwd !== "" ? inputCwd : fallbackCwd;
-}
-
-function readConfigSources(cwd, homedir) {
-  return {
-    configText: readConfigText(cwd),
-    dotEnvText: readDotEnvText(cwd),
-    globalConfigText: readGlobalConfigText(homedir),
-    globalDotEnvText: readGlobalDotEnvText(homedir),
-  };
-}
-
-function resolveRuntimeConfig(cwd, homedir) {
-  const configSources = readConfigSources(cwd, homedir);
-  return resolveVaultConfig(cwd, configSources.configText, homedir, {
-    dotEnvText: configSources.dotEnvText,
-    globalConfigText: configSources.globalConfigText,
-    globalDotEnvText: configSources.globalDotEnvText,
-  });
 }
 
 function resolvePrimaryContext(resolvedConfig) {
@@ -166,7 +99,7 @@ function resolvePrimaryContext(resolvedConfig) {
   if (hotText.trim() !== "") {
     return {
       primaryText: hotText,
-      maxChars: 5000,
+      maxChars: HOT_CACHE_CONTEXT_MAX_CHARS,
       primarySectionHeading: "Hot Cache",
       primaryPlaceholderText: "(empty - no hot cache yet)",
     };
@@ -177,7 +110,7 @@ function resolvePrimaryContext(resolvedConfig) {
 
   return {
     primaryText: indexText,
-    maxChars: 10000,
+    maxChars: INDEX_CONTEXT_MAX_CHARS,
     primarySectionHeading: "Knowledge Base Index",
     primaryPlaceholderText: "(empty - no articles compiled yet)",
   };
@@ -236,20 +169,7 @@ function run(rawStdin, runtime = {}) {
 }
 
 function main(runtime = {}) {
-  /* c8 ignore start */
-  const io = runtime.io !== null && typeof runtime.io === "object" ? runtime.io : {};
-  const stdout = typeof io.stdout === "function" ? io.stdout : (text) => process.stdout.write(text);
-  const stderr = typeof io.stderr === "function" ? io.stderr : (text) => process.stderr.write(text);
-  const exit = typeof io.exit === "function" ? io.exit : (code) => process.exit(code);
-  const fsApi = runtime.fs !== null && typeof runtime.fs === "object" ? runtime.fs : fs;
-  /* c8 ignore stop */
-  const result = run(readStdin(fsApi), runtime);
-  /* c8 ignore start */
-  writeIfPresent(result.stdout, stdout);
-  writeIfPresent(result.stderr, stderr);
-  exit(result.status);
-  /* c8 ignore stop */
-  return result;
+  return runStdinMain(runtime, run);
 }
 
 module.exports = {

@@ -1,8 +1,8 @@
 "use strict";
 
 const fs = require("node:fs");
-const os = require("node:os");
 const path = require("node:path");
+const { createTempVaultFixture } = require("./helpers/fs-mock");
 const {
   defaultCaptureState,
   resolveCaptureStatePath,
@@ -16,23 +16,11 @@ const {
   setMmSuppressed,
 } = require("../lib/capture-state");
 
-let tempDirectories = [];
-
-const trackTempDirectory = (directoryPath) => {
-  tempDirectories = tempDirectories.concat([directoryPath]);
-  return directoryPath;
-};
-
-const createTempVaultPath = () =>
-  trackTempDirectory(fs.mkdtempSync(path.join(os.tmpdir(), "capture-state-test-")));
+const { createTempVaultPath, cleanupTempVaultPaths } =
+  createTempVaultFixture("capture-state-test-");
 
 afterEach(() => {
-  tempDirectories.forEach((directoryPath) => {
-    if (fs.existsSync(directoryPath)) {
-      fs.rmSync(directoryPath, { recursive: true, force: true });
-    }
-  });
-  tempDirectories = [];
+  cleanupTempVaultPaths();
 });
 
 describe("defaultCaptureState", () => {

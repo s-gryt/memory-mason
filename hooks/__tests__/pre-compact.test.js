@@ -1,40 +1,22 @@
 "use strict";
 
 const fs = require("node:fs");
-const os = require("node:os");
 const path = require("node:path");
 const { buildDailyChunkPath, buildDailyFilePath } = require("../lib/vault");
 const { resolveCaptureStatePath } = require("../lib/capture-state");
 const preCompact = require("../pre-compact");
 const { materializeProjectDotEnvConfig } = require("./helpers/project-dot-env");
+const {
+  generatedEnvPaths,
+  createTempDir,
+  buildEnv,
+  writeText,
+  today,
+  buildTranscript,
+  cleanupGeneratedArtifacts,
+  runHookEntrypoint,
+} = require("./helpers/entrypoint-runtime");
 const hooksRoot = path.resolve(__dirname, "..");
-
-const tempDirs = [];
-const generatedEnvPaths = [];
-
-const createTempDir = (prefix) => {
-  const dirPath = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  tempDirs.push(dirPath);
-  return dirPath;
-};
-
-const buildEnv = (homeDir, overrides = {}) => ({
-  ...process.env,
-  PATH: "",
-  Path: "",
-  HOME: homeDir,
-  USERPROFILE: homeDir,
-  ...overrides,
-});
-
-const hasEnvVaultPath = (env) =>
-  env !== null &&
-  typeof env === "object" &&
-  typeof env.MEMORY_MASON_VAULT_PATH === "string" &&
-  env.MEMORY_MASON_VAULT_PATH !== "";
-
-const remapHooksRootCwd = (targetCwd, isolatedProjectCwd) =>
-  targetCwd === hooksRoot && isolatedProjectCwd !== "" ? isolatedProjectCwd : targetCwd;
 
 const withProcessCaptureMode = (value, callback) => {
   const hadCaptureMode = Object.hasOwn(process.env, "MEMORY_MASON_CAPTURE_MODE");
@@ -57,80 +39,8 @@ const withProcessCaptureMode = (value, callback) => {
   }
 };
 
-const writeText = (filePath, content) => {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, content, "utf-8");
-};
-
-const today = () => {
-  const now = new Date();
-  const pad = (n) => String(n).padStart(2, "0");
-  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-};
-
-const buildTranscript = (turnCount, firstUserContent = "user turn") =>
-  Array.from({ length: turnCount }, (_, index) => {
-    const isUser = index % 2 === 0;
-    const role = isUser ? "user" : "assistant";
-    const content = isUser && index === 0 ? firstUserContent : `${role} turn ${index}`;
-    return JSON.stringify({ message: { role, content } });
-  }).join("\n");
-
-const runScript = (_scriptName, options = {}) => {
-  const env = typeof options.env === "object" && options.env !== null ? options.env : process.env;
-  const homedir =
-    typeof env.USERPROFILE === "string" && env.USERPROFILE !== "" ? env.USERPROFILE : os.homedir();
-  const extraRuntime =
-    typeof options.runtime === "object" && options.runtime !== null ? options.runtime : {};
-  const requestedRuntimeCwd = typeof options.cwd === "string" ? options.cwd : hooksRoot;
-  const payload =
-    typeof options.payload === "object" &&
-    options.payload !== null &&
-    !Array.isArray(options.payload)
-      ? options.payload
-      : null;
-  const runtime = {
-    cwd: requestedRuntimeCwd,
-    env,
-    homedir,
-    ...extraRuntime,
-  };
-
-  const payloadCwd = payload !== null && typeof payload.cwd === "string" ? payload.cwd : "";
-  const isolatedProjectCwd =
-    hasEnvVaultPath(env) && (requestedRuntimeCwd === hooksRoot || payloadCwd === hooksRoot)
-      ? createTempDir("mm-cwd-")
-      : "";
-  const resolvedPayload =
-    payload !== null && payloadCwd !== ""
-      ? { ...payload, cwd: remapHooksRootCwd(payloadCwd, isolatedProjectCwd) }
-      : payload;
-  let stdinText = "";
-  if (typeof options.stdinText === "string") {
-    stdinText = options.stdinText;
-  } else if (resolvedPayload !== null) {
-    stdinText = JSON.stringify(resolvedPayload);
-  }
-  runtime.cwd = remapHooksRootCwd(runtime.cwd, isolatedProjectCwd);
-
-  materializeProjectDotEnvConfig(runtime.cwd, env, generatedEnvPaths);
-  const resolvedPayloadCwd =
-    resolvedPayload !== null && typeof resolvedPayload.cwd === "string" ? resolvedPayload.cwd : "";
-  if (resolvedPayloadCwd !== "" && resolvedPayloadCwd !== runtime.cwd) {
-    materializeProjectDotEnvConfig(resolvedPayloadCwd, env, generatedEnvPaths);
-  }
-
-  return preCompact.run(stdinText, runtime);
-};
-
 afterEach(() => {
-  while (tempDirs.length > 0) {
-    fs.rmSync(tempDirs.pop(), { recursive: true, force: true });
-  }
-
-  while (generatedEnvPaths.length > 0) {
-    fs.rmSync(generatedEnvPaths.pop(), { force: true });
-  }
+  cleanupGeneratedArtifacts();
 });
 
 describe("entrypoint config readers", () => {
@@ -179,7 +89,7 @@ describe("entrypoint config readers", () => {
     );
     writeText(transcriptPath, buildTranscript(6));
 
-    const result = runScript("pre-compact.js", {
+    const result = runHookEntrypoint("pre-compact.js", {
       payload: { cwd, transcript_path: transcriptPath, session_id: "cfg-test" },
       cwd,
       env: buildEnv(homeDir),
@@ -200,7 +110,7 @@ describe("pre-compact.js", () => {
 
     writeText(transcriptPath, buildTranscript(6));
 
-    const result = runScript("pre-compact.js", {
+    const result = runHookEntrypoint("pre-compact.js", {
       payload: { cwd: hooksRoot, transcript_path: transcriptPath, session_id: "session-1" },
       env: buildEnv(homeDir, {
         MEMORY_MASON_VAULT_PATH: vaultPath,
@@ -216,7 +126,7 @@ describe("pre-compact.js", () => {
     const homeDir = createTempDir("memory-mason-home-");
     const vaultPath = createTempDir("memory-mason-vault-");
 
-    const result = runScript("pre-compact.js", {
+    const result = runHookEntrypoint("pre-compact.js", {
       payload: {
         cwd: hooksRoot,
         transcript_path: path.join(hooksRoot, "missing.jsonl"),
@@ -236,7 +146,7 @@ describe("pre-compact.js", () => {
 
     writeText(transcriptPath, buildTranscript(4));
 
-    runScript("pre-compact.js", {
+    runHookEntrypoint("pre-compact.js", {
       payload: { cwd: hooksRoot, transcript_path: transcriptPath, session_id: "session-1" },
       env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
     });
@@ -252,7 +162,7 @@ describe("pre-compact.js", () => {
 
       writeText(transcriptPath, buildTranscript(4));
 
-      const result = runScript("pre-compact.js", {
+      const result = runHookEntrypoint("pre-compact.js", {
         payload: {
           cwd: hooksRoot,
           transcript_path: transcriptPath,
@@ -274,7 +184,7 @@ describe("pre-compact.js", () => {
 
       writeText(transcriptPath, buildTranscript(6));
 
-      const result = runScript("pre-compact.js", {
+      const result = runHookEntrypoint("pre-compact.js", {
         payload: { cwd: hooksRoot, transcript_path: transcriptPath, session_id: "session-1" },
         env: buildEnv(homeDir, {
           MEMORY_MASON_VAULT_PATH: vaultPath,
@@ -300,7 +210,7 @@ describe("pre-compact.js", () => {
 
       writeText(transcriptPath, buildTranscript(40, longFirstTurn));
 
-      const result = runScript("pre-compact.js", {
+      const result = runHookEntrypoint("pre-compact.js", {
         payload: {
           cwd: hooksRoot,
           transcript_path: transcriptPath,
@@ -335,7 +245,7 @@ describe("pre-compact.js", () => {
 
     writeText(transcriptPath, transcript);
 
-    const result = runScript("pre-compact.js", {
+    const result = runHookEntrypoint("pre-compact.js", {
       payload: {
         cwd: hooksRoot,
         transcript_path: transcriptPath,
@@ -355,7 +265,7 @@ describe("pre-compact.js", () => {
 
     writeText(transcriptPath, buildTranscript(6));
 
-    const result = runScript("pre-compact.js", {
+    const result = runHookEntrypoint("pre-compact.js", {
       payload: {
         cwd: hooksRoot,
         transcript_path: transcriptPath,
@@ -388,7 +298,7 @@ describe("pre-compact.js", () => {
     );
     writeText(transcriptPath, transcript);
 
-    const result = runScript("pre-compact.js", {
+    const result = runHookEntrypoint("pre-compact.js", {
       payload: {
         cwd,
         transcript_path: transcriptPath,
@@ -415,7 +325,7 @@ describe("pre-compact.js", () => {
 
       writeText(transcriptPath, buildTranscript(6));
 
-      runScript("pre-compact.js", {
+      runHookEntrypoint("pre-compact.js", {
         payload: { cwd: hooksRoot, transcript_path: transcriptPath, session_id: "session-1" },
         env: buildEnv(homeDir, {
           MEMORY_MASON_VAULT_PATH: vaultPath,
@@ -424,7 +334,7 @@ describe("pre-compact.js", () => {
       const dailyPath = buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1);
       const firstContent = fs.readFileSync(dailyPath, "utf-8");
 
-      runScript("pre-compact.js", {
+      runHookEntrypoint("pre-compact.js", {
         payload: { cwd: hooksRoot, transcript_path: transcriptPath, session_id: "session-1" },
         env: buildEnv(homeDir, {
           MEMORY_MASON_VAULT_PATH: vaultPath,
@@ -435,7 +345,7 @@ describe("pre-compact.js", () => {
     }));
 
   it("reports invalid stdin to stderr", () => {
-    const result = runScript("pre-compact.js", {
+    const result = runHookEntrypoint("pre-compact.js", {
       stdinText: "{bad",
       env: buildEnv(createTempDir("memory-mason-home-")),
     });
@@ -465,7 +375,7 @@ describe("run - mm suppression", () => {
       ),
     );
 
-    const result = runScript("pre-compact.js", {
+    const result = runHookEntrypoint("pre-compact.js", {
       payload: { cwd: hooksRoot, transcript_path: transcriptPath, session_id: "session-mm-true" },
       env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
     });
@@ -484,7 +394,7 @@ describe("run - mm suppression", () => {
       writeText(transcriptPath, buildTranscript(6));
       writeText(statePath, JSON.stringify({ lastCapture: null, mmSuppressed: true }, null, 2));
 
-      const result = runScript("pre-compact.js", {
+      const result = runHookEntrypoint("pre-compact.js", {
         payload: {
           cwd: hooksRoot,
           transcript_path: transcriptPath,
@@ -518,7 +428,7 @@ describe("run - mm suppression", () => {
         ),
       );
 
-      const result = runScript("pre-compact.js", {
+      const result = runHookEntrypoint("pre-compact.js", {
         payload: {
           cwd: hooksRoot,
           transcript_path: transcriptPath,
@@ -552,7 +462,7 @@ describe("run - sync flag", () => {
     );
     writeText(transcriptPath, buildTranscript(6));
 
-    const result = runScript("pre-compact.js", {
+    const result = runHookEntrypoint("pre-compact.js", {
       payload: {
         cwd,
         transcript_path: transcriptPath,

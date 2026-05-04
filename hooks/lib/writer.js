@@ -3,14 +3,8 @@
 const fs = require("node:fs");
 const { buildDailyFolderPath, buildDailyFilePath } = require("./vault");
 const { appendToChunked } = require("./chunk-writer");
-const { assertNonEmptyString } = require("./config");
-
-const assertString = (name, value) => {
-  if (typeof value !== "string") {
-    throw new Error(`${name} must be a string`);
-  }
-  return value;
-};
+const { OBSIDIAN_CLI_TIMEOUT_MS } = require("./constants");
+const { assertNonEmptyString, assertString } = require("./assert");
 
 const resolveObsidianCommand = (args, platform) =>
   platform === "win32"
@@ -36,7 +30,11 @@ const tryObsidianCli = (args, options) => {
   const result = spawnSync(
     command.command,
     command.args,
-    Object.assign({ encoding: "utf-8", timeout: 8000 }, command.options, spawnOptions),
+    Object.assign(
+      { encoding: "utf-8", timeout: OBSIDIAN_CLI_TIMEOUT_MS },
+      command.options,
+      spawnOptions,
+    ),
   );
   return result.status === 0 && result.error == null;
 };

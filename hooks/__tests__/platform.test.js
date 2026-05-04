@@ -263,6 +263,44 @@ describe("resolveVaultConfig", () => {
     }
   };
 
+  const expectLiteVaultConfig = (result, vaultPath, subfolder, sync = true) => {
+    expect(result).toEqual({
+      vaultPath,
+      subfolder,
+      sync,
+      captureMode: "lite",
+    });
+  };
+
+  const expectProjectJsonVaultNotesConfig = () => {
+    expectLiteVaultConfig(
+      resolveVaultConfig("/repo", '{"vaultPath":"~/vault","subfolder":"notes"}', "/home/tester"),
+      "/home/tester/vault",
+      "notes",
+    );
+  };
+
+  const expectDotEnvVaultDefaultSubfolderConfig = () => {
+    expectLiteVaultConfig(
+      resolveVaultConfig("/repo", "", "/home/tester", {
+        dotEnvText: "MEMORY_MASON_VAULT_PATH=~/vault",
+      }),
+      "/home/tester/vault",
+      "ai-knowledge",
+    );
+  };
+
+  const expectGlobalDotEnvVaultConfig = () => {
+    expectLiteVaultConfig(
+      resolveVaultConfig("/repo", "", "/home/tester", {
+        globalDotEnvText:
+          "MEMORY_MASON_VAULT_PATH=~/global-env-vault\nMEMORY_MASON_SUBFOLDER=global-env-brain",
+      }),
+      "/home/tester/global-env-vault",
+      "global-env-brain",
+    );
+  };
+
   beforeEach(() => {
     originalMemoryMasonSyncIsSet = Object.hasOwn(process.env, "MEMORY_MASON_SYNC");
     originalMemoryMasonSync =
@@ -320,27 +358,11 @@ describe("resolveVaultConfig", () => {
   });
 
   it("uses memory-mason.json when project .env is absent", () => {
-    expect(
-      resolveVaultConfig("/repo", '{"vaultPath":"~/vault","subfolder":"notes"}', "/home/tester"),
-    ).toEqual({
-      vaultPath: "/home/tester/vault",
-      subfolder: "notes",
-      sync: true,
-      captureMode: "lite",
-    });
+    expectProjectJsonVaultNotesConfig();
   });
 
   it("uses project .env vault path with default subfolder when subfolder key is missing", () => {
-    expect(
-      resolveVaultConfig("/repo", "", "/home/tester", {
-        dotEnvText: "MEMORY_MASON_VAULT_PATH=~/vault",
-      }),
-    ).toEqual({
-      vaultPath: "/home/tester/vault",
-      subfolder: "ai-knowledge",
-      sync: true,
-      captureMode: "lite",
-    });
+    expectDotEnvVaultDefaultSubfolderConfig();
   });
 
   it("prefers project .env over memory-mason.json when both provide vault config", () => {
@@ -362,28 +384,11 @@ describe("resolveVaultConfig", () => {
   });
 
   it("uses global .env when project .env and memory-mason.json are absent", () => {
-    expect(
-      resolveVaultConfig("/repo", "", "/home/tester", {
-        globalDotEnvText:
-          "MEMORY_MASON_VAULT_PATH=~/global-env-vault\nMEMORY_MASON_SUBFOLDER=global-env-brain",
-      }),
-    ).toEqual({
-      vaultPath: "/home/tester/global-env-vault",
-      subfolder: "global-env-brain",
-      sync: true,
-      captureMode: "lite",
-    });
+    expectGlobalDotEnvVaultConfig();
   });
 
   it("uses memory-mason.json when provided and env path is absent", () => {
-    expect(
-      resolveVaultConfig("/repo", '{"vaultPath":"~/vault","subfolder":"notes"}', "/home/tester"),
-    ).toEqual({
-      vaultPath: "/home/tester/vault",
-      subfolder: "notes",
-      sync: true,
-      captureMode: "lite",
-    });
+    expectProjectJsonVaultNotesConfig();
   });
 
   it("uses .env config when env path and memory-mason.json are absent", () => {
@@ -400,16 +405,7 @@ describe("resolveVaultConfig", () => {
   });
 
   it("uses .env vault path with default subfolder when subfolder key is missing", () => {
-    expect(
-      resolveVaultConfig("/repo", "", "/home/tester", {
-        dotEnvText: "MEMORY_MASON_VAULT_PATH=~/vault",
-      }),
-    ).toEqual({
-      vaultPath: "/home/tester/vault",
-      subfolder: "ai-knowledge",
-      sync: true,
-      captureMode: "lite",
-    });
+    expectDotEnvVaultDefaultSubfolderConfig();
   });
 
   it("uses global config when env, memory-mason.json, and .env are absent", () => {
@@ -466,17 +462,7 @@ describe("resolveVaultConfig", () => {
   });
 
   it("uses global .env when env var, project config, project .env, and global JSON are absent", () => {
-    expect(
-      resolveVaultConfig("/repo", "", "/home/tester", {
-        globalDotEnvText:
-          "MEMORY_MASON_VAULT_PATH=~/global-env-vault\nMEMORY_MASON_SUBFOLDER=global-env-brain",
-      }),
-    ).toEqual({
-      vaultPath: "/home/tester/global-env-vault",
-      subfolder: "global-env-brain",
-      sync: true,
-      captureMode: "lite",
-    });
+    expectGlobalDotEnvVaultConfig();
   });
 
   it("uses default subfolder when global .env has vault path but no subfolder", () => {

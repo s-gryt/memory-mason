@@ -13,6 +13,15 @@ const {
   buildTranscriptExcerpt,
 } = require("../lib/transcript");
 
+const expectedHelloWorldTurns = [
+  { role: "user", content: "hello" },
+  { role: "assistant", content: "world" },
+];
+
+const expectHelloWorldTranscript = (input) => {
+  expect(parseJsonlTranscript(input)).toEqual(expectedHelloWorldTurns);
+};
+
 describe("transcript normalization helpers", () => {
   it("extracts text from a tagged block", () => {
     expect(extractTagText("<command-name>/model</command-name>", "command-name")).toBe("/model");
@@ -183,10 +192,7 @@ describe("parseJsonlTranscript", () => {
       JSON.stringify({ message: { role: "assistant", content: "world" } }),
     ].join("\n");
 
-    expect(parseJsonlTranscript(input)).toEqual([
-      { role: "user", content: "hello" },
-      { role: "assistant", content: "world" },
-    ]);
+    expectHelloWorldTranscript(input);
   });
 
   it("parses block-array content and concatenates text blocks", () => {
@@ -264,10 +270,7 @@ describe("parseJsonlTranscript", () => {
       }),
     ].join("\n");
 
-    expect(parseJsonlTranscript(input)).toEqual([
-      { role: "user", content: "hello" },
-      { role: "assistant", content: "world" },
-    ]);
+    expectHelloWorldTranscript(input);
   });
 
   it("ignores VS Code transcript message entries with malformed data payloads", () => {
@@ -291,10 +294,7 @@ describe("parseJsonlTranscript", () => {
       "",
     ].join("\n");
 
-    expect(parseJsonlTranscript(input)).toEqual([
-      { role: "user", content: "hello" },
-      { role: "assistant", content: "world" },
-    ]);
+    expectHelloWorldTranscript(input);
   });
 
   it("ignores malformed JSON lines", () => {
@@ -304,10 +304,7 @@ describe("parseJsonlTranscript", () => {
       JSON.stringify({ message: { role: "assistant", content: "world" } }),
     ].join("\n");
 
-    expect(parseJsonlTranscript(input)).toEqual([
-      { role: "user", content: "hello" },
-      { role: "assistant", content: "world" },
-    ]);
+    expectHelloWorldTranscript(input);
   });
 
   it("ignores system and tool roles", () => {

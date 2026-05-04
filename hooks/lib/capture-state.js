@@ -1,40 +1,17 @@
 "use strict";
 
 const crypto = require("node:crypto");
-const fs = require("node:fs");
 const path = require("node:path");
-const { assertNonEmptyString } = require("./config");
-
-const isObjectRecord = (value) =>
-  value !== null && typeof value === "object" && !Array.isArray(value);
-
-const assertString = (name, value) => {
-  if (typeof value !== "string") {
-    throw new Error(`${name} must be a string`);
-  }
-  return value;
-};
-
-const assertPositiveInteger = (name, value) => {
-  if (!Number.isInteger(value) || value <= 0) {
-    throw new Error(`${name} must be a positive integer`);
-  }
-  return value;
-};
-
-const assertObjectRecord = (name, value) => {
-  if (!isObjectRecord(value)) {
-    throw new Error(`${name} must be an object`);
-  }
-  return value;
-};
-
-const assertBoolean = (name, value) => {
-  if (typeof value !== "boolean") {
-    throw new Error(`${name} must be a boolean`);
-  }
-  return value;
-};
+const { CAPTURE_HASH_ALGORITHM, CAPTURE_HASH_PREFIX_LENGTH } = require("./constants");
+const {
+  assertNonEmptyString,
+  isObjectRecord,
+  assertString,
+  assertPositiveInteger,
+  assertObjectRecord,
+  assertBoolean,
+} = require("./assert");
+const { loadJson, saveJson } = require("./json-state");
 
 const defaultCaptureState = () => ({
   lastCapture: null,
@@ -100,40 +77,22 @@ const mergeWithDefaults = (state) => {
 
 const loadCaptureState = (vaultPath, subfolder) => {
   const statePath = resolveCaptureStatePath(vaultPath, subfolder);
-
-  if (!fs.existsSync(statePath)) {
-    return defaultCaptureState();
-  }
-
-  const rawState = fs.readFileSync(statePath, "utf-8");
-
-  try {
-    const parsedState = JSON.parse(rawState);
-    return mergeWithDefaults(parsedState);
-  } catch (error) {
-    if (error instanceof SyntaxError) {
-      return defaultCaptureState();
-    }
-    throw error;
-  }
+  const loadedState = loadJson(statePath, defaultCaptureState());
+  return mergeWithDefaults(loadedState);
 };
 
 const saveCaptureState = (vaultPath, subfolder, state) => {
-  if (!isObjectRecord(state)) {
-    throw new Error("state must be an object");
-  }
-
+  const safeState = assertObjectRecord("state", state);
   const statePath = resolveCaptureStatePath(vaultPath, subfolder);
-  fs.mkdirSync(path.dirname(statePath), { recursive: true });
-  fs.writeFileSync(statePath, JSON.stringify(state, null, 2), "utf-8");
+  saveJson(statePath, safeState);
 };
 
 const hashCaptureContent = (content) =>
   crypto
-    .createHash("sha256")
+    .createHash(CAPTURE_HASH_ALGORITHM)
     .update(assertString("content", content), "utf-8")
     .digest("hex")
-    .slice(0, 16);
+    .slice(0, CAPTURE_HASH_PREFIX_LENGTH);
 
 const buildCaptureRecord = (sessionId, source, content, timestampMs) => ({
   sessionId: assertNonEmptyString("sessionId", sessionId),

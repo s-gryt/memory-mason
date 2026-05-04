@@ -219,6 +219,25 @@ const runRotationWrite = () => {
   };
 };
 
+const setupCapBoundaryWrite = () => {
+  const paths = makeChunkPaths();
+  const fsApi = makeFsApi({});
+
+  appendToChunked(paths.vaultPath, paths.subfolder, paths.today, "x", {
+    capBytes: 512000,
+    fsApi,
+  });
+
+  const firstMeta = JSON.parse(fsApi._files[paths.metaPath]);
+  const capBytes = firstMeta.chunks[0].sizeBytes + Buffer.byteLength("y", "utf-8");
+
+  return {
+    ...paths,
+    fsApi,
+    capBytes,
+  };
+};
+
 afterAll(() => {
   chunkVaultExportNames.forEach((exportName) => {
     const original = originalVaultState[exportName];
@@ -679,15 +698,8 @@ describe("appendToChunked - rotation triggered", () => {
 
 describe("appendToChunked - cap boundary", () => {
   it("content exactly at cap stays in same chunk", () => {
-    const paths = makeChunkPaths();
-    const fsApi = makeFsApi({});
-
-    appendToChunked(paths.vaultPath, paths.subfolder, paths.today, "x", {
-      capBytes: 512000,
-      fsApi,
-    });
-    const firstMeta = JSON.parse(fsApi._files[paths.metaPath]);
-    const capBytes = firstMeta.chunks[0].sizeBytes + Buffer.byteLength("y", "utf-8");
+    const paths = setupCapBoundaryWrite();
+    const { fsApi, capBytes } = paths;
 
     appendToChunked(paths.vaultPath, paths.subfolder, paths.today, "y", { capBytes, fsApi });
 
@@ -696,15 +708,8 @@ describe("appendToChunked - cap boundary", () => {
   });
 
   it("content one byte over cap rotates to new chunk", () => {
-    const paths = makeChunkPaths();
-    const fsApi = makeFsApi({});
-
-    appendToChunked(paths.vaultPath, paths.subfolder, paths.today, "x", {
-      capBytes: 512000,
-      fsApi,
-    });
-    const firstMeta = JSON.parse(fsApi._files[paths.metaPath]);
-    const capBytes = firstMeta.chunks[0].sizeBytes + Buffer.byteLength("y", "utf-8");
+    const paths = setupCapBoundaryWrite();
+    const { fsApi, capBytes } = paths;
 
     appendToChunked(paths.vaultPath, paths.subfolder, paths.today, "yz", { capBytes, fsApi });
 

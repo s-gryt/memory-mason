@@ -1,21 +1,8 @@
 "use strict";
 
 const path = require("node:path");
-const { assertNonEmptyString } = require("./config");
-
-const assertString = (name, value) => {
-  if (typeof value !== "string") {
-    throw new Error(`${name} must be a string`);
-  }
-  return value;
-};
-
-const assertPositiveInteger = (name, value) => {
-  if (!Number.isInteger(value) || value <= 0) {
-    throw new Error(`${name} must be a positive integer`);
-  }
-  return value;
-};
+const { MAX_DAILY_CHUNK_COUNT, CHUNK_ID_WIDTH } = require("./constants");
+const { assertNonEmptyString, assertString, assertPositiveInteger } = require("./assert");
 
 const buildKnowledgeIndexPath = (vaultPath, subfolder) => {
   const safeVaultPath = assertNonEmptyString("vaultPath", vaultPath);
@@ -162,7 +149,7 @@ const buildDailyChunkPath = (vaultPath, subfolder, dateIso, chunkNum) => {
   if (!Number.isInteger(chunkNum) || chunkNum <= 0) {
     throw new Error("chunkNum must be a positive integer");
   }
-  if (chunkNum > 999) {
+  if (chunkNum > MAX_DAILY_CHUNK_COUNT) {
     throw new Error("chunkNum must be less than or equal to 999");
   }
   return path.join(
@@ -170,7 +157,7 @@ const buildDailyChunkPath = (vaultPath, subfolder, dateIso, chunkNum) => {
     safeSubfolder,
     "daily",
     safeDateIso,
-    `${String(chunkNum).padStart(3, "0")}.md`,
+    `${String(chunkNum).padStart(CHUNK_ID_WIDTH, "0")}.md`,
   );
 };
 
@@ -193,7 +180,7 @@ const buildChunkHeader = (dateIso, chunkNum) => {
   if (!Number.isInteger(chunkNum) || chunkNum <= 0) {
     throw new Error("chunkNum must be a positive integer");
   }
-  if (chunkNum > 999) {
+  if (chunkNum > MAX_DAILY_CHUNK_COUNT) {
     throw new Error("chunkNum must be less than or equal to 999");
   }
   return `# Daily Log: ${safeDateIso} (Part ${chunkNum})\n\n## Sessions\n\n`;
@@ -204,12 +191,12 @@ const buildChunkIndexContent = (dateIso, chunkCount) => {
   if (!Number.isInteger(chunkCount) || chunkCount <= 0) {
     throw new Error("chunkCount must be a positive integer");
   }
-  if (chunkCount > 999) {
+  if (chunkCount > MAX_DAILY_CHUNK_COUNT) {
     throw new Error("chunkCount must be less than or equal to 999");
   }
   const bullets = Array.from({ length: chunkCount }, (_, index) => {
     const chunkNum = index + 1;
-    const padded = String(chunkNum).padStart(3, "0");
+    const padded = String(chunkNum).padStart(CHUNK_ID_WIDTH, "0");
     return `- [[daily/${safeDateIso}/${padded}|Part ${chunkNum}]]`;
   });
   return `# Daily Log: ${safeDateIso}\n\n## Parts\n\n${bullets.join("\n")}\n`;

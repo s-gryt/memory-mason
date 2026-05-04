@@ -6,6 +6,15 @@ param(
     [switch]$Force
 )
 
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+. "$ScriptDir\install-common.ps1"
+
+if ((-not (Get-Command Test-AbsolutePath -CommandType Function -ErrorAction SilentlyContinue)) -or (-not (Get-Command Test-LocalSourcesAvailable -CommandType Function -ErrorAction SilentlyContinue))) {
+    $FallbackCommonPath = Join-Path ([System.IO.Path]::GetTempPath()) "memory-mason-install-common.ps1"
+    Invoke-WebRequest -Uri "https://raw.githubusercontent.com/s-gryt/memory-mason/main/hooks/install-common.ps1" -OutFile $FallbackCommonPath -UseBasicParsing
+    . $FallbackCommonPath
+}
+
 $ErrorActionPreference = "Stop"
 
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
@@ -22,21 +31,7 @@ $GlobalConfigPath = Join-Path $GlobalConfigDir "config.json"
 $RepoUrl = "https://raw.githubusercontent.com/s-gryt/memory-mason/main/hooks"
 
 $HookRuntimeFiles = @("session-start.js", "user-prompt-submit.js", "post-tool-use.js", "pre-compact.js", "session-end.js")
-$LibFiles = @("config.js", "writer.js", "vault.js", "prompt.js", "transcript.js", "capture-state.js")
-
-$ScriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { $null }
-
-function Test-AbsolutePath {
-    param(
-        [string]$PathValue
-    )
-
-    if ([string]::IsNullOrWhiteSpace($PathValue)) {
-        return $false
-    }
-
-    return [System.IO.Path]::IsPathRooted($PathValue)
-}
+$LibFiles = @("config.js", "writer.js", "vault.js", "prompt.js", "transcript.js", "capture-state.js", "assert.js", "constants.js", "json-state.js", "hook-runtime.js", "cli.js", "chunk-writer.js", "state.js", "migrate-daily.js")
 
 function Test-AllFilesPresent {
     foreach ($runtimeFile in $HookRuntimeFiles) {

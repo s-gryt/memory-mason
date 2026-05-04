@@ -1,11 +1,14 @@
 "use strict";
 
-const assertNonEmptyString = (name, value) => {
-  if (typeof value !== "string" || value === "") {
-    throw new Error(`${name} must be a non-empty string`);
-  }
-  return value;
-};
+const {
+  CAPTURE_MODE_LITE,
+  CAPTURE_MODE_FULL,
+  DEFAULT_CAPTURE_MODE,
+  DEFAULT_SUBFOLDER,
+} = require("./constants");
+const { assertNonEmptyString } = require("./assert");
+
+const JSON_ERROR_PREVIEW_CHARS = 200;
 
 const parseJsonInput = (rawStdin) => {
   assertNonEmptyString("stdin", rawStdin);
@@ -13,7 +16,7 @@ const parseJsonInput = (rawStdin) => {
   try {
     const parsed = JSON.parse(rawStdin);
     if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-      throw new Error(`invalid JSON in stdin: ${rawStdin.slice(0, 200)}`);
+      throw new Error(`invalid JSON in stdin: ${rawStdin.slice(0, JSON_ERROR_PREVIEW_CHARS)}`);
     }
     return parsed;
   } catch (error) {
@@ -30,11 +33,11 @@ const parseJsonInput = (rawStdin) => {
       typeof parsedEscaped !== "object" ||
       Array.isArray(parsedEscaped)
     ) {
-      throw new Error(`invalid JSON in stdin: ${rawStdin.slice(0, 200)}`);
+      throw new Error(`invalid JSON in stdin: ${rawStdin.slice(0, JSON_ERROR_PREVIEW_CHARS)}`);
     }
     return parsedEscaped;
   } catch (_error) {
-    throw new Error(`invalid JSON in stdin: ${rawStdin.slice(0, 200)}`);
+    throw new Error(`invalid JSON in stdin: ${rawStdin.slice(0, JSON_ERROR_PREVIEW_CHARS)}`);
   }
 };
 
@@ -92,7 +95,7 @@ const parseSyncFieldFromConfigObject = (parsedConfig) => {
   throw new Error(`config sync must be a boolean, got: ${describeValueType(parsedConfig.sync)}`);
 };
 
-const VALID_CAPTURE_MODES = Object.freeze(["lite", "full"]);
+const VALID_CAPTURE_MODES = Object.freeze([CAPTURE_MODE_LITE, CAPTURE_MODE_FULL]);
 
 const parseCaptureModeFromConfigObject = (parsedConfig) => {
   if (!Object.hasOwn(parsedConfig, "captureMode")) {
@@ -105,7 +108,9 @@ const parseCaptureModeFromConfigObject = (parsedConfig) => {
   }
 
   const invalidValueDescription = typeof value === "string" ? value : describeValueType(value);
-  throw new Error(`config captureMode must be 'lite' or 'full', got: ${invalidValueDescription}`);
+  throw new Error(
+    `config captureMode must be '${CAPTURE_MODE_LITE}' or '${CAPTURE_MODE_FULL}', got: ${invalidValueDescription}`,
+  );
 };
 
 const parseConfigObjectOrNull = (configText) => {
@@ -159,7 +164,9 @@ const parseEnvCaptureModeOrNull = (envValue) => {
     return envValue;
   }
 
-  throw new Error(`MEMORY_MASON_CAPTURE_MODE must be 'lite' or 'full', got: ${envValue}`);
+  throw new Error(
+    `MEMORY_MASON_CAPTURE_MODE must be '${CAPTURE_MODE_LITE}' or '${CAPTURE_MODE_FULL}', got: ${envValue}`,
+  );
 };
 
 const stripDotEnvComment = (valueText) => {
@@ -253,7 +260,7 @@ const resolveFromDotEnvVaultPath = (resolutionInput) => {
 
   return {
     vaultPath: expandHomePath(resolutionInput.dotEnvVaultPath, resolutionInput.homedir),
-    subfolder: pickFirstNonEmptyString([resolutionInput.dotEnvSubfolder], "ai-knowledge"),
+    subfolder: pickFirstNonEmptyString([resolutionInput.dotEnvSubfolder], DEFAULT_SUBFOLDER),
   };
 };
 
@@ -280,7 +287,7 @@ const resolveFromGlobalDotEnv = (resolutionInput) => {
 
   return {
     vaultPath: expandHomePath(resolutionInput.globalDotEnvVaultPath, resolutionInput.homedir),
-    subfolder: pickFirstNonEmptyString([resolutionInput.globalDotEnvSubfolder], "ai-knowledge"),
+    subfolder: pickFirstNonEmptyString([resolutionInput.globalDotEnvSubfolder], DEFAULT_SUBFOLDER),
   };
 };
 
@@ -370,7 +377,7 @@ const resolveVaultConfig = (cwd, configText, homedir, options = {}) => {
   const resolvedConfig = resolveVaultConfigFromAlternatives(resolutionInput);
   if (resolvedConfig !== null) {
     let sync = true;
-    let captureMode = "lite";
+    let captureMode = DEFAULT_CAPTURE_MODE;
 
     if (typeof resolvedConfig.sync === "boolean") {
       sync = resolvedConfig.sync;

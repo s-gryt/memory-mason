@@ -135,6 +135,27 @@ describe("lib/cli.js", () => {
 });
 
 describe("CLI direct execution", () => {
+  const expectCliWritesDailyChunk = (
+    scriptName,
+    inputPayload,
+    expectedContent,
+    envOverrides = {},
+  ) => {
+    const homeDir = createTempDir("mm-home-");
+    const vaultPath = createTempDir("mm-vault-");
+    const result = runCli(scriptName, {
+      input: JSON.stringify(inputPayload),
+      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath, ...envOverrides }),
+    });
+
+    expect(result.status).toBe(0);
+    expect(
+      fs.readFileSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1), "utf-8"),
+    ).toContain(expectedContent);
+
+    return { homeDir, vaultPath, result };
+  };
+
   it("executes session-start.js directly", () => {
     const homeDir = createTempDir("mm-home-");
     const vaultPath = createTempDir("mm-vault-");
@@ -148,43 +169,31 @@ describe("CLI direct execution", () => {
   });
 
   it("executes user-prompt-submit.js directly", () => {
-    const homeDir = createTempDir("mm-home-");
-    const vaultPath = createTempDir("mm-vault-");
-    const result = runCli("user-prompt-submit.js", {
-      input: JSON.stringify({
+    expectCliWritesDailyChunk(
+      "user-prompt-submit.js",
+      {
         hookEventName: "user-prompt-submit",
         cwd: hooksRoot,
         prompt: "cli prompt",
-      }),
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
-    });
-
-    expect(result.status).toBe(0);
-    expect(
-      fs.readFileSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1), "utf-8"),
-    ).toContain("cli prompt");
+      },
+      "cli prompt",
+    );
   });
 
   it("executes post-tool-use.js directly", () => {
-    const homeDir = createTempDir("mm-home-");
-    const vaultPath = createTempDir("mm-vault-");
-    const result = runCli("post-tool-use.js", {
-      input: JSON.stringify({
+    expectCliWritesDailyChunk(
+      "post-tool-use.js",
+      {
         hook_event_name: "PostToolUse",
         cwd: hooksRoot,
         tool_name: "Write",
         tool_response: "cli tool output",
-      }),
-      env: buildEnv(homeDir, {
-        MEMORY_MASON_VAULT_PATH: vaultPath,
+      },
+      "cli tool output",
+      {
         MEMORY_MASON_CAPTURE_MODE: "full",
-      }),
-    });
-
-    expect(result.status).toBe(0);
-    expect(
-      fs.readFileSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1), "utf-8"),
-    ).toContain("cli tool output");
+      },
+    );
   });
 
   it("executes pre-compact.js directly", () => {
@@ -198,29 +207,23 @@ describe("CLI direct execution", () => {
   });
 
   it("executes session-end.js directly", () => {
-    const homeDir = createTempDir("mm-home-");
-    const vaultPath = createTempDir("mm-vault-");
     const transcriptPath = path.join(createTempDir("mm-tr-"), "session.jsonl");
 
     writeText(transcriptPath, buildTranscript(2));
 
-    const result = runCli("session-end.js", {
-      input: JSON.stringify({
+    expectCliWritesDailyChunk(
+      "session-end.js",
+      {
         hook_event_name: "session_end",
         cwd: hooksRoot,
         transcript_path: transcriptPath,
         session_id: "cli-session",
         source: "stop",
-      }),
-      env: buildEnv(homeDir, {
-        MEMORY_MASON_VAULT_PATH: vaultPath,
+      },
+      "cli-session / stop",
+      {
         MEMORY_MASON_CAPTURE_MODE: "full",
-      }),
-    });
-
-    expect(result.status).toBe(0);
-    expect(
-      fs.readFileSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1), "utf-8"),
-    ).toContain("cli-session / stop");
+      },
+    );
   });
 });

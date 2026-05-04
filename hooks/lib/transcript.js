@@ -2,21 +2,12 @@
 
 const { getMmCommandToken, isMmCommand } = require("./prompt");
 const { truncateContext } = require("./vault");
-const { CAPTURE_MODE_LITE } = require("./constants");
+const { CAPTURE_MODE_LITE, DEFAULT_CAPTURE_MODE } = require("./constants");
+const { assertNonEmptyString, assertPositiveInteger } = require("./assert");
 
-const assertNonEmptyString = (name, value) => {
-  if (typeof value !== "string" || value === "") {
-    throw new Error(`${name} must be a non-empty string`);
-  }
-  return value;
-};
-
-const assertPositiveInteger = (name, value) => {
-  if (!Number.isInteger(value) || value <= 0) {
-    throw new Error(`${name} must be a positive integer`);
-  }
-  return value;
-};
+const ANSI_ESCAPE_CHAR_CODE = 27;
+const ASCII_ZERO_CHAR_CODE = 48;
+const ASCII_NINE_CHAR_CODE = 57;
 
 const extractTagText = (content, tagName) => {
   if (typeof content !== "string" || typeof tagName !== "string" || tagName === "") {
@@ -36,7 +27,7 @@ const stripAnsiEscapeSequences = (content) => {
   let result = "";
 
   while (index < content.length) {
-    const isEscape = content.charCodeAt(index) === 27;
+    const isEscape = content.charCodeAt(index) === ANSI_ESCAPE_CHAR_CODE;
     const hasCsiPrefix = content[index + 1] === "[";
 
     if (isEscape && hasCsiPrefix) {
@@ -44,7 +35,7 @@ const stripAnsiEscapeSequences = (content) => {
 
       while (probe < content.length) {
         const code = content.charCodeAt(probe);
-        const isDigit = code >= 48 && code <= 57;
+        const isDigit = code >= ASCII_ZERO_CHAR_CODE && code <= ASCII_NINE_CHAR_CODE;
         const isSemicolon = content[probe] === ";";
         if (!isDigit && !isSemicolon) {
           break;
@@ -65,7 +56,7 @@ const stripAnsiEscapeSequences = (content) => {
   return result;
 };
 
-const normalizeTranscriptText = (content, _captureMode = "lite") => {
+const normalizeTranscriptText = (content, _captureMode = DEFAULT_CAPTURE_MODE) => {
   if (typeof content !== "string") {
     return "";
   }
@@ -130,7 +121,7 @@ const isTranscriptTextBlock = (block) =>
   block.type === "text" &&
   typeof block.text === "string";
 
-const extractTextContentFromString = (rawContent, captureMode = "lite") => {
+const extractTextContentFromString = (rawContent, captureMode = DEFAULT_CAPTURE_MODE) => {
   if (typeof rawContent !== "string") {
     return "";
   }
@@ -138,7 +129,7 @@ const extractTextContentFromString = (rawContent, captureMode = "lite") => {
   return normalizeTranscriptText(rawContent, captureMode);
 };
 
-const extractTextContentFromBlockArray = (rawContent, captureMode = "lite") => {
+const extractTextContentFromBlockArray = (rawContent, captureMode = DEFAULT_CAPTURE_MODE) => {
   if (!Array.isArray(rawContent)) {
     return "";
   }
@@ -152,7 +143,7 @@ const extractTextContentFromBlockArray = (rawContent, captureMode = "lite") => {
   );
 };
 
-const extractTextContent = (rawContent, captureMode = "lite") => {
+const extractTextContent = (rawContent, captureMode = DEFAULT_CAPTURE_MODE) => {
   const extractionStrategies = [extractTextContentFromString, extractTextContentFromBlockArray];
   const extractedContent = extractionStrategies
     .map((extractContent) => extractContent(rawContent, captureMode))
@@ -175,7 +166,7 @@ const parseJsonlLine = (line) => {
 
 const isSupportedTranscriptRole = (role) => role === "user" || role === "assistant";
 
-const mapEntryToTranscriptTurn = (entry, captureMode = "lite") => {
+const mapEntryToTranscriptTurn = (entry, captureMode = DEFAULT_CAPTURE_MODE) => {
   const payload = extractEntryPayload(entry);
   if (!isSupportedTranscriptRole(payload.role)) {
     return null;
@@ -221,7 +212,7 @@ const collapseIntermediateAssistants = (turns) => {
   return result;
 };
 
-const parseJsonlTranscript = (content, captureMode = CAPTURE_MODE_LITE) => {
+const parseJsonlTranscript = (content, captureMode = DEFAULT_CAPTURE_MODE) => {
   assertNonEmptyString("content", content);
 
   const turns = content
@@ -305,7 +296,7 @@ const renderTurnsAsMarkdown = (turns) => {
   return markdownLines.join("\n");
 };
 
-const buildFullTranscript = (content, captureMode = "lite") => {
+const buildFullTranscript = (content, captureMode = DEFAULT_CAPTURE_MODE) => {
   if (content === "") {
     return {
       markdown: "",
@@ -328,7 +319,12 @@ const buildFullTranscript = (content, captureMode = "lite") => {
   };
 };
 
-const buildTranscriptExcerpt = (content, maxTurns, maxChars, captureMode = "lite") => {
+const buildTranscriptExcerpt = (
+  content,
+  maxTurns,
+  maxChars,
+  captureMode = DEFAULT_CAPTURE_MODE,
+) => {
   assertPositiveInteger("maxTurns", maxTurns);
   assertPositiveInteger("maxChars", maxChars);
 

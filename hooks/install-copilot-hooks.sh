@@ -1,6 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -f "${SCRIPT_DIR}/install-common.sh" ]; then
+  source "${SCRIPT_DIR}/install-common.sh"
+else
+  if ! command -v curl >/dev/null 2>&1; then
+    echo "ERROR: 'curl' is required when local source files are not available."
+    exit 1
+  fi
+
+  source /dev/stdin <<<"$(curl -fsSL "https://raw.githubusercontent.com/s-gryt/memory-mason/main/hooks/install-common.sh")"
+fi
+
 FORCE=0
 WORKSPACE_ARG=""
 
@@ -38,70 +50,8 @@ GLOBAL_CONFIG_PATH="$GLOBAL_CONFIG_DIR/config.json"
 REPO_URL="https://raw.githubusercontent.com/s-gryt/memory-mason/main/hooks"
 
 HOOK_RUNTIME_FILES=("session-start.js" "user-prompt-submit.js" "post-tool-use.js" "pre-compact.js" "session-end.js")
-LIB_FILES=("config.js" "writer.js" "vault.js" "prompt.js" "transcript.js" "capture-state.js")
+LIB_FILES=("config.js" "writer.js" "vault.js" "prompt.js" "transcript.js" "capture-state.js" "assert.js" "constants.js" "json-state.js" "hook-runtime.js" "cli.js" "chunk-writer.js" "state.js" "migrate-daily.js")
 HOOK_JSON_FILES=("session-start.json" "user-prompt-submit.json" "post-tool-use.json" "pre-compact.json" "stop.json" "session-end.json")
-
-SCRIPT_DIR=""
-if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
-  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
-fi
-
-is_absolute_path() {
-  case "$1" in
-    /*|[A-Za-z]:[\\/]* )
-      return 0
-      ;;
-    *)
-      return 1
-      ;;
-  esac
-}
-
-resolve_workspace_dir() {
-  local workspace_value="$1"
-
-  if [ "$workspace_value" = "" ]; then
-    pwd
-    return
-  fi
-
-  if is_absolute_path "$workspace_value"; then
-    if [ -d "$workspace_value" ]; then
-      (cd "$workspace_value" && pwd)
-      return
-    fi
-
-    echo "$workspace_value"
-    return
-  fi
-
-  if [ -d "$workspace_value" ]; then
-    (cd "$workspace_value" && pwd)
-    return
-  fi
-
-  echo "$(pwd)/$workspace_value"
-}
-
-has_local_sources() {
-  if [ "$SCRIPT_DIR" = "" ]; then
-    return 1
-  fi
-
-  for runtime_file in "${HOOK_RUNTIME_FILES[@]}"; do
-    if [ ! -f "$SCRIPT_DIR/$runtime_file" ]; then
-      return 1
-    fi
-  done
-
-  for lib_file in "${LIB_FILES[@]}"; do
-    if [ ! -f "$SCRIPT_DIR/lib/$lib_file" ]; then
-      return 1
-    fi
-  done
-
-  return 0
-}
 
 all_runtime_files_present() {
   for runtime_file in "${HOOK_RUNTIME_FILES[@]}"; do

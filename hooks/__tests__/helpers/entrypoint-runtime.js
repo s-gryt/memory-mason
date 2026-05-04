@@ -1,0 +1,204 @@
+"use strict";
+
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const userPromptSubmit = require("../../user-prompt-submit");
+const sessionStart = require("../../session-start");
+const preCompact = require("../../pre-compact");
+const postToolUse = require("../../post-tool-use");
+const { materializeProjectDotEnvConfig } = require("./project-dot-env");
+
+const hooksRoot = path.resolve(__dirname, "..", "..");
+
+const scriptModules = {
+  "user-prompt-submit.js": userPromptSubmit,
+  "session-start.js": sessionStart,
+  "pre-compact.js": preCompact,
+  "post-tool-use.js": postToolUse,
+};
+
+const tempDirs = [];
+const generatedEnvPaths = [];
+
+const createTempDir = (prefix) => {
+  const dirPath = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  tempDirs.push(dirPath);
+  return dirPath;
+};
+
+const buildEnv = (homeDir, overrides = {}) => ({
+  ...process.env,
+  PATH: "",
+  Path: "",
+  HOME: homeDir,
+  USERPROFILE: homeDir,
+  ...overrides,
+});
+
+const hasEnvVaultPath = (env) =>
+  env !== null &&
+  typeof env === "object" &&
+  typeof env.MEMORY_MASON_VAULT_PATH === "string" &&
+  env.MEMORY_MASON_VAULT_PATH !== "";
+
+const remapHooksRootCwd = (targetCwd, isolatedProjectCwd) =>
+  targetCwd === hooksRoot && isolatedProjectCwd !== "" ? isolatedProjectCwd : targetCwd;
+
+const writeText = (filePath, content) => {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, content, "utf-8");
+};
+
+const today = () => {
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+};
+
+const buildTranscript = (turns, firstUserContent = "user turn") => {
+  if (Array.isArray(turns)) {
+    return turns
+      .map((turn, index) => {
+        if (typeof turn === "string") {
+          return turn;
+        }
+
+        const isObjectTurn = turn !== null && typeof turn === "object";
+        const fallbackRole = index % 2 === 0 ? "user" : "assistant";
+        const role =
+          isObjectTurn && typeof turn.role === "string" && turn.role !== ""
+            ? turn.role
+            : fallbackRole;
+        const content =
+          isObjectTurn && typeof turn.content === "string" ? turn.content : `${role} turn ${index}`;
+
+        return JSON.stringify({ message: { role, content } });
+      })
+      .join("\n");
+  }
+
+  const turnCount = Number.isInteger(turns) && turns > 0 ? turns : 0;
+  return Array.from({ length: turnCount }, (_, index) => {
+    const isUser = index % 2 === 0;
+    const role = isUser ? "user" : "assistant";
+    const content = isUser && index === 0 ? firstUserContent : `${role} turn ${index}`;
+    return JSON.stringify({ message: { role, content } });
+  }).join("\n");
+};
+
+const cleanupGeneratedArtifacts = () => {
+  while (tempDirs.length > 0) {
+    fs.rmSync(tempDirs.pop(), { recursive: true, force: true });
+  }
+
+  while (generatedEnvPaths.length > 0) {
+    fs.rmSync(generatedEnvPaths.pop(), { force: true });
+  }
+};
+
+const resolveScriptModule = (scriptPath) => {
+  if (
+    scriptPath !== null &&
+    typeof scriptPath === "object" &&
+    typeof scriptPath.run === "function"
+  ) {
+    return scriptPath;
+  }
+
+  if (typeof scriptPath !== "string" || scriptPath === "") {
+    throw new Error("scriptPath must be a non-empty string or a module with run()");
+  }
+
+  const scriptName = path.basename(scriptPath);
+  if (!Object.hasOwn(scriptModules, scriptName)) {
+    throw new Error(`unsupported scriptPath: ${scriptPath}`);
+  }
+
+  return scriptModules[scriptName];
+};
+
+const runHookEntrypoint = (scriptPath, options = {}) => {
+  const scriptModule = resolveScriptModule(scriptPath);
+  const env = typeof options.env === "object" && options.env !== null ? options.env : process.env;
+  const homedir =
+    typeof env.USERPROFILE === "string" && env.USERPROFILE !== "" ? env.USERPROFILE : os.homedir();
+  const extraRuntime =
+    typeof options.runtime === "object" && options.runtime !== null ? options.runtime : {};
+  const requestedRuntimeCwd = typeof options.cwd === "string" ? options.cwd : hooksRoot;
+  const payload =
+    typeof options.payload === "object" &&
+    options.payload !== null &&
+    !Array.isArray(options.payload)
+      ? options.payload
+      : null;
+  const runtime = {
+    cwd: requestedRuntimeCwd,
+    env,
+    homedir,
+    ...extraRuntime,
+  };
+  const payloadCwd = payload !== null && typeof payload.cwd === "string" ? payload.cwd : "";
+  const isolatedProjectCwd =
+    hasEnvVaultPath(env) && (requestedRuntimeCwd === hooksRoot || payloadCwd === hooksRoot)
+      ? createTempDir("mm-cwd-")
+      : "";
+  const resolvedPayload =
+    payload !== null && payloadCwd !== ""
+      ? { ...payload, cwd: remapHooksRootCwd(payloadCwd, isolatedProjectCwd) }
+      : payload;
+  let stdinText = "";
+  if (typeof options.stdin === "string") {
+    stdinText = options.stdin;
+  } else if (typeof options.stdinText === "string") {
+    stdinText = options.stdinText;
+  } else if (resolvedPayload !== null) {
+    stdinText = JSON.stringify(resolvedPayload);
+  }
+  runtime.cwd = remapHooksRootCwd(runtime.cwd, isolatedProjectCwd);
+
+  materializeProjectDotEnvConfig(runtime.cwd, env, generatedEnvPaths);
+  const resolvedPayloadCwd =
+    resolvedPayload !== null && typeof resolvedPayload.cwd === "string" ? resolvedPayload.cwd : "";
+  if (resolvedPayloadCwd !== "" && resolvedPayloadCwd !== runtime.cwd) {
+    materializeProjectDotEnvConfig(resolvedPayloadCwd, env, generatedEnvPaths);
+  }
+
+  const rawResult = scriptModule.run(stdinText, runtime);
+  const status =
+    rawResult !== null && typeof rawResult === "object" && Number.isInteger(rawResult.status)
+      ? rawResult.status
+      : 0;
+  const stdout =
+    rawResult !== null && typeof rawResult === "object" && typeof rawResult.stdout === "string"
+      ? rawResult.stdout
+      : "";
+  const stderr =
+    rawResult !== null && typeof rawResult === "object" && typeof rawResult.stderr === "string"
+      ? rawResult.stderr
+      : "";
+  const normalizedResult = { status, stdout, stderr };
+
+  Object.defineProperty(normalizedResult, "exitCode", {
+    value: status,
+    enumerable: false,
+    writable: false,
+    configurable: false,
+  });
+
+  return normalizedResult;
+};
+
+module.exports = {
+  tempDirs,
+  generatedEnvPaths,
+  createTempDir,
+  buildEnv,
+  hasEnvVaultPath,
+  remapHooksRootCwd,
+  writeText,
+  today,
+  buildTranscript,
+  cleanupGeneratedArtifacts,
+  runHookEntrypoint,
+};

@@ -60,6 +60,9 @@ jobs:
       - name: Run hook lint
         run: npm run lint
 
+      - name: Run hook dupes
+        run: npm run dupes
+
       - name: Run hook coverage
         run: npm run coverage
 

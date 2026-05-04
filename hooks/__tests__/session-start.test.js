@@ -1,7 +1,6 @@
 "use strict";
 
 const fs = require("node:fs");
-const os = require("node:os");
 const path = require("node:path");
 const {
   buildDailyFilePath,
@@ -10,40 +9,15 @@ const {
   buildDailyFolderPath,
 } = require("../lib/vault");
 const sessionStart = require("../session-start");
-const { materializeProjectDotEnvConfig } = require("./helpers/project-dot-env");
+const {
+  createTempDir,
+  buildEnv,
+  writeText,
+  today,
+  cleanupGeneratedArtifacts,
+  runHookEntrypoint,
+} = require("./helpers/entrypoint-runtime");
 const hooksRoot = path.resolve(__dirname, "..");
-
-const tempDirs = [];
-const generatedEnvPaths = [];
-
-const createTempDir = (prefix) => {
-  const dirPath = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  tempDirs.push(dirPath);
-  return dirPath;
-};
-
-const buildEnv = (homeDir, overrides = {}) => ({
-  ...process.env,
-  PATH: "",
-  Path: "",
-  HOME: homeDir,
-  USERPROFILE: homeDir,
-  ...overrides,
-});
-
-const hasEnvVaultPath = (env) =>
-  env !== null &&
-  typeof env === "object" &&
-  typeof env.MEMORY_MASON_VAULT_PATH === "string" &&
-  env.MEMORY_MASON_VAULT_PATH !== "";
-
-const remapHooksRootCwd = (targetCwd, isolatedProjectCwd) =>
-  targetCwd === hooksRoot && isolatedProjectCwd !== "" ? isolatedProjectCwd : targetCwd;
-
-const writeText = (filePath, content) => {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, content, "utf-8");
-};
 
 const createFsApiMock = (nodes) => {
   const hasNode = (targetPath) => Object.hasOwn(nodes, targetPath);
@@ -145,58 +119,6 @@ const _buildVsCodeTranscript = (turns) => {
     .join("\n");
 };
 
-const runScript = (_scriptName, options = {}) => {
-  const env = typeof options.env === "object" && options.env !== null ? options.env : process.env;
-  const homedir =
-    typeof env.USERPROFILE === "string" && env.USERPROFILE !== "" ? env.USERPROFILE : os.homedir();
-  const extraRuntime =
-    typeof options.runtime === "object" && options.runtime !== null ? options.runtime : {};
-  const requestedRuntimeCwd = typeof options.cwd === "string" ? options.cwd : hooksRoot;
-  const payload =
-    typeof options.payload === "object" &&
-    options.payload !== null &&
-    !Array.isArray(options.payload)
-      ? options.payload
-      : null;
-  const runtime = {
-    cwd: requestedRuntimeCwd,
-    env,
-    homedir,
-    ...extraRuntime,
-  };
-  const payloadCwd = payload !== null && typeof payload.cwd === "string" ? payload.cwd : "";
-  const isolatedProjectCwd =
-    hasEnvVaultPath(env) && (requestedRuntimeCwd === hooksRoot || payloadCwd === hooksRoot)
-      ? createTempDir("mm-cwd-")
-      : "";
-  const resolvedPayload =
-    payload !== null && payloadCwd !== ""
-      ? { ...payload, cwd: remapHooksRootCwd(payloadCwd, isolatedProjectCwd) }
-      : payload;
-  let stdinText = "";
-  if (typeof options.stdinText === "string") {
-    stdinText = options.stdinText;
-  } else if (resolvedPayload !== null) {
-    stdinText = JSON.stringify(resolvedPayload);
-  }
-  runtime.cwd = remapHooksRootCwd(runtime.cwd, isolatedProjectCwd);
-
-  materializeProjectDotEnvConfig(runtime.cwd, env, generatedEnvPaths);
-  const resolvedPayloadCwd =
-    resolvedPayload !== null && typeof resolvedPayload.cwd === "string" ? resolvedPayload.cwd : "";
-  if (resolvedPayloadCwd !== "" && resolvedPayloadCwd !== runtime.cwd) {
-    materializeProjectDotEnvConfig(resolvedPayloadCwd, env, generatedEnvPaths);
-  }
-
-  return sessionStart.run(stdinText, runtime);
-};
-
-const today = () => {
-  const d = new Date();
-  const pad = (n) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-};
-
 const yesterday = () => {
   const d = new Date();
   d.setDate(d.getDate() - 1);
@@ -205,13 +127,7 @@ const yesterday = () => {
 };
 
 afterEach(() => {
-  while (tempDirs.length > 0) {
-    fs.rmSync(tempDirs.pop(), { recursive: true, force: true });
-  }
-
-  while (generatedEnvPaths.length > 0) {
-    fs.rmSync(generatedEnvPaths.pop(), { force: true });
-  }
+  cleanupGeneratedArtifacts();
 });
 
 describe("entrypoint config readers", () => {
@@ -388,7 +304,11 @@ describe("session-start.js", () => {
     writeText(indexPath, "# Index\n\n[[Topic]]");
     writeText(dailyPath, "# Daily Log\n\nrecent line");
 
-    const result = runScript("session-start.js", { payload: { cwd }, cwd, env: buildEnv(cwd) });
+    const result = runHookEntrypoint("session-start.js", {
+      payload: { cwd },
+      cwd,
+      env: buildEnv(cwd),
+    });
     const parsed = JSON.parse(result.stdout);
 
     expect(result.status).toBe(0);
@@ -405,7 +325,7 @@ describe("session-start.js", () => {
 
     writeText(dailyPath, "# Daily Log\n\nyesterday line");
 
-    const result = runScript("session-start.js", {
+    const result = runHookEntrypoint("session-start.js", {
       payload: { cwd: hooksRoot },
       env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
     });
@@ -419,7 +339,7 @@ describe("session-start.js", () => {
     const homeDir = createTempDir("memory-mason-home-");
     const vaultPath = createTempDir("memory-mason-vault-");
 
-    const result = runScript("session-start.js", {
+    const result = runHookEntrypoint("session-start.js", {
       payload: { cwd: hooksRoot },
       env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
     });
@@ -444,7 +364,11 @@ describe("session-start.js", () => {
     writeText(hotPath, `HOT_SENTINEL ${"x".repeat(5100)}`);
     writeText(indexPath, "INDEX_SENTINEL");
 
-    const result = runScript("session-start.js", { payload: { cwd }, cwd, env: buildEnv(cwd) });
+    const result = runHookEntrypoint("session-start.js", {
+      payload: { cwd },
+      cwd,
+      env: buildEnv(cwd),
+    });
     const parsed = JSON.parse(result.stdout);
 
     expect(result.status).toBe(0);
@@ -467,7 +391,11 @@ describe("session-start.js", () => {
     writeText(hotPath, "");
     writeText(indexPath, `INDEX_SENTINEL ${"x".repeat(200)}`);
 
-    const result = runScript("session-start.js", { payload: { cwd }, cwd, env: buildEnv(cwd) });
+    const result = runHookEntrypoint("session-start.js", {
+      payload: { cwd },
+      cwd,
+      env: buildEnv(cwd),
+    });
     const parsed = JSON.parse(result.stdout);
 
     expect(result.status).toBe(0);
@@ -485,7 +413,11 @@ describe("session-start.js", () => {
     writeText(configPath, JSON.stringify({ vaultPath, subfolder }));
     writeText(indexPath, `INDEX_SENTINEL ${"x".repeat(200)}`);
 
-    const result = runScript("session-start.js", { payload: { cwd }, cwd, env: buildEnv(cwd) });
+    const result = runHookEntrypoint("session-start.js", {
+      payload: { cwd },
+      cwd,
+      env: buildEnv(cwd),
+    });
     const parsed = JSON.parse(result.stdout);
 
     expect(result.status).toBe(0);
@@ -504,7 +436,11 @@ describe("session-start.js", () => {
     writeText(hotPath, `HOT_SENTINEL ${"y".repeat(40)}`);
     writeText(dailyPath, "# Daily Log\n\nDAILY_SENTINEL");
 
-    const result = runScript("session-start.js", { payload: { cwd }, cwd, env: buildEnv(cwd) });
+    const result = runHookEntrypoint("session-start.js", {
+      payload: { cwd },
+      cwd,
+      env: buildEnv(cwd),
+    });
     const parsed = JSON.parse(result.stdout);
 
     expect(result.status).toBe(0);
@@ -524,7 +460,11 @@ describe("session-start.js", () => {
     );
     writeText(dailyPath, "# Daily Log\n\nfrom global config");
 
-    const result = runScript("session-start.js", { payload: { cwd }, cwd, env: buildEnv(homeDir) });
+    const result = runHookEntrypoint("session-start.js", {
+      payload: { cwd },
+      cwd,
+      env: buildEnv(homeDir),
+    });
     const parsed = JSON.parse(result.stdout);
 
     expect(result.status).toBe(0);
@@ -543,7 +483,11 @@ describe("session-start.js", () => {
     );
     writeText(dailyPath, "# Daily Log\n\nfrom dotenv config");
 
-    const result = runScript("session-start.js", { payload: { cwd }, cwd, env: buildEnv(homeDir) });
+    const result = runHookEntrypoint("session-start.js", {
+      payload: { cwd },
+      cwd,
+      env: buildEnv(homeDir),
+    });
     const parsed = JSON.parse(result.stdout);
 
     expect(result.status).toBe(0);
@@ -554,7 +498,7 @@ describe("session-start.js", () => {
     const homeDir = createTempDir("memory-mason-home-");
     const vaultPath = createTempDir("memory-mason-vault-");
 
-    const result = runScript("session-start.js", {
+    const result = runHookEntrypoint("session-start.js", {
       stdinText: "{not-json",
       env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
     });
@@ -584,7 +528,7 @@ describe("run - sync flag", () => {
     const readdirSyncSpy = vi.spyOn(fs, "readdirSync");
     const readFileSyncSpy = vi.spyOn(fs, "readFileSync");
 
-    const result = runScript("session-start.js", {
+    const result = runHookEntrypoint("session-start.js", {
       payload: { cwd: hooksRoot, hookEventName: "SessionStart" },
       env: buildEnv(homeDir),
     });
@@ -621,7 +565,7 @@ describe("run - sync flag", () => {
 
     const readFileSyncSpy = vi.spyOn(fs, "readFileSync");
 
-    const result = runScript("session-start.js", {
+    const result = runHookEntrypoint("session-start.js", {
       payload: { cwd: hooksRoot, hookEventName: "SessionStart" },
       env: buildEnv(homeDir),
     });
