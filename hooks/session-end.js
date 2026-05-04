@@ -356,17 +356,11 @@ function run(rawStdin, runtime = {}) {
     const dotEnvText = readDotEnvText(cwd);
     const globalConfigText = readGlobalConfigText(homedir);
     const globalDotEnvText = readGlobalDotEnvText(homedir);
-    const resolvedConfig = resolveVaultConfig(
-      cwd,
-      toStringOrEmpty(env.MEMORY_MASON_VAULT_PATH),
-      configText,
-      homedir,
-      {
-        dotEnvText,
-        globalConfigText,
-        globalDotEnvText,
-      },
-    );
+    const resolvedConfig = resolveVaultConfig(cwd, configText, homedir, {
+      dotEnvText,
+      globalConfigText,
+      globalDotEnvText,
+    });
 
     if (resolvedConfig.sync === false) {
       return { status: 0, stdout: "", stderr: "" };

@@ -11,6 +11,8 @@ description: >
 
 You are setting up or removing Memory Mason for the current session.
 
+This command is operational only. Do not write `/mmsetup`, `/memory-mason:mmsetup`, or their execution chatter back into the vault.
+
 **Platform detection:** Check the OS before running any scripts. Use `bash` / `.sh` scripts on macOS and Linux. Use `powershell` / `.ps1` scripts on Windows. Never ask the user which OS they're on — detect it from the environment.
 
 If the user says "uninstall", "remove", or "clean up" → skip to **Uninstall** section below.
@@ -44,16 +46,15 @@ If already installed: report status and skip unless user says "reinstall" or "fo
 
 ### Step 3: Configure Vault
 
-Check if vault is already configured (vault-path priority order):
-1. Env var `MEMORY_MASON_VAULT_PATH` is set
-2. `.env` in project root contains `MEMORY_MASON_VAULT_PATH`
-3. `memory-mason.json` exists in project root
-4. `~/.memory-mason/.env` contains `MEMORY_MASON_VAULT_PATH`
-5. `~/.memory-mason/config.json` exists
+Check if vault is already configured (file-based vault-path priority order):
+1. `.env` in project root contains `MEMORY_MASON_VAULT_PATH`
+2. `memory-mason.json` exists in project root
+3. `~/.memory-mason/.env` contains `MEMORY_MASON_VAULT_PATH`
+4. `~/.memory-mason/config.json` exists
 
 If none found, ask user and create global config:
 1. Ask: "What is the absolute path to your Obsidian vault?"
-2. Ask: "What subfolder name should Memory Mason use? (default: memory-mason)"
+2. Ask: "What subfolder name should Memory Mason use? (default: ai-knowledge)"
 3. Create `~/.memory-mason/config.json`:
 ```json
 { "vaultPath": "<input>", "subfolder": "<input>" }

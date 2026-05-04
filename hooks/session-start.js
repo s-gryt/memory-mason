@@ -128,10 +128,6 @@ function readRecentDailyLog(vaultPath, subfolder, fsApi = fs) {
   return "";
 }
 
-function resolveRuntimeEnv(runtime) {
-  return runtime.env !== null && typeof runtime.env === "object" ? runtime.env : process.env;
-}
-
 function resolveFallbackCwd(runtime) {
   return typeof runtime.cwd === "string" ? runtime.cwd : process.cwd();
 }
@@ -154,19 +150,13 @@ function readConfigSources(cwd, homedir) {
   };
 }
 
-function resolveRuntimeConfig(cwd, env, homedir) {
+function resolveRuntimeConfig(cwd, homedir) {
   const configSources = readConfigSources(cwd, homedir);
-  return resolveVaultConfig(
-    cwd,
-    toStringOrEmpty(env.MEMORY_MASON_VAULT_PATH),
-    configSources.configText,
-    homedir,
-    {
-      dotEnvText: configSources.dotEnvText,
-      globalConfigText: configSources.globalConfigText,
-      globalDotEnvText: configSources.globalDotEnvText,
-    },
-  );
+  return resolveVaultConfig(cwd, configSources.configText, homedir, {
+    dotEnvText: configSources.dotEnvText,
+    globalConfigText: configSources.globalConfigText,
+    globalDotEnvText: configSources.globalDotEnvText,
+  });
 }
 
 function resolvePrimaryContext(resolvedConfig) {
@@ -226,14 +216,13 @@ function buildSuccessResult(additionalContext) {
 }
 
 function run(rawStdin, runtime = {}) {
-  const env = resolveRuntimeEnv(runtime);
   const fallbackCwd = resolveFallbackCwd(runtime);
   const homedir = resolveRuntimeHomedir(runtime);
 
   try {
     const input = parseJsonInput(rawStdin);
     const cwd = resolveInputCwd(input, fallbackCwd);
-    const resolvedConfig = module.exports.resolveRuntimeConfig(cwd, env, homedir);
+    const resolvedConfig = module.exports.resolveRuntimeConfig(cwd, homedir);
 
     if (resolvedConfig.sync === false) {
       return buildSuccessResult("");

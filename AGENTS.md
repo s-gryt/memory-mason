@@ -12,8 +12,8 @@
 ## Knowledge Base Structure
 
 This project syncs AI conversations to an Obsidian vault. Configure the vault
-path with any supported Memory Mason config source: `MEMORY_MASON_VAULT_PATH`,
-project `.env`, project `memory-mason.json`, `~/.memory-mason/.env`, or
+path with any supported Memory Mason config source: project `.env`, project
+`memory-mason.json`, `~/.memory-mason/.env`, or
 `~/.memory-mason/config.json`.
 
 Vault layout:
@@ -33,6 +33,7 @@ Vault layout:
 
 1. Run `/mmsetup` to configure vault path or uninstall integration
 2. Hooks capture conversation context automatically into `daily/`
+	Memory Mason command traffic (`/mma`, `/mmc`, `/mml`, `/mms`, `/mmq`, `/mmsetup`, and `/memory-mason:*`) is excluded from capture.
 3. Run `/mmc` to compile captured logs into knowledge articles, `hot.md`, and `.manifest.json`
 4. Run `/mmq [question]` to query compiled knowledge
 5. Run `/mml` to health-check knowledge base

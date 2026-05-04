@@ -13,14 +13,15 @@ This repo syncs AI conversations to an Obsidian vault.
 
 Resolve the vault path in this priority order:
 
-1. `MEMORY_MASON_VAULT_PATH`
-2. project `.env`
-3. project `memory-mason.json`
-4. `~/.memory-mason/.env`
-5. `~/.memory-mason/config.json`
+1. project `.env`
+2. project `memory-mason.json`
+3. `~/.memory-mason/.env`
+4. `~/.memory-mason/config.json`
 
-If `MEMORY_MASON_VAULT_PATH` supplies the vault path, subfolder still falls back to project
-`memory-mason.json`, then project `.env`, then `ai-knowledge`.
+`.env` sources use their own `MEMORY_MASON_SUBFOLDER` when present and otherwise default to
+`ai-knowledge`. JSON sources use their own `subfolder`. Memory Mason command traffic (`/mmc`,
+`/mmq`, `/mml`, `/mms`, `/mma`, `/mmsetup`, and `/memory-mason:*`) is operational noise and must
+not be written into the vault.
 
 ## Commands
 

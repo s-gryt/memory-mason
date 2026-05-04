@@ -1,6 +1,6 @@
 "use strict";
 
-const { isMmCommand } = require("./prompt");
+const { getMmCommandToken, isMmCommand } = require("./prompt");
 const { truncateContext } = require("./vault");
 const { CAPTURE_MODE_LITE } = require("./constants");
 
@@ -78,7 +78,9 @@ const normalizeTranscriptText = (content, _captureMode = "lite") => {
   const commandName = extractTagText(content, "command-name").trim();
   if (commandName !== "") {
     const commandArgs = extractTagText(content, "command-args").trim();
-    return [commandName, commandArgs].filter((part) => part !== "").join(" ");
+    const normalizedMmCommand = getMmCommandToken(commandName);
+    const renderedCommandName = normalizedMmCommand !== "" ? normalizedMmCommand : commandName;
+    return [renderedCommandName, commandArgs].filter((part) => part !== "").join(" ");
   }
 
   return content;

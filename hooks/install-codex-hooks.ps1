@@ -184,8 +184,8 @@ if (Test-Path -LiteralPath $GlobalConfigPath) {
         $vaultPath = $vaultPathInput
     }
 
-    $subfolderInput = Read-Host "Enter subfolder name [memory-mason]"
-    $subfolder = if ([string]::IsNullOrWhiteSpace($subfolderInput)) { "memory-mason" } else { $subfolderInput.Trim() }
+    $subfolderInput = Read-Host "Enter subfolder name [ai-knowledge]"
+    $subfolder = if ([string]::IsNullOrWhiteSpace($subfolderInput)) { "ai-knowledge" } else { $subfolderInput.Trim() }
 
     $env:MEMORY_MASON_GLOBAL_CONFIG = $GlobalConfigPath -replace '\\', '/'
     $env:MEMORY_MASON_VAULT_PATH_INPUT = $vaultPath

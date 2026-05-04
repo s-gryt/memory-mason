@@ -6,9 +6,11 @@ const path = require("node:path");
 const { buildDailyChunkPath, buildDailyFilePath } = require("../lib/vault");
 const { resolveCaptureStatePath } = require("../lib/capture-state");
 const userPromptSubmit = require("../user-prompt-submit");
+const { materializeProjectDotEnvConfig } = require("./helpers/project-dot-env");
 const hooksRoot = path.resolve(__dirname, "..");
 
 const tempDirs = [];
+const generatedEnvPaths = [];
 
 const createTempDir = (prefix) => {
   const dirPath = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -24,6 +26,15 @@ const buildEnv = (homeDir, overrides = {}) => ({
   USERPROFILE: homeDir,
   ...overrides,
 });
+
+const hasEnvVaultPath = (env) =>
+  env !== null &&
+  typeof env === "object" &&
+  typeof env.MEMORY_MASON_VAULT_PATH === "string" &&
+  env.MEMORY_MASON_VAULT_PATH !== "";
+
+const remapHooksRootCwd = (targetCwd, isolatedProjectCwd) =>
+  targetCwd === hooksRoot && isolatedProjectCwd !== "" ? isolatedProjectCwd : targetCwd;
 
 const writeText = (filePath, content) => {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -52,23 +63,47 @@ const buildTranscript = (turnCount, firstUserContent = "user turn") =>
   }).join("\n");
 
 const runScript = (_scriptName, options = {}) => {
-  let stdinText = "";
-  if (typeof options.stdinText === "string") {
-    stdinText = options.stdinText;
-  } else if (typeof options.payload !== "undefined") {
-    stdinText = JSON.stringify(options.payload);
-  }
   const env = typeof options.env === "object" && options.env !== null ? options.env : process.env;
   const homedir =
     typeof env.USERPROFILE === "string" && env.USERPROFILE !== "" ? env.USERPROFILE : os.homedir();
   const extraRuntime =
     typeof options.runtime === "object" && options.runtime !== null ? options.runtime : {};
+  const requestedRuntimeCwd = typeof options.cwd === "string" ? options.cwd : hooksRoot;
+  const payload =
+    typeof options.payload === "object" &&
+    options.payload !== null &&
+    !Array.isArray(options.payload)
+      ? options.payload
+      : null;
   const runtime = {
-    cwd: typeof options.cwd === "string" ? options.cwd : hooksRoot,
+    cwd: requestedRuntimeCwd,
     env,
     homedir,
     ...extraRuntime,
   };
+  const payloadCwd = payload !== null && typeof payload.cwd === "string" ? payload.cwd : "";
+  const isolatedProjectCwd =
+    hasEnvVaultPath(env) && (requestedRuntimeCwd === hooksRoot || payloadCwd === hooksRoot)
+      ? createTempDir("mm-cwd-")
+      : "";
+  const resolvedPayload =
+    payload !== null && payloadCwd !== ""
+      ? { ...payload, cwd: remapHooksRootCwd(payloadCwd, isolatedProjectCwd) }
+      : payload;
+  let stdinText = "";
+  if (typeof options.stdinText === "string") {
+    stdinText = options.stdinText;
+  } else if (resolvedPayload !== null) {
+    stdinText = JSON.stringify(resolvedPayload);
+  }
+  runtime.cwd = remapHooksRootCwd(runtime.cwd, isolatedProjectCwd);
+
+  materializeProjectDotEnvConfig(runtime.cwd, env, generatedEnvPaths);
+  const resolvedPayloadCwd =
+    resolvedPayload !== null && typeof resolvedPayload.cwd === "string" ? resolvedPayload.cwd : "";
+  if (resolvedPayloadCwd !== "" && resolvedPayloadCwd !== runtime.cwd) {
+    materializeProjectDotEnvConfig(resolvedPayloadCwd, env, generatedEnvPaths);
+  }
 
   return userPromptSubmit.run(stdinText, runtime);
 };
@@ -76,6 +111,10 @@ const runScript = (_scriptName, options = {}) => {
 afterEach(() => {
   while (tempDirs.length > 0) {
     fs.rmSync(tempDirs.pop(), { recursive: true, force: true });
+  }
+
+  while (generatedEnvPaths.length > 0) {
+    fs.rmSync(generatedEnvPaths.pop(), { force: true });
   }
 });
 
@@ -119,6 +158,7 @@ describe("user-prompt-submit.js", () => {
   it("writes prompt into daily log", () => {
     const homeDir = createTempDir("memory-mason-home-");
     const vaultPath = createTempDir("memory-mason-vault-");
+    const hooksEnvPath = path.join(hooksRoot, ".env");
 
     const result = runScript("user-prompt-submit.js", {
       payload: { hookEventName: "user-prompt-submit", cwd: hooksRoot, prompt: " remember hooks " },
@@ -127,6 +167,7 @@ describe("user-prompt-submit.js", () => {
 
     const dailyPath = buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1);
     expect(result.status).toBe(0);
+    expect(fs.existsSync(hooksEnvPath)).toBe(false);
     expect(fs.readFileSync(dailyPath, "utf-8")).toContain("remember hooks");
   });
 
@@ -180,7 +221,29 @@ describe("user-prompt-submit.js", () => {
     expect(state.mmSuppressed).toBe(true);
   });
 
-  it("uses custom subfolder from memory-mason.json when env vault path is set", () => {
+  it("suppresses Memory Mason submit event when command_name is present and prompt field is empty", () => {
+    const homeDir = createTempDir("memory-mason-home-");
+    const vaultPath = createTempDir("memory-mason-vault-");
+
+    const result = runScript("user-prompt-submit.js", {
+      payload: {
+        hook_event_name: "UserPromptSubmit",
+        cwd: hooksRoot,
+        prompt: "",
+        command_name: "memory-mason:mmc",
+      },
+      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+    });
+
+    const statePath = resolveCaptureStatePath(vaultPath, "ai-knowledge");
+    const state = JSON.parse(fs.readFileSync(statePath, "utf-8"));
+
+    expect(result.status).toBe(0);
+    expect(fs.existsSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1))).toBe(false);
+    expect(state.mmSuppressed).toBe(true);
+  });
+
+  it("uses project .env over memory-mason.json when both exist", () => {
     const cwd = createTempDir("memory-mason-cwd-");
     const homeDir = createTempDir("memory-mason-home-");
     const vaultPath = createTempDir("memory-mason-vault-");
@@ -193,7 +256,10 @@ describe("user-prompt-submit.js", () => {
     const result = runScript("user-prompt-submit.js", {
       payload: { hookEventName: "user-prompt-submit", cwd, prompt: "remember this" },
       cwd,
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, {
+        MEMORY_MASON_VAULT_PATH: vaultPath,
+        MEMORY_MASON_SUBFOLDER: "my-brain",
+      }),
     });
 
     expect(result.status).toBe(0);
@@ -226,7 +292,7 @@ describe("user-prompt-submit.js", () => {
 
     expect(result.status).toBe(0);
     expect(result.stderr).toContain(
-      "Memory Mason config not found. Checked MEMORY_MASON_VAULT_PATH, project .env, project memory-mason.json, ~/.memory-mason/.env, and ~/.memory-mason/config.json.",
+      "Memory Mason config not found. Checked project .env, project memory-mason.json, ~/.memory-mason/.env, and ~/.memory-mason/config.json.",
     );
   });
 
@@ -435,9 +501,11 @@ describe("run - mm command filtering", () => {
 
     const homeDir = createTempDir("memory-mason-home-");
     const vaultPath = createTempDir("memory-mason-vault-");
+    const projectCwd = createTempDir("mm-cwd-");
+    const env = buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath });
     const payload = JSON.stringify({
       hookEventName: "user-prompt-submit",
-      cwd: hooksRoot,
+      cwd: projectCwd,
       prompt,
     });
     const buf = Buffer.from(payload);
@@ -454,9 +522,11 @@ describe("run - mm command filtering", () => {
       },
     });
 
+    materializeProjectDotEnvConfig(projectCwd, env, generatedEnvPaths);
+
     const result = isolatedUserPromptSubmit.run(rawStdin, {
-      cwd: hooksRoot,
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      cwd: projectCwd,
+      env,
       homedir: homeDir,
     });
 
@@ -729,6 +799,7 @@ describe("user-prompt-submit.js main", () => {
     const homeDir = createTempDir("mm-home-");
     const vaultPath = createTempDir("mm-vault-");
     const cwd = createTempDir("mm-cwd-");
+    const env = buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath });
     const payload = JSON.stringify({
       hook_event_name: "UserPromptSubmit",
       cwd,
@@ -739,6 +810,7 @@ describe("user-prompt-submit.js main", () => {
     const writes = [];
     const errors = [];
     let exitCode = null;
+    materializeProjectDotEnvConfig(cwd, env, generatedEnvPaths);
     userPromptSubmit.main({
       io: {
         stdout: (t) => writes.push(t),
@@ -758,7 +830,7 @@ describe("user-prompt-submit.js main", () => {
         },
       },
       cwd,
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env,
       homedir: homeDir,
     });
     expect(exitCode).toBe(0);
@@ -800,16 +872,18 @@ describe("user-prompt-submit.js main", () => {
     });
     expect(exitCode).toBe(0);
     expect(errors.join("")).toContain(
-      "Memory Mason config not found. Checked MEMORY_MASON_VAULT_PATH, project .env, project memory-mason.json, ~/.memory-mason/.env, and ~/.memory-mason/config.json.",
+      "Memory Mason config not found. Checked project .env, project memory-mason.json, ~/.memory-mason/.env, and ~/.memory-mason/config.json.",
     );
   });
 
   it("falls back to process stdout/stderr when io functions are missing", () => {
     const homeDir = createTempDir("mm-home-");
     const vaultPath = createTempDir("mm-vault-");
+    const env = buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath });
     const payload = JSON.stringify({ hook_event_name: "UserPromptSubmit", cwd: homeDir });
     const buf = Buffer.from(payload);
     let rc = 0;
+    materializeProjectDotEnvConfig(homeDir, env, generatedEnvPaths);
     const result = userPromptSubmit.main({
       io: { exit: () => {} },
       fs: {
@@ -823,7 +897,7 @@ describe("user-prompt-submit.js main", () => {
         },
       },
       cwd: homeDir,
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env,
       homedir: homeDir,
     });
     expect(result.status).toBe(0);
@@ -842,11 +916,14 @@ describe("user-prompt-submit.js runtime fallback branches", () => {
   it("uses fallbackCwd when input has no cwd", () => {
     const homeDir = createTempDir("mm-home-");
     const vaultPath = createTempDir("mm-vault-");
+    const env = buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath });
+    const fallbackCwd = createTempDir("mm-fb-");
+    materializeProjectDotEnvConfig(fallbackCwd, env, generatedEnvPaths);
     const result = userPromptSubmit.run(
       JSON.stringify({ hook_event_name: "UserPromptSubmit", prompt: "test" }),
       {
-        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
-        cwd: createTempDir("mm-fb-"),
+        env,
+        cwd: fallbackCwd,
         homedir: homeDir,
       },
     );

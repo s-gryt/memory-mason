@@ -137,6 +137,16 @@ describe("extractPromptText", () => {
     expect(extractPromptText("copilot-cli", { userPrompt: "/mmq writer" })).toBe("/mmq writer");
   });
 
+  it("falls back to camelCase commandName for derived Memory Mason prompt token", () => {
+    expect(extractPromptText("claude-code", { commandName: "memory-mason:mmc" })).toBe(
+      "/memory-mason:mmc",
+    );
+  });
+
+  it("returns empty string for array input", () => {
+    expect(extractPromptText("claude-code", [])).toBe("");
+  });
+
   it("returns empty string when prompt missing", () => {
     expect(extractPromptText("copilot-vscode", {})).toBe("");
   });

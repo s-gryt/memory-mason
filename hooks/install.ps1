@@ -170,8 +170,8 @@ if (Test-Path $GlobalConfigPath) {
         $vaultPath = $vaultPathInput
     }
 
-    $subfolderInput = Read-Host "Enter subfolder name [memory-mason]"
-    $subfolder = if ([string]::IsNullOrWhiteSpace($subfolderInput)) { "memory-mason" } else { $subfolderInput.Trim() }
+    $subfolderInput = Read-Host "Enter subfolder name [ai-knowledge]"
+    $subfolder = if ([string]::IsNullOrWhiteSpace($subfolderInput)) { "ai-knowledge" } else { $subfolderInput.Trim() }
 
     if (-not (Test-Path $GlobalConfigDir)) {
         New-Item -ItemType Directory -Path $GlobalConfigDir -Force | Out-Null

@@ -125,15 +125,6 @@ const parseConfigObjectOrNull = (configText) => {
   }
 };
 
-const parseConfigSyncOrNull = (configText) => {
-  const parsedConfig = parseConfigObjectOrNull(configText);
-  if (parsedConfig === null) {
-    return null;
-  }
-
-  return parseSyncFieldFromConfigObject(parsedConfig);
-};
-
 const parseConfigCaptureModeOrNull = (configText) => {
   const parsedConfig = parseConfigObjectOrNull(configText);
   if (parsedConfig === null) {
@@ -239,36 +230,6 @@ const pickFirstNonEmptyString = (values, fallbackValue) => {
   return fallbackValue;
 };
 
-const parseConfigSubfolderOrEmpty = (configText) => {
-  if (configText === "") {
-    return "";
-  }
-
-  try {
-    return parseMemoryMasonConfig(configText).subfolder;
-  } catch (_error) {
-    return "";
-  }
-};
-
-const resolveFromEnvVaultPath = (resolutionInput) => {
-  if (resolutionInput.envVaultPath === "") {
-    return null;
-  }
-
-  const configSync = parseConfigSyncOrNull(resolutionInput.configText);
-  const subfolderFromConfig = parseConfigSubfolderOrEmpty(resolutionInput.configText);
-  const resolvedConfig = {
-    vaultPath: expandHomePath(resolutionInput.envVaultPath, resolutionInput.homedir),
-    subfolder: pickFirstNonEmptyString(
-      [subfolderFromConfig, resolutionInput.dotEnvSubfolder],
-      "ai-knowledge",
-    ),
-  };
-
-  return typeof configSync === "boolean" ? { ...resolvedConfig, sync: configSync } : resolvedConfig;
-};
-
 const resolveFromConfigText = (resolutionInput) => {
   if (resolutionInput.configText === "") {
     return null;
@@ -325,7 +286,6 @@ const resolveFromGlobalDotEnv = (resolutionInput) => {
 
 const resolveVaultConfigFromAlternatives = (resolutionInput) => {
   const alternatives = [
-    resolveFromEnvVaultPath,
     resolveFromDotEnvVaultPath,
     resolveFromConfigText,
     resolveFromGlobalDotEnv,
@@ -341,9 +301,8 @@ const resolveVaultConfigFromAlternatives = (resolutionInput) => {
   }, null);
 };
 
-const resolveVaultConfig = (cwd, envVaultPath, configText, homedir, options = {}) => {
+const resolveVaultConfig = (cwd, configText, homedir, options = {}) => {
   const safeHomedir = assertNonEmptyString("homedir", homedir);
-  const safeEnvVaultPath = typeof envVaultPath === "string" ? envVaultPath : "";
   const safeConfigText = typeof configText === "string" ? configText : "";
   const safeOptions = options !== null && typeof options === "object" ? options : {};
   const safeEnvSync =
@@ -400,7 +359,6 @@ const resolveVaultConfig = (cwd, envVaultPath, configText, homedir, options = {}
 
   const resolutionInput = {
     homedir: safeHomedir,
-    envVaultPath: safeEnvVaultPath,
     configText: safeConfigText,
     dotEnvVaultPath,
     dotEnvSubfolder,
@@ -460,7 +418,7 @@ const resolveVaultConfig = (cwd, envVaultPath, configText, homedir, options = {}
 
   assertNonEmptyString("cwd", cwd);
   throw new Error(
-    "Memory Mason config not found. Checked MEMORY_MASON_VAULT_PATH, project .env, project memory-mason.json, ~/.memory-mason/.env, and ~/.memory-mason/config.json.",
+    "Memory Mason config not found. Checked project .env, project memory-mason.json, ~/.memory-mason/.env, and ~/.memory-mason/config.json.",
   );
 };
 

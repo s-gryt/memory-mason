@@ -8,6 +8,7 @@ from AI conversations. It is available via these commands:
 - `/mml` — Run health checks on the knowledge base
 - `/mms` — Show knowledge base statistics
 
-The knowledge base is located at the vault path configured through Memory Mason config sources: `MEMORY_MASON_VAULT_PATH`, project `.env`, project `memory-mason.json`, `~/.memory-mason/.env`, or `~/.memory-mason/config.json`.
+The knowledge base is located at the vault path configured through Memory Mason config sources: project `.env`, project `memory-mason.json`, `~/.memory-mason/.env`, or `~/.memory-mason/config.json`.
+Memory Mason operational commands (`/mma`, `/mmc`, `/mml`, `/mms`, `/mmq`, `/mmsetup`, and `/memory-mason:*`) are excluded from capture and should not be written back into the knowledge base.
 When a user asks about past decisions, patterns, or lessons, check the knowledge
 base with `/mmq` before answering from general knowledge.

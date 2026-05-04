@@ -246,8 +246,8 @@ else
     vault_path="$vault_path_input"
   done
 
-  read -r -p "Enter subfolder name [memory-mason]: " subfolder_input
-  subfolder="${subfolder_input:-memory-mason}"
+  read -r -p "Enter subfolder name [ai-knowledge]: " subfolder_input
+  subfolder="${subfolder_input:-ai-knowledge}"
 
   MEMORY_MASON_GLOBAL_CONFIG="$GLOBAL_CONFIG_PATH" \
   MEMORY_MASON_VAULT_PATH_INPUT="$vault_path" \

@@ -47,6 +47,16 @@ describe("transcript normalization helpers", () => {
     expect(normalizeTranscriptText(content)).toBe("/caveman:caveman ask a backed question");
   });
 
+  it("normalizes unprefixed Memory Mason command metadata into slash-prefixed prompt text", () => {
+    const content = [
+      "<command-message>memory-mason:mmc</command-message>",
+      "<command-name>memory-mason:mmc</command-name>",
+      "<command-args>today</command-args>",
+    ].join("\n");
+
+    expect(normalizeTranscriptText(content)).toBe("/memory-mason:mmc today");
+  });
+
   it("normalizes local command stdout into readable text", () => {
     const content =
       "<local-command-stdout>Set model to \u001b[1mOpus\u001b[22m</local-command-stdout>";
@@ -497,6 +507,19 @@ describe("filterMmTurns", () => {
 
   it("filters user turn starting with /memory-mason:mmsetup", () => {
     const turns = [{ role: "user", content: "/memory-mason:mmsetup repo" }];
+
+    expect(filterMmTurns(turns)).toEqual([]);
+  });
+
+  it("filters user turn parsed from unprefixed Memory Mason command metadata", () => {
+    const turns = parseJsonlTranscript(
+      JSON.stringify({
+        message: {
+          role: "user",
+          content: "<command-name>memory-mason:mmc</command-name>",
+        },
+      }),
+    );
 
     expect(filterMmTurns(turns)).toEqual([]);
   });

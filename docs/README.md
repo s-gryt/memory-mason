@@ -7,6 +7,7 @@ Cross-LLM Obsidian sync. Hook-based capture + reusable knowledge base skills acr
 See the [main README](../README.md) for plugin and shell install commands. Run `/mmsetup` after install to configure your vault path.
 
 > **VS Code Copilot tip:** To add Memory Mason to `@agentPlugins` search, add this to VS Code settings:
+>
 > ```json
 > "chat.plugins.marketplaces": [
 >   "s-gryt/memory-mason"
@@ -47,17 +48,23 @@ Config resolves in this order (first match wins):
 
 | Priority | Source | Location | Best for |
 |:--------:|:-------|:---------|:---------|
-| 1 | Env var | `MEMORY_MASON_VAULT_PATH` | CI, containers |
-| 2 | Project `.env` | `MEMORY_MASON_VAULT_PATH` + optional `MEMORY_MASON_SUBFOLDER` + optional `MEMORY_MASON_SYNC` | Per-project override |
-| 3 | Project config | `memory-mason.json` in project root | Per-project override |
-| 4 | Global `.env` | `~/.memory-mason/.env` | Shared local defaults |
-| 5 | Global config | `~/.memory-mason/config.json` | Default for all projects |
+| 1 | Project `.env` | `MEMORY_MASON_VAULT_PATH` + optional `MEMORY_MASON_SUBFOLDER` + optional `MEMORY_MASON_SYNC` | Per-project override |
+| 2 | Project config | `memory-mason.json` in project root | Per-project override |
+| 3 | Global `.env` | `~/.memory-mason/.env` | Shared local defaults |
+| 4 | Global config | `~/.memory-mason/config.json` | Default for all projects |
 
-If no source is found, hooks throw an explicit error. `/mmsetup` creates the global config automatically.
+Vault path is resolved from files only. Per-session `MEMORY_MASON_SYNC` and
+`MEMORY_MASON_CAPTURE_MODE` environment variables still override file config. If no source is
+found, hooks throw an explicit error. `/mmsetup` creates the global config automatically.
 
 ### .env format
 
-`MEMORY_MASON_VAULT_PATH` sets the Obsidian vault location. `MEMORY_MASON_SUBFOLDER` sets the directory inside the vault. `MEMORY_MASON_SYNC` is optional — capture is enabled by default; set it to `false` to pause capture. `MEMORY_MASON_CAPTURE_MODE` is optional — set it to `full` to keep detailed tool output, or leave it at the default `lite` mode for compact capture. Setting `MEMORY_MASON_SYNC` as a process environment variable overrides all config files for a single session.
+`MEMORY_MASON_VAULT_PATH` sets the Obsidian vault location. `MEMORY_MASON_SUBFOLDER` sets the
+directory inside the vault. `MEMORY_MASON_SYNC` is optional — capture is enabled by default; set
+it to `false` to pause capture. `MEMORY_MASON_CAPTURE_MODE` is optional — set it to `full` to keep
+detailed tool output, or leave it at the default `lite` mode for compact capture. Setting
+`MEMORY_MASON_SYNC` or `MEMORY_MASON_CAPTURE_MODE` as process environment variables overrides file
+config for a single session.
 
 ```env
 MEMORY_MASON_VAULT_PATH=/path/to/your/obsidian/vault
@@ -103,11 +110,14 @@ Hooks append session activity into a folder-per-day structure: `{vault}/{subfold
 [AI Conversation] ──> [Hook Runtime] ──> daily/YYYY-MM-DD/001.md  (auto-rotates at 500KB)
 ```
 
-Memory Mason's own commands (`/mmc`, `/mmq`, `/mml`, `/mms`, `/mma`) are automatically excluded from capture. You can compile, query, and manage your knowledge base at any time without those interactions appearing in your daily logs or producing duplicate entries. This works through three layers:
+Memory Mason's own commands (`/mmc`, `/mmq`, `/mml`, `/mms`, `/mma`, `/mmsetup`) and namespaced
+`/memory-mason:*` forms are automatically excluded from capture. You can compile, query, and
+manage your knowledge base at any time without those interactions appearing in your daily logs or
+producing duplicate entries. This works through three layers:
 
-1. **Prompt skip** — `user-prompt-submit.js` detects `/mm*` prompts and skips writing them to the daily log. It sets an `mmSuppressed` flag in capture state.
-2. **Capture state flag** — `post-tool-use.js` and `pre-compact.js` check the `mmSuppressed` flag and skip capture while it is active. The flag resets on the next non-`/mm*` prompt.
-3. **Transcript filter** — `session-end.js` runs `filterMmTurns()` to strip any `/mm*` user turns and their paired assistant replies from the full session transcript before writing.
+1. **Prompt skip** — `user-prompt-submit.js` detects supported Memory Mason commands, including `/memory-mason:*`, and skips writing them to the daily log. It sets an `mmSuppressed` flag in capture state.
+2. **Capture state flag** — `post-tool-use.js` and `pre-compact.js` check the `mmSuppressed` flag and skip capture while it is active. The flag resets on the next non-Memory Mason prompt.
+3. **Transcript filter** — `session-end.js` runs `filterMmTurns()` to strip any supported Memory Mason user turns and their paired assistant replies from the full session transcript before writing.
 
 To exclude entire sessions from capture, set `sync` to `false` in your config file.
 
@@ -212,7 +222,7 @@ Applied by `normalizeTranscriptText` during JSONL transcript parsing.
 ### What Reaches the Vault
 
 | Signal | Lite | Full |
-|:-------|:-----|:-----|
+|:------|:-----|:-----|
 | User prompts | Every prompt | Every prompt |
 | `AskUserQuestion` Q+A | Every answer (full JSON: question + answer + annotations) | Every answer (full JSON) |
 | Final assistant reply | 1 per Stop | All new turns since last Stop |

@@ -8,17 +8,24 @@ Hooks resolve config in this order (first match wins):
 
 | Priority | Source | Location |
 |:--------:|:-------|:---------|
-| 1 | Env var | `MEMORY_MASON_VAULT_PATH` |
-| 2 | Project `.env` | `MEMORY_MASON_VAULT_PATH` + optional `MEMORY_MASON_SUBFOLDER` + optional `MEMORY_MASON_SYNC` |
-| 3 | Project config | `memory-mason.json` in project root |
-| 4 | Global `.env` | `~/.memory-mason/.env` |
-| 5 | Global config | `~/.memory-mason/config.json` |
+| 1 | Project `.env` | `MEMORY_MASON_VAULT_PATH` + optional `MEMORY_MASON_SUBFOLDER` + optional `MEMORY_MASON_SYNC` |
+| 2 | Project config | `memory-mason.json` in project root |
+| 3 | Global `.env` | `~/.memory-mason/.env` |
+| 4 | Global config | `~/.memory-mason/config.json` |
 
-If no source is found, hooks throw. Default subfolder is `ai-knowledge` when only `MEMORY_MASON_VAULT_PATH` is set.
+Vault path is resolved from files only. Process environment variables `MEMORY_MASON_SYNC` and
+`MEMORY_MASON_CAPTURE_MODE` still override file config for a single session. If no source is
+found, hooks throw. `.env` sources default subfolder to `ai-knowledge` when
+`MEMORY_MASON_SUBFOLDER` is unset.
 
 ### .env format
 
-`MEMORY_MASON_VAULT_PATH` sets the Obsidian vault location. `MEMORY_MASON_SUBFOLDER` sets the directory inside the vault. `MEMORY_MASON_SYNC` is optional — capture is enabled by default; set it to `false` to pause capture. Setting `MEMORY_MASON_SYNC` as a process environment variable overrides all config files for a single session.
+`MEMORY_MASON_VAULT_PATH` sets the Obsidian vault location. `MEMORY_MASON_SUBFOLDER` sets the
+directory inside the vault. `MEMORY_MASON_SYNC` is optional — capture is enabled by default; set
+it to `false` to pause capture. `MEMORY_MASON_CAPTURE_MODE` is optional — set it to `full` for
+detailed tool output, or leave it at the default `lite` mode for compact capture. Setting
+`MEMORY_MASON_SYNC` or `MEMORY_MASON_CAPTURE_MODE` as process environment variables overrides file
+config for a single session.
 
 ```env
 MEMORY_MASON_VAULT_PATH=/path/to/your/obsidian/vault
@@ -58,7 +65,8 @@ Memory Mason commands are excluded from capture through three layers. This appli
 2. **Capture state flag** — `post-tool-use.js` and `pre-compact.js` check `mmSuppressed` and skip capture while active. The flag resets on the next non-Memory Mason prompt.
 3. **Transcript filter** — `session-end.js` SessionEnd handler runs `filterMmTurns()` to strip Memory Mason user turns and their paired assistant replies from the transcript.
 
-This prevents Memory Mason output from appearing in daily logs and avoids duplicate content in the knowledge base.
+This prevents Memory Mason command traffic from ever being written into Obsidian daily logs and
+avoids duplicate content in the knowledge base.
 
 ## Platform Mappings
 

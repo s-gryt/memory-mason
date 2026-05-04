@@ -26,6 +26,12 @@ const getMmCommandToken = (value) => {
   return MM_COMMAND_TOKENS.has(normalizedValue) ? normalizedValue : "";
 };
 
+const extractCommandName = (input) =>
+  firstNonEmptyString([
+    input !== null && typeof input === "object" && !Array.isArray(input) ? input.command_name : "",
+    input !== null && typeof input === "object" && !Array.isArray(input) ? input.commandName : "",
+  ]);
+
 const isMmCommand = (value) => {
   if (typeof value !== "string") {
     return false;
@@ -47,7 +53,7 @@ const extractHookEventName = (input) =>
 const buildPromptExpansionText = (input) => {
   const prompt = firstNonEmptyString([input.prompt]);
   const expansionType = firstNonEmptyString([input.expansion_type, input.expansionType]);
-  const commandName = firstNonEmptyString([input.command_name, input.commandName]);
+  const commandName = extractCommandName(input);
   const commandArgs = firstNonEmptyString([input.command_args, input.commandArgs]);
   const commandSource = firstNonEmptyString([input.command_source, input.commandSource]);
   const mmCommandToken = prompt === "" ? getMmCommandToken(commandName) : "";
@@ -65,12 +71,19 @@ const buildPromptExpansionText = (input) => {
 };
 
 const extractPromptText = (platform, input) => {
+  const mmCommandToken = getMmCommandToken(extractCommandName(input));
+
   if (platform === "copilot-vscode" || platform === "claude-code" || platform === "codex") {
-    return firstNonEmptyString([input.prompt]);
+    return firstNonEmptyString([input.prompt, mmCommandToken]);
   }
 
   if (platform === "copilot-cli") {
-    return firstNonEmptyString([input.prompt, input.userPrompt, input.initialPrompt]);
+    return firstNonEmptyString([
+      input.prompt,
+      input.userPrompt,
+      input.initialPrompt,
+      mmCommandToken,
+    ]);
   }
 
   throw new Error(`unsupported platform: ${platform}`);

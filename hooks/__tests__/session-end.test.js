@@ -8,9 +8,11 @@ const { resolveCaptureStatePath } = require("../lib/capture-state");
 const sessionEnd = require("../session-end");
 const { buildStopAssistantSelection } = require("../session-end");
 const userPromptSubmit = require("../user-prompt-submit");
+const { materializeProjectDotEnvConfig } = require("./helpers/project-dot-env");
 const hooksRoot = path.resolve(__dirname, "..");
 
 const tempDirs = [];
+const generatedEnvPaths = [];
 
 const createTempDir = (prefix) => {
   const dirPath = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -26,6 +28,15 @@ const buildEnv = (homeDir, overrides = {}) => ({
   USERPROFILE: homeDir,
   ...overrides,
 });
+
+const hasEnvVaultPath = (env) =>
+  env !== null &&
+  typeof env === "object" &&
+  typeof env.MEMORY_MASON_VAULT_PATH === "string" &&
+  env.MEMORY_MASON_VAULT_PATH !== "";
+
+const remapHooksRootCwd = (targetCwd, isolatedProjectCwd) =>
+  targetCwd === hooksRoot && isolatedProjectCwd !== "" ? isolatedProjectCwd : targetCwd;
 
 const withProcessCaptureMode = (value, callback) => {
   const hadCaptureMode = Object.hasOwn(process.env, "MEMORY_MASON_CAPTURE_MODE");
@@ -131,15 +142,42 @@ const buildVsCodeTranscript = (turns) => {
 };
 
 const runScript = (scriptName, options = {}) => {
+  const env = options.env || process.env;
+  const homedir = env.USERPROFILE && env.USERPROFILE !== "" ? env.USERPROFILE : os.homedir();
+  const requestedRuntimeCwd = options.cwd || hooksRoot;
+  const payload =
+    typeof options.payload === "object" &&
+    options.payload !== null &&
+    !Array.isArray(options.payload)
+      ? options.payload
+      : null;
+  const payloadCwd = payload !== null && typeof payload.cwd === "string" ? payload.cwd : "";
+  const isolatedProjectCwd =
+    hasEnvVaultPath(env) && (requestedRuntimeCwd === hooksRoot || payloadCwd === hooksRoot)
+      ? createTempDir("mm-cwd-")
+      : "";
+  const resolvedPayload =
+    payload !== null && payloadCwd !== ""
+      ? { ...payload, cwd: remapHooksRootCwd(payloadCwd, isolatedProjectCwd) }
+      : payload;
   let stdinText = "";
   if (typeof options.stdinText === "string") {
     stdinText = options.stdinText;
-  } else if (typeof options.payload !== "undefined") {
-    stdinText = JSON.stringify(options.payload);
+  } else if (resolvedPayload !== null) {
+    stdinText = JSON.stringify(resolvedPayload);
   }
-  const env = options.env || process.env;
-  const homedir = env.USERPROFILE && env.USERPROFILE !== "" ? env.USERPROFILE : os.homedir();
-  const runtime = { cwd: options.cwd || hooksRoot, env, homedir, ...(options.runtime || {}) };
+  const runtime = {
+    cwd: remapHooksRootCwd(requestedRuntimeCwd, isolatedProjectCwd),
+    env,
+    homedir,
+    ...(options.runtime || {}),
+  };
+  materializeProjectDotEnvConfig(runtime.cwd, env, generatedEnvPaths);
+  const resolvedPayloadCwd =
+    resolvedPayload !== null && typeof resolvedPayload.cwd === "string" ? resolvedPayload.cwd : "";
+  if (resolvedPayloadCwd !== "" && resolvedPayloadCwd !== runtime.cwd) {
+    materializeProjectDotEnvConfig(resolvedPayloadCwd, env, generatedEnvPaths);
+  }
   if (scriptName === "user-prompt-submit.js") return userPromptSubmit.run(stdinText, runtime);
   return sessionEnd.run(stdinText, runtime);
 };
@@ -147,6 +185,10 @@ const runScript = (scriptName, options = {}) => {
 afterEach(() => {
   while (tempDirs.length > 0) {
     fs.rmSync(tempDirs.pop(), { recursive: true, force: true });
+  }
+
+  while (generatedEnvPaths.length > 0) {
+    fs.rmSync(generatedEnvPaths.pop(), { force: true });
   }
 });
 
@@ -1355,15 +1397,18 @@ describe("session-end.js stop with empty session ID", () => {
   it("returns early", () => {
     const homeDir = createTempDir("mm-home-");
     const vaultPath = createTempDir("mm-vault-");
+    const projectCwd = createTempDir("mm-cwd-");
+    const env = buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath });
+    materializeProjectDotEnvConfig(projectCwd, env, generatedEnvPaths);
     const result = sessionEnd.run(
       JSON.stringify({
         hook_event_name: "Stop",
-        cwd: hooksRoot,
+        cwd: projectCwd,
         transcript_path: path.join(createTempDir("mm-tr-"), "x.jsonl"),
       }),
       {
-        cwd: hooksRoot,
-        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+        cwd: projectCwd,
+        env,
         homedir: homeDir,
       },
     );

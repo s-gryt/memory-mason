@@ -6,10 +6,12 @@ const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const { buildDailyChunkPath } = require("../lib/vault");
 const { buildCommandErrorResult, formatErrorMessage, writeIfPresent } = require("../lib/cli");
+const { materializeProjectDotEnvConfig } = require("./helpers/project-dot-env");
 
 const hooksRoot = path.resolve(__dirname, "..");
 const _repoRoot = path.resolve(hooksRoot, "..");
 let tempDirs = [];
+const generatedEnvPaths = [];
 
 const createTempDir = (prefix) => {
   const dirPath = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -29,6 +31,15 @@ const buildEnv = (homeDir, overrides = {}) => ({
   ...overrides,
 });
 
+const hasEnvVaultPath = (env) =>
+  env !== null &&
+  typeof env === "object" &&
+  typeof env.MEMORY_MASON_VAULT_PATH === "string" &&
+  env.MEMORY_MASON_VAULT_PATH !== "";
+
+const remapHooksRootCwd = (targetCwd, isolatedProjectCwd) =>
+  targetCwd === hooksRoot && isolatedProjectCwd !== "" ? isolatedProjectCwd : targetCwd;
+
 const today = () => {
   const now = new Date();
   const pad = (n) => String(n).padStart(2, "0");
@@ -43,19 +54,62 @@ const buildTranscript = (turnCount, firstUserContent = "user turn") =>
     return JSON.stringify({ message: { role, content } });
   }).join("\n");
 
-const runCli = (scriptName, options = {}) =>
-  spawnSync(process.execPath, [path.join(hooksRoot, scriptName)].concat(options.args || []), {
-    cwd: typeof options.cwd === "string" ? options.cwd : hooksRoot,
-    env: typeof options.env === "object" && options.env !== null ? options.env : process.env,
-    input: typeof options.input === "string" ? options.input : "",
-    encoding: "utf-8",
-  });
+const runCli = (scriptName, options = {}) => {
+  const env = typeof options.env === "object" && options.env !== null ? options.env : process.env;
+  const requestedCwd = typeof options.cwd === "string" ? options.cwd : hooksRoot;
+  const inputText = typeof options.input === "string" ? options.input : "";
+  const parsedInput = (() => {
+    if (inputText === "") {
+      return null;
+    }
+
+    try {
+      const parsed = JSON.parse(inputText);
+      return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
+        ? parsed
+        : null;
+    } catch (_error) {
+      return null;
+    }
+  })();
+  const inputCwd =
+    parsedInput !== null && typeof parsedInput.cwd === "string" ? parsedInput.cwd : "";
+  const isolatedProjectCwd =
+    hasEnvVaultPath(env) && (requestedCwd === hooksRoot || inputCwd === hooksRoot)
+      ? createTempDir("mm-cwd-")
+      : "";
+  const cwd = remapHooksRootCwd(requestedCwd, isolatedProjectCwd);
+  const resolvedInputText =
+    parsedInput !== null && inputCwd !== ""
+      ? JSON.stringify({ ...parsedInput, cwd: remapHooksRootCwd(inputCwd, isolatedProjectCwd) })
+      : inputText;
+
+  materializeProjectDotEnvConfig(cwd, env, generatedEnvPaths);
+  const resolvedInputCwd = remapHooksRootCwd(inputCwd, isolatedProjectCwd);
+  if (resolvedInputCwd !== "" && resolvedInputCwd !== cwd) {
+    materializeProjectDotEnvConfig(resolvedInputCwd, env, generatedEnvPaths);
+  }
+
+  return spawnSync(
+    process.execPath,
+    [path.join(hooksRoot, scriptName)].concat(options.args || []),
+    {
+      cwd,
+      env,
+      input: resolvedInputText,
+      encoding: "utf-8",
+    },
+  );
+};
 
 afterEach(() => {
   tempDirs.forEach((dirPath) => {
     fs.rmSync(dirPath, { recursive: true, force: true });
   });
   tempDirs = [];
+  while (generatedEnvPaths.length > 0) {
+    fs.rmSync(generatedEnvPaths.pop(), { force: true });
+  }
 });
 
 describe("lib/cli.js", () => {

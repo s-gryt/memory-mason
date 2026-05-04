@@ -112,19 +112,13 @@ function readConfigSources(cwd, homedir) {
   };
 }
 
-function resolveRuntimeConfig(cwd, env, homedir) {
+function resolveRuntimeConfig(cwd, homedir) {
   const configSources = readConfigSources(cwd, homedir);
-  return resolveVaultConfig(
-    cwd,
-    toStringOrEmpty(env.MEMORY_MASON_VAULT_PATH),
-    configSources.configText,
-    homedir,
-    {
-      dotEnvText: configSources.dotEnvText,
-      globalConfigText: configSources.globalConfigText,
-      globalDotEnvText: configSources.globalDotEnvText,
-    },
-  );
+  return resolveVaultConfig(cwd, configSources.configText, homedir, {
+    dotEnvText: configSources.dotEnvText,
+    globalConfigText: configSources.globalConfigText,
+    globalDotEnvText: configSources.globalDotEnvText,
+  });
 }
 
 function shouldSkipForInvoker(env) {
@@ -197,7 +191,7 @@ function run(rawStdin, runtime = {}) {
     }
 
     const cwd = resolveInputCwd(input, fallbackCwd);
-    const resolvedConfig = resolveRuntimeConfig(cwd, env, homedir);
+    const resolvedConfig = resolveRuntimeConfig(cwd, homedir);
 
     if (resolvedConfig.sync === false) {
       return { status: 0, stdout: "", stderr: "" };

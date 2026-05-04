@@ -6,9 +6,11 @@ const path = require("node:path");
 const { buildDailyChunkPath, buildDailyFilePath } = require("../lib/vault");
 const { resolveCaptureStatePath } = require("../lib/capture-state");
 const preCompact = require("../pre-compact");
+const { materializeProjectDotEnvConfig } = require("./helpers/project-dot-env");
 const hooksRoot = path.resolve(__dirname, "..");
 
 const tempDirs = [];
+const generatedEnvPaths = [];
 
 const createTempDir = (prefix) => {
   const dirPath = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -24,6 +26,15 @@ const buildEnv = (homeDir, overrides = {}) => ({
   USERPROFILE: homeDir,
   ...overrides,
 });
+
+const hasEnvVaultPath = (env) =>
+  env !== null &&
+  typeof env === "object" &&
+  typeof env.MEMORY_MASON_VAULT_PATH === "string" &&
+  env.MEMORY_MASON_VAULT_PATH !== "";
+
+const remapHooksRootCwd = (targetCwd, isolatedProjectCwd) =>
+  targetCwd === hooksRoot && isolatedProjectCwd !== "" ? isolatedProjectCwd : targetCwd;
 
 const withProcessCaptureMode = (value, callback) => {
   const hadCaptureMode = Object.hasOwn(process.env, "MEMORY_MASON_CAPTURE_MODE");
@@ -66,23 +77,48 @@ const buildTranscript = (turnCount, firstUserContent = "user turn") =>
   }).join("\n");
 
 const runScript = (_scriptName, options = {}) => {
-  let stdinText = "";
-  if (typeof options.stdinText === "string") {
-    stdinText = options.stdinText;
-  } else if (typeof options.payload !== "undefined") {
-    stdinText = JSON.stringify(options.payload);
-  }
   const env = typeof options.env === "object" && options.env !== null ? options.env : process.env;
   const homedir =
     typeof env.USERPROFILE === "string" && env.USERPROFILE !== "" ? env.USERPROFILE : os.homedir();
   const extraRuntime =
     typeof options.runtime === "object" && options.runtime !== null ? options.runtime : {};
+  const requestedRuntimeCwd = typeof options.cwd === "string" ? options.cwd : hooksRoot;
+  const payload =
+    typeof options.payload === "object" &&
+    options.payload !== null &&
+    !Array.isArray(options.payload)
+      ? options.payload
+      : null;
   const runtime = {
-    cwd: typeof options.cwd === "string" ? options.cwd : hooksRoot,
+    cwd: requestedRuntimeCwd,
     env,
     homedir,
     ...extraRuntime,
   };
+
+  const payloadCwd = payload !== null && typeof payload.cwd === "string" ? payload.cwd : "";
+  const isolatedProjectCwd =
+    hasEnvVaultPath(env) && (requestedRuntimeCwd === hooksRoot || payloadCwd === hooksRoot)
+      ? createTempDir("mm-cwd-")
+      : "";
+  const resolvedPayload =
+    payload !== null && payloadCwd !== ""
+      ? { ...payload, cwd: remapHooksRootCwd(payloadCwd, isolatedProjectCwd) }
+      : payload;
+  let stdinText = "";
+  if (typeof options.stdinText === "string") {
+    stdinText = options.stdinText;
+  } else if (resolvedPayload !== null) {
+    stdinText = JSON.stringify(resolvedPayload);
+  }
+  runtime.cwd = remapHooksRootCwd(runtime.cwd, isolatedProjectCwd);
+
+  materializeProjectDotEnvConfig(runtime.cwd, env, generatedEnvPaths);
+  const resolvedPayloadCwd =
+    resolvedPayload !== null && typeof resolvedPayload.cwd === "string" ? resolvedPayload.cwd : "";
+  if (resolvedPayloadCwd !== "" && resolvedPayloadCwd !== runtime.cwd) {
+    materializeProjectDotEnvConfig(resolvedPayloadCwd, env, generatedEnvPaths);
+  }
 
   return preCompact.run(stdinText, runtime);
 };
@@ -90,6 +126,10 @@ const runScript = (_scriptName, options = {}) => {
 afterEach(() => {
   while (tempDirs.length > 0) {
     fs.rmSync(tempDirs.pop(), { recursive: true, force: true });
+  }
+
+  while (generatedEnvPaths.length > 0) {
+    fs.rmSync(generatedEnvPaths.pop(), { force: true });
   }
 });
 
@@ -594,10 +634,14 @@ describe("pre-compact.js main", () => {
     withProcessCaptureMode("full", () => {
       const homeDir = createTempDir("mm-home-");
       const vaultPath = createTempDir("mm-vault-");
+      const env = buildEnv(homeDir, {
+        MEMORY_MASON_VAULT_PATH: vaultPath,
+      });
       const transcriptPath = path.join(createTempDir("mm-tr-"), "session.jsonl");
       writeText(transcriptPath, buildTranscript(6));
+      const projectCwd = createTempDir("mm-cwd-");
       const payload = JSON.stringify({
-        cwd: hooksRoot,
+        cwd: projectCwd,
         transcript_path: transcriptPath,
         session_id: "session-main",
       });
@@ -605,6 +649,7 @@ describe("pre-compact.js main", () => {
       let rc = 0;
       const errors = [];
       let exitCode = null;
+      materializeProjectDotEnvConfig(projectCwd, env, generatedEnvPaths);
       preCompact.main({
         fs: {
           readSync(_fd, chunk) {
@@ -616,10 +661,8 @@ describe("pre-compact.js main", () => {
             return 0;
           },
         },
-        cwd: hooksRoot,
-        env: buildEnv(homeDir, {
-          MEMORY_MASON_VAULT_PATH: vaultPath,
-        }),
+        cwd: projectCwd,
+        env,
         homedir: homeDir,
         io: {
           stdout: () => {},

@@ -47,8 +47,9 @@ These are checked-in generated distribution surfaces synced from the source file
 ## Important behavior notes
 
 - `npx skills add` reads source skills from `skills/` in this repo.
-- Hook vault-path resolution order is: `MEMORY_MASON_VAULT_PATH` env var, `.env` in project root, `memory-mason.json` in project root, `~/.memory-mason/.env`, then `~/.memory-mason/config.json`. It throws if none are found.
-- If the vault path comes from `MEMORY_MASON_VAULT_PATH`, subfolder still falls back to project `memory-mason.json`, then project `.env`, then `ai-knowledge`.
+- Hook vault-path resolution order is: `.env` in project root, `memory-mason.json` in project root, `~/.memory-mason/.env`, then `~/.memory-mason/config.json`. It throws if none are found.
+- `.env` sources use their own `MEMORY_MASON_SUBFOLDER` when present and otherwise default to `ai-knowledge`. JSON sources use their own `subfolder`.
+- Memory Mason commands `/mma`, `/mmc`, `/mml`, `/mms`, `/mmq`, `/mmsetup`, and `/memory-mason:*` are excluded from capture and must not be written back into the vault.
 - Claude Code one-command install scripts are `hooks/install.sh` and `hooks/install.ps1`.
 - Claude Code install bootstraps `~/.memory-mason/config.json` for cross-project use.
 - Do not commit a real `memory-mason.json`. Keep only `memory-mason.example.json` in git.

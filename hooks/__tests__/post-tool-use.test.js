@@ -7,9 +7,11 @@ const { buildDailyChunkPath, buildDailyFilePath } = require("../lib/vault");
 const { resolveCaptureStatePath } = require("../lib/capture-state");
 const postToolUse = require("../post-tool-use");
 const { USER_INPUT_TOOLS, NOISY_TOOLS } = require("../lib/constants");
+const { materializeProjectDotEnvConfig } = require("./helpers/project-dot-env");
 const hooksRoot = path.resolve(__dirname, "..");
 
 const tempDirs = [];
+const generatedEnvPaths = [];
 
 const createTempDir = (prefix) => {
   const dirPath = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -25,6 +27,15 @@ const buildEnv = (homeDir, overrides = {}) => ({
   USERPROFILE: homeDir,
   ...overrides,
 });
+
+const hasEnvVaultPath = (env) =>
+  env !== null &&
+  typeof env === "object" &&
+  typeof env.MEMORY_MASON_VAULT_PATH === "string" &&
+  env.MEMORY_MASON_VAULT_PATH !== "";
+
+const remapHooksRootCwd = (targetCwd, isolatedProjectCwd) =>
+  targetCwd === hooksRoot && isolatedProjectCwd !== "" ? isolatedProjectCwd : targetCwd;
 
 const writeText = (filePath, content) => {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -45,23 +56,48 @@ const runScript = (scriptNameOrOptions, maybeOptions = {}) => {
     options = scriptNameOrOptions;
   }
 
-  let stdinText = "";
-  if (typeof options.stdinText === "string") {
-    stdinText = options.stdinText;
-  } else if (typeof options.payload !== "undefined") {
-    stdinText = JSON.stringify(options.payload);
-  }
   const env = typeof options.env === "object" && options.env !== null ? options.env : process.env;
   const homedir =
     typeof env.USERPROFILE === "string" && env.USERPROFILE !== "" ? env.USERPROFILE : os.homedir();
   const extraRuntime =
     typeof options.runtime === "object" && options.runtime !== null ? options.runtime : {};
+  const requestedRuntimeCwd = typeof options.cwd === "string" ? options.cwd : hooksRoot;
+  const payload =
+    typeof options.payload === "object" &&
+    options.payload !== null &&
+    !Array.isArray(options.payload)
+      ? options.payload
+      : null;
   const runtime = {
-    cwd: typeof options.cwd === "string" ? options.cwd : hooksRoot,
+    cwd: requestedRuntimeCwd,
     env,
     homedir,
     ...extraRuntime,
   };
+
+  const payloadCwd = payload !== null && typeof payload.cwd === "string" ? payload.cwd : "";
+  const isolatedProjectCwd =
+    hasEnvVaultPath(env) && (requestedRuntimeCwd === hooksRoot || payloadCwd === hooksRoot)
+      ? createTempDir("mm-cwd-")
+      : "";
+  const resolvedPayload =
+    payload !== null && payloadCwd !== ""
+      ? { ...payload, cwd: remapHooksRootCwd(payloadCwd, isolatedProjectCwd) }
+      : payload;
+  let stdinText = "";
+  if (typeof options.stdinText === "string") {
+    stdinText = options.stdinText;
+  } else if (resolvedPayload !== null) {
+    stdinText = JSON.stringify(resolvedPayload);
+  }
+  runtime.cwd = remapHooksRootCwd(runtime.cwd, isolatedProjectCwd);
+
+  materializeProjectDotEnvConfig(runtime.cwd, env, generatedEnvPaths);
+  const resolvedPayloadCwd =
+    resolvedPayload !== null && typeof resolvedPayload.cwd === "string" ? resolvedPayload.cwd : "";
+  if (resolvedPayloadCwd !== "" && resolvedPayloadCwd !== runtime.cwd) {
+    materializeProjectDotEnvConfig(resolvedPayloadCwd, env, generatedEnvPaths);
+  }
 
   return postToolUse.run(stdinText, runtime);
 };
@@ -90,6 +126,10 @@ const withProcessCaptureMode = (value, callback) => {
 afterEach(() => {
   while (tempDirs.length > 0) {
     fs.rmSync(tempDirs.pop(), { recursive: true, force: true });
+  }
+
+  while (generatedEnvPaths.length > 0) {
+    fs.rmSync(generatedEnvPaths.pop(), { force: true });
   }
 });
 
@@ -823,6 +863,7 @@ describe("post-tool-use.js main", () => {
     withProcessCaptureMode("full", () => {
       const homeDir = createTempDir("mm-home-");
       const vaultPath = createTempDir("mm-vault-");
+      const env = buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath });
       const payload = JSON.stringify({
         hook_event_name: "PostToolUse",
         cwd: homeDir,
@@ -834,6 +875,7 @@ describe("post-tool-use.js main", () => {
       const writes = [];
       const errors = [];
       let exitCode = null;
+      materializeProjectDotEnvConfig(homeDir, env, generatedEnvPaths);
       postToolUse.main({
         io: {
           stdout: (t) => writes.push(t),
@@ -853,7 +895,7 @@ describe("post-tool-use.js main", () => {
           },
         },
         cwd: homeDir,
-        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+        env,
         homedir: homeDir,
       });
       expect(exitCode).toBe(0);
@@ -897,7 +939,7 @@ describe("post-tool-use.js main", () => {
     });
     expect(exitCode).toBe(0);
     expect(errors.join("")).toContain(
-      "Memory Mason config not found. Checked MEMORY_MASON_VAULT_PATH, project .env, project memory-mason.json, ~/.memory-mason/.env, and ~/.memory-mason/config.json.",
+      "Memory Mason config not found. Checked project .env, project memory-mason.json, ~/.memory-mason/.env, and ~/.memory-mason/config.json.",
     );
   });
 

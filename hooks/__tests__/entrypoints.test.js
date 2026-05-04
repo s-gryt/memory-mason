@@ -16,10 +16,12 @@ const preCompact = require("../pre-compact");
 const sessionEnd = require("../session-end");
 const installCopilotHooks = require("../install-copilot-hooks");
 const uninstallCopilotHooks = require("../uninstall-copilot-hooks");
+const { materializeProjectDotEnvConfig } = require("./helpers/project-dot-env");
 
 const hooksRoot = path.resolve(__dirname, "..");
 const repoRoot = path.resolve(hooksRoot, "..");
 const tempDirs = [];
+const generatedEnvPaths = [];
 const scriptModules = {
   "session-start.js": sessionStart,
   "user-prompt-submit.js": userPromptSubmit,
@@ -85,6 +87,15 @@ const buildEnv = (homeDir, overrides = {}) => ({
   ...overrides,
 });
 
+const hasEnvVaultPath = (env) =>
+  env !== null &&
+  typeof env === "object" &&
+  typeof env.MEMORY_MASON_VAULT_PATH === "string" &&
+  env.MEMORY_MASON_VAULT_PATH !== "";
+
+const remapHooksRootCwd = (targetCwd, isolatedProjectCwd) =>
+  targetCwd === hooksRoot && isolatedProjectCwd !== "" ? isolatedProjectCwd : targetCwd;
+
 const withMemoryMasonCaptureMode = (value, callback) => {
   const hadCaptureMode = Object.hasOwn(process.env, "MEMORY_MASON_CAPTURE_MODE");
   const previousCaptureMode = process.env.MEMORY_MASON_CAPTURE_MODE;
@@ -108,23 +119,47 @@ const withMemoryMasonCaptureMode = (value, callback) => {
 
 const runScript = (scriptName, options = {}) => {
   const scriptModule = scriptModules[scriptName];
-  let stdinText = "";
-  if (typeof options.stdinText === "string") {
-    stdinText = options.stdinText;
-  } else if (typeof options.payload !== "undefined") {
-    stdinText = JSON.stringify(options.payload);
-  }
   const env = typeof options.env === "object" && options.env !== null ? options.env : process.env;
   const homedir =
     typeof env.USERPROFILE === "string" && env.USERPROFILE !== "" ? env.USERPROFILE : os.homedir();
   const extraRuntime =
     typeof options.runtime === "object" && options.runtime !== null ? options.runtime : {};
+  const requestedRuntimeCwd = typeof options.cwd === "string" ? options.cwd : hooksRoot;
+  const payload =
+    typeof options.payload === "object" &&
+    options.payload !== null &&
+    !Array.isArray(options.payload)
+      ? options.payload
+      : null;
   const runtime = {
-    cwd: typeof options.cwd === "string" ? options.cwd : hooksRoot,
+    cwd: requestedRuntimeCwd,
     env,
     homedir,
     ...extraRuntime,
   };
+  const payloadCwd = payload !== null && typeof payload.cwd === "string" ? payload.cwd : "";
+  const isolatedProjectCwd =
+    hasEnvVaultPath(env) && (requestedRuntimeCwd === hooksRoot || payloadCwd === hooksRoot)
+      ? createTempDir("mm-cwd-")
+      : "";
+  const resolvedPayload =
+    payload !== null && payloadCwd !== ""
+      ? { ...payload, cwd: remapHooksRootCwd(payloadCwd, isolatedProjectCwd) }
+      : payload;
+  let stdinText = "";
+  if (typeof options.stdinText === "string") {
+    stdinText = options.stdinText;
+  } else if (resolvedPayload !== null) {
+    stdinText = JSON.stringify(resolvedPayload);
+  }
+  runtime.cwd = remapHooksRootCwd(runtime.cwd, isolatedProjectCwd);
+
+  materializeProjectDotEnvConfig(runtime.cwd, env, generatedEnvPaths);
+  const resolvedPayloadCwd =
+    resolvedPayload !== null && typeof resolvedPayload.cwd === "string" ? resolvedPayload.cwd : "";
+  if (resolvedPayloadCwd !== "" && resolvedPayloadCwd !== runtime.cwd) {
+    materializeProjectDotEnvConfig(resolvedPayloadCwd, env, generatedEnvPaths);
+  }
 
   return scriptName === "install-copilot-hooks.js" || scriptName === "uninstall-copilot-hooks.js"
     ? scriptModule.run(runtime)
@@ -230,6 +265,10 @@ const yesterday = () => {
 afterEach(() => {
   while (tempDirs.length > 0) {
     fs.rmSync(tempDirs.pop(), { recursive: true, force: true });
+  }
+
+  while (generatedEnvPaths.length > 0) {
+    fs.rmSync(generatedEnvPaths.pop(), { force: true });
   }
 });
 
@@ -417,7 +456,7 @@ describe("user-prompt-submit.js", () => {
     expect(dailyContent).toContain("source: plugin");
   });
 
-  it("uses custom subfolder from memory-mason.json when env vault path is set", () => {
+  it("uses project .env over memory-mason.json when both exist", () => {
     const cwd = createTempDir("memory-mason-cwd-");
     const homeDir = createTempDir("memory-mason-home-");
     const vaultPath = createTempDir("memory-mason-vault-");
@@ -430,7 +469,10 @@ describe("user-prompt-submit.js", () => {
     const result = runScript("user-prompt-submit.js", {
       payload: { hookEventName: "user-prompt-submit", cwd, prompt: "remember this" },
       cwd,
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, {
+        MEMORY_MASON_VAULT_PATH: vaultPath,
+        MEMORY_MASON_SUBFOLDER: "my-brain",
+      }),
     });
 
     expect(result.status).toBe(0);
@@ -463,7 +505,7 @@ describe("user-prompt-submit.js", () => {
 
     expect(result.status).toBe(0);
     expect(result.stderr).toContain(
-      "Memory Mason config not found. Checked MEMORY_MASON_VAULT_PATH, project .env, project memory-mason.json, ~/.memory-mason/.env, and ~/.memory-mason/config.json.",
+      "Memory Mason config not found. Checked project .env, project memory-mason.json, ~/.memory-mason/.env, and ~/.memory-mason/config.json.",
     );
   });
 
@@ -1769,17 +1811,19 @@ describe("session-start.js main", () => {
     });
     expect(exitCode).toBe(0);
     expect(errors.join("")).toContain(
-      "Memory Mason config not found. Checked MEMORY_MASON_VAULT_PATH, project .env, project memory-mason.json, ~/.memory-mason/.env, and ~/.memory-mason/config.json.",
+      "Memory Mason config not found. Checked project .env, project memory-mason.json, ~/.memory-mason/.env, and ~/.memory-mason/config.json.",
     );
   });
 
   it("uses io fallback functions when stdout/stderr not provided", () => {
     const homeDir = createTempDir("mm-home-");
     const vaultPath = createTempDir("mm-vault-");
+    const env = buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath });
     const payload = JSON.stringify({ cwd: homeDir });
     const buf = Buffer.from(payload);
     let rc = 0;
     let exitCode = null;
+    materializeProjectDotEnvConfig(homeDir, env, generatedEnvPaths);
     const result = sessionStart.main({
       io: {
         exit: (c) => {
@@ -1797,7 +1841,7 @@ describe("session-start.js main", () => {
         },
       },
       cwd: homeDir,
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env,
       homedir: homeDir,
     });
     expect(result.status).toBe(0);
@@ -1834,6 +1878,7 @@ describe("user-prompt-submit.js main", () => {
     const homeDir = createTempDir("mm-home-");
     const vaultPath = createTempDir("mm-vault-");
     const cwd = createTempDir("mm-cwd-");
+    const env = buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath });
     const payload = JSON.stringify({
       hook_event_name: "UserPromptSubmit",
       cwd,
@@ -1844,6 +1889,7 @@ describe("user-prompt-submit.js main", () => {
     const writes = [];
     const errors = [];
     let exitCode = null;
+    materializeProjectDotEnvConfig(cwd, env, generatedEnvPaths);
     userPromptSubmit.main({
       io: {
         stdout: (t) => writes.push(t),
@@ -1863,7 +1909,7 @@ describe("user-prompt-submit.js main", () => {
         },
       },
       cwd,
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env,
       homedir: homeDir,
     });
     expect(exitCode).toBe(0);
@@ -1905,16 +1951,18 @@ describe("user-prompt-submit.js main", () => {
     });
     expect(exitCode).toBe(0);
     expect(errors.join("")).toContain(
-      "Memory Mason config not found. Checked MEMORY_MASON_VAULT_PATH, project .env, project memory-mason.json, ~/.memory-mason/.env, and ~/.memory-mason/config.json.",
+      "Memory Mason config not found. Checked project .env, project memory-mason.json, ~/.memory-mason/.env, and ~/.memory-mason/config.json.",
     );
   });
 
   it("falls back to process stdout/stderr when io functions are missing", () => {
     const homeDir = createTempDir("mm-home-");
     const vaultPath = createTempDir("mm-vault-");
+    const env = buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath });
     const payload = JSON.stringify({ hook_event_name: "UserPromptSubmit", cwd: homeDir });
     const buf = Buffer.from(payload);
     let rc = 0;
+    materializeProjectDotEnvConfig(homeDir, env, generatedEnvPaths);
     const result = userPromptSubmit.main({
       io: { exit: () => {} },
       fs: {
@@ -1928,7 +1976,7 @@ describe("user-prompt-submit.js main", () => {
         },
       },
       cwd: homeDir,
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env,
       homedir: homeDir,
     });
     expect(result.status).toBe(0);
@@ -2065,6 +2113,7 @@ describe("post-tool-use.js main", () => {
   it("calls exit 0 after writing tool output", () => {
     const homeDir = createTempDir("mm-home-");
     const vaultPath = createTempDir("mm-vault-");
+    const env = buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath });
     const payload = JSON.stringify({
       hook_event_name: "PostToolUse",
       cwd: homeDir,
@@ -2076,6 +2125,7 @@ describe("post-tool-use.js main", () => {
     const writes = [];
     const errors = [];
     let exitCode = null;
+    materializeProjectDotEnvConfig(homeDir, env, generatedEnvPaths);
     postToolUse.main({
       io: {
         stdout: (t) => writes.push(t),
@@ -2095,7 +2145,7 @@ describe("post-tool-use.js main", () => {
         },
       },
       cwd: homeDir,
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env,
       homedir: homeDir,
     });
     expect(exitCode).toBe(0);
@@ -2138,7 +2188,7 @@ describe("post-tool-use.js main", () => {
     });
     expect(exitCode).toBe(0);
     expect(errors.join("")).toContain(
-      "Memory Mason config not found. Checked MEMORY_MASON_VAULT_PATH, project .env, project memory-mason.json, ~/.memory-mason/.env, and ~/.memory-mason/config.json.",
+      "Memory Mason config not found. Checked project .env, project memory-mason.json, ~/.memory-mason/.env, and ~/.memory-mason/config.json.",
     );
   });
 
@@ -2209,10 +2259,11 @@ describe("pre-compact.js main", () => {
   it("reads stdin via mock fs and calls exit", () => {
     const homeDir = createTempDir("mm-home-");
     const vaultPath = createTempDir("mm-vault-");
+    const env = buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath });
     const transcriptPath = path.join(createTempDir("mm-tr-"), "session.jsonl");
     writeText(transcriptPath, buildTranscript(6));
     const payload = JSON.stringify({
-      cwd: hooksRoot,
+      cwd: createTempDir("mm-cwd-"),
       transcript_path: transcriptPath,
       session_id: "session-main",
     });
@@ -2220,6 +2271,8 @@ describe("pre-compact.js main", () => {
     let rc = 0;
     const errors = [];
     let exitCode = null;
+    const projectCwd = JSON.parse(payload).cwd;
+    materializeProjectDotEnvConfig(projectCwd, env, generatedEnvPaths);
     preCompact.main({
       fs: {
         readSync(_fd, chunk) {
@@ -2231,8 +2284,8 @@ describe("pre-compact.js main", () => {
           return 0;
         },
       },
-      cwd: hooksRoot,
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      cwd: projectCwd,
+      env,
       homedir: homeDir,
       io: {
         stdout: () => {},
@@ -2371,15 +2424,18 @@ describe("session-end.js stop with empty session ID", () => {
   it("returns early", () => {
     const homeDir = createTempDir("mm-home-");
     const vaultPath = createTempDir("mm-vault-");
+    const projectCwd = createTempDir("mm-cwd-");
+    const env = buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath });
+    materializeProjectDotEnvConfig(projectCwd, env, generatedEnvPaths);
     const result = sessionEnd.run(
       JSON.stringify({
         hook_event_name: "Stop",
-        cwd: hooksRoot,
+        cwd: projectCwd,
         transcript_path: path.join(createTempDir("mm-tr-"), "x.jsonl"),
       }),
       {
-        cwd: hooksRoot,
-        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+        cwd: projectCwd,
+        env,
         homedir: homeDir,
       },
     );

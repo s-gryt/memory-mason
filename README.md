@@ -29,7 +29,10 @@ No API key needed. No cloud sync. Everything stays local in your Obsidian vault.
 
 Hooks capture prompts, tool results, and session transcripts into daily log files. This happens silently in the background — no manual steps required.
 
-Memory Mason's own commands (`/mmc`, `/mmq`, `/mml`, `/mms`, `/mma`) are automatically excluded from capture. This means you can compile, query, and manage your knowledge base at any time without those interactions appearing in your daily logs or producing duplicate entries.
+Memory Mason's own commands (`/mmc`, `/mmq`, `/mml`, `/mms`, `/mma`, `/mmsetup`) and
+namespaced `/memory-mason:*` forms are automatically excluded from capture. This means you can
+compile, query, and manage your knowledge base at any time without those interactions appearing in
+your daily logs or producing duplicate entries.
 
 Daily logs are stored in per-day folders and auto-split into files of up to 500KB each. This keeps Obsidian responsive and ensures each file stays within LLM processing limits. No data is lost — every conversation turn is preserved, and Obsidian indexes all chunks for full-text search. See [docs/README.md](docs/README.md) for technical details on chunked storage.
 
@@ -100,11 +103,21 @@ See [docs/README.md](docs/README.md) for marketplace installs, workspace-level i
 
 ## Configuration
 
-Run `/mmsetup` to configure your vault path interactively, or create a config file manually. Config can be set globally (`~/.memory-mason/`) or per-project (project root). When multiple sources exist, they resolve in priority order: `MEMORY_MASON_VAULT_PATH` env var → project `.env` → project `memory-mason.json` → global `.env` → `~/.memory-mason/config.json`. See [docs/README.md](docs/README.md) for details.
+Run `/mmsetup` to configure your vault path interactively, or create a config file manually.
+Config can be set globally (`~/.memory-mason/`) or per-project (project root). When multiple
+sources exist, vault path resolves in priority order: project `.env` → project `memory-mason.json`
+→ global `.env` → `~/.memory-mason/config.json`. Per-session `MEMORY_MASON_SYNC` and
+`MEMORY_MASON_CAPTURE_MODE` environment variables still override file config. See
+[docs/README.md](docs/README.md) for details.
 
 ### .env format
 
-`MEMORY_MASON_VAULT_PATH` sets the Obsidian vault location. `MEMORY_MASON_SUBFOLDER` sets the directory inside the vault. `MEMORY_MASON_SYNC` is optional — capture is enabled by default; set it to `false` to pause capture. `MEMORY_MASON_CAPTURE_MODE` is optional — set to `full` for detailed tool output, or leave unset for the default `lite` compact mode.
+`MEMORY_MASON_VAULT_PATH` sets the Obsidian vault location. `MEMORY_MASON_SUBFOLDER` sets the
+directory inside the vault. `MEMORY_MASON_SYNC` is optional — capture is enabled by default; set
+it to `false` to pause capture. `MEMORY_MASON_CAPTURE_MODE` is optional — set to `full` for
+detailed tool output, or leave unset for the default `lite` compact mode. Process environment
+variables `MEMORY_MASON_SYNC` and `MEMORY_MASON_CAPTURE_MODE` still override file config for a
+single session.
 
 ```env
 MEMORY_MASON_VAULT_PATH=/path/to/your/obsidian/vault

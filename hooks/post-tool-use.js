@@ -166,19 +166,13 @@ function readConfigSources(cwd, homedir) {
   };
 }
 
-function resolveRuntimeConfig(cwd, env, homedir) {
+function resolveRuntimeConfig(cwd, homedir) {
   const configSources = readConfigSources(cwd, homedir);
-  return resolveVaultConfig(
-    cwd,
-    toStringOrEmpty(env.MEMORY_MASON_VAULT_PATH),
-    configSources.configText,
-    homedir,
-    {
-      dotEnvText: configSources.dotEnvText,
-      globalConfigText: configSources.globalConfigText,
-      globalDotEnvText: configSources.globalDotEnvText,
-    },
-  );
+  return resolveVaultConfig(cwd, configSources.configText, homedir, {
+    dotEnvText: configSources.dotEnvText,
+    globalConfigText: configSources.globalConfigText,
+    globalDotEnvText: configSources.globalDotEnvText,
+  });
 }
 
 function buildCaptureTimestamp() {
@@ -238,7 +232,7 @@ function run(rawStdin, runtime = {}) {
 
   try {
     const plan = buildRunPlan(rawStdin, runtime);
-    const resolvedConfig = resolveRuntimeConfig(plan.cwd, plan.env, plan.homedir);
+    const resolvedConfig = resolveRuntimeConfig(plan.cwd, plan.homedir);
 
     if (resolvedConfig.sync === false) {
       return { status: 0, stdout: "", stderr: "" };
