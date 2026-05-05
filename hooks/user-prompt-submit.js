@@ -30,6 +30,7 @@ const {
   getMmSuppressed,
   setMmSuppressed,
 } = require("./lib/capture-state");
+const { UTF8_ENCODING } = require("./lib/constants");
 
 function resolvePromptPayload(rawStdin) {
   const input = parseJsonInput(rawStdin);
@@ -88,7 +89,7 @@ function shouldUpdateTranscriptState(transcriptPath, sessionId) {
 }
 
 function updateTranscriptState(resolvedConfig, transcriptPath, sessionId) {
-  const transcriptContent = fs.readFileSync(transcriptPath, "utf-8");
+  const transcriptContent = fs.readFileSync(transcriptPath, UTF8_ENCODING);
   const turns = parseJsonlTranscript(transcriptContent);
   const captureState = loadCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder);
   const updatedState = setTranscriptTurnCount(captureState, sessionId, turns.length);

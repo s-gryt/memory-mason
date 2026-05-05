@@ -34,7 +34,11 @@ const {
   CAPTURE_MODE_LITE,
   PRE_COMPACT_MIN_TURNS,
   DUPLICATE_CAPTURE_WINDOW_MS,
+  UTF8_ENCODING,
 } = require("./lib/constants");
+const { HOOK_EVENT_PRE_COMPACT_KEBAB } = require("./lib/hook-events");
+const { UNKNOWN_LABEL } = require("./lib/markdown-labels");
+const { ENV_KEY_INVOKED_BY } = require("./lib/config-keys");
 
 function firstNonEmptyString(values) {
   if (!Array.isArray(values)) {
@@ -44,7 +48,7 @@ function firstNonEmptyString(values) {
 }
 
 function shouldSkipForInvoker(env) {
-  return toStringOrEmpty(env.MEMORY_MASON_INVOKED_BY) !== "";
+  return toStringOrEmpty(env[ENV_KEY_INVOKED_BY]) !== "";
 }
 
 function shouldSkipMissingTranscript(transcriptPath) {
@@ -59,7 +63,7 @@ function resolveSessionId(input) {
   return firstNonEmptyString([
     toStringOrEmpty(input.session_id),
     toStringOrEmpty(input.sessionId),
-    "unknown",
+    UNKNOWN_LABEL,
   ]);
 }
 
@@ -129,7 +133,7 @@ function run(rawStdin, runtime = {}) {
       return buildSuccessResult();
     }
 
-    const transcriptContent = fs.readFileSync(transcriptPath, "utf-8");
+    const transcriptContent = fs.readFileSync(transcriptPath, UTF8_ENCODING);
     const fullTranscript = buildFullTranscript(transcriptContent, resolvedConfig.captureMode);
 
     if (shouldSkipShortTranscript(fullTranscript)) {
@@ -140,7 +144,7 @@ function run(rawStdin, runtime = {}) {
     const sessionId = resolveSessionId(input);
     const captureRecord = buildCaptureRecord(
       sessionId,
-      "pre-compact",
+      HOOK_EVENT_PRE_COMPACT_KEBAB,
       fullTranscript.markdown,
       Date.now(),
     );
@@ -149,7 +153,11 @@ function run(rawStdin, runtime = {}) {
       return buildSuccessResult();
     }
 
-    const sessionHeader = buildSessionHeader(sessionId, "pre-compact", captureTimestamp.iso);
+    const sessionHeader = buildSessionHeader(
+      sessionId,
+      HOOK_EVENT_PRE_COMPACT_KEBAB,
+      captureTimestamp.iso,
+    );
     persistCapture(
       resolvedConfig,
       captureTimestamp.today,

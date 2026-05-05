@@ -4,12 +4,33 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
+const { UTF8_ENCODING } = require("../lib/constants");
+const { ENV_KEY_VAULT_PATH, ENV_KEY_CAPTURE_MODE } = require("../lib/config-keys");
 const { buildDailyChunkPath } = require("../lib/vault");
 const { buildCommandErrorResult, formatErrorMessage, writeIfPresent } = require("../lib/cli");
 const { materializeProjectDotEnvConfig } = require("./helpers/project-dot-env");
+const {
+  TEST_MM_CWD_PREFIX,
+  TEST_MM_HOME_PREFIX,
+  TEST_MM_VAULT_PREFIX,
+  TEST_MM_TR_PREFIX,
+  TEST_DEFAULT_TRANSCRIPT_FILE,
+  TEST_CAPTURE_MODE_FULL: CAPTURE_MODE_FULL,
+  TEST_DEFAULT_SUBFOLDER: DEFAULT_SUBFOLDER,
+  TEST_HOOK_ENTRY_POST_TOOL_USE: HOOK_ENTRY_POST_TOOL_USE,
+  TEST_HOOK_EVENT_SESSION_END_SNAKE: HOOK_EVENT_SESSION_END_SNAKE,
+  TEST_HOOK_EVENT_USER_PROMPT_SUBMIT_KEBAB: HOOK_EVENT_USER_PROMPT_SUBMIT_KEBAB,
+  TEST_TRANSCRIPT_ROLE_USER: TRANSCRIPT_ROLE_USER,
+  TEST_TRANSCRIPT_ROLE_ASSISTANT: TRANSCRIPT_ROLE_ASSISTANT,
+} = require("./helpers/test-constants");
 
 const hooksRoot = path.resolve(__dirname, "..");
 const _repoRoot = path.resolve(hooksRoot, "..");
+const SESSION_START_ENTRYPOINT = "session-start.js";
+const USER_PROMPT_SUBMIT_ENTRYPOINT = "user-prompt-submit.js";
+const POST_TOOL_USE_ENTRYPOINT = "post-tool-use.js";
+const PRE_COMPACT_ENTRYPOINT = "pre-compact.js";
+const SESSION_END_ENTRYPOINT = "session-end.js";
 let tempDirs = [];
 const generatedEnvPaths = [];
 
@@ -21,7 +42,7 @@ const createTempDir = (prefix) => {
 
 const writeText = (filePath, content) => {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, content, "utf-8");
+  fs.writeFileSync(filePath, content, UTF8_ENCODING);
 };
 
 const buildEnv = (homeDir, overrides = {}) => ({
@@ -34,8 +55,8 @@ const buildEnv = (homeDir, overrides = {}) => ({
 const hasEnvVaultPath = (env) =>
   env !== null &&
   typeof env === "object" &&
-  typeof env.MEMORY_MASON_VAULT_PATH === "string" &&
-  env.MEMORY_MASON_VAULT_PATH !== "";
+  typeof env[ENV_KEY_VAULT_PATH] === "string" &&
+  env[ENV_KEY_VAULT_PATH] !== "";
 
 const remapHooksRootCwd = (targetCwd, isolatedProjectCwd) =>
   targetCwd === hooksRoot && isolatedProjectCwd !== "" ? isolatedProjectCwd : targetCwd;
@@ -49,7 +70,7 @@ const today = () => {
 const buildTranscript = (turnCount, firstUserContent = "user turn") =>
   Array.from({ length: turnCount }, (_, index) => {
     const isUser = index % 2 === 0;
-    const role = isUser ? "user" : "assistant";
+    const role = isUser ? TRANSCRIPT_ROLE_USER : TRANSCRIPT_ROLE_ASSISTANT;
     const content = isUser && index === 0 ? firstUserContent : `${role} turn ${index}`;
     return JSON.stringify({ message: { role, content } });
   }).join("\n");
@@ -76,7 +97,7 @@ const runCli = (scriptName, options = {}) => {
     parsedInput !== null && typeof parsedInput.cwd === "string" ? parsedInput.cwd : "";
   const isolatedProjectCwd =
     hasEnvVaultPath(env) && (requestedCwd === hooksRoot || inputCwd === hooksRoot)
-      ? createTempDir("mm-cwd-")
+      ? createTempDir(TEST_MM_CWD_PREFIX)
       : "";
   const cwd = remapHooksRootCwd(requestedCwd, isolatedProjectCwd);
   const resolvedInputText =
@@ -97,7 +118,7 @@ const runCli = (scriptName, options = {}) => {
       cwd,
       env,
       input: resolvedInputText,
-      encoding: "utf-8",
+      encoding: UTF8_ENCODING,
     },
   );
 };
@@ -141,27 +162,27 @@ describe("CLI direct execution", () => {
     expectedContent,
     envOverrides = {},
   ) => {
-    const homeDir = createTempDir("mm-home-");
-    const vaultPath = createTempDir("mm-vault-");
+    const homeDir = createTempDir(TEST_MM_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_MM_VAULT_PREFIX);
     const result = runCli(scriptName, {
       input: JSON.stringify(inputPayload),
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath, ...envOverrides }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath, ...envOverrides }),
     });
 
     expect(result.status).toBe(0);
     expect(
-      fs.readFileSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1), "utf-8"),
+      fs.readFileSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1), UTF8_ENCODING),
     ).toContain(expectedContent);
 
     return { homeDir, vaultPath, result };
   };
 
   it("executes session-start.js directly", () => {
-    const homeDir = createTempDir("mm-home-");
-    const vaultPath = createTempDir("mm-vault-");
-    const result = runCli("session-start.js", {
+    const homeDir = createTempDir(TEST_MM_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_MM_VAULT_PREFIX);
+    const result = runCli(SESSION_START_ENTRYPOINT, {
       input: JSON.stringify({ cwd: hooksRoot }),
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
     expect(result.status).toBe(0);
@@ -170,9 +191,9 @@ describe("CLI direct execution", () => {
 
   it("executes user-prompt-submit.js directly", () => {
     expectCliWritesDailyChunk(
-      "user-prompt-submit.js",
+      USER_PROMPT_SUBMIT_ENTRYPOINT,
       {
-        hookEventName: "user-prompt-submit",
+        hookEventName: HOOK_EVENT_USER_PROMPT_SUBMIT_KEBAB,
         cwd: hooksRoot,
         prompt: "cli prompt",
       },
@@ -182,24 +203,24 @@ describe("CLI direct execution", () => {
 
   it("executes post-tool-use.js directly", () => {
     expectCliWritesDailyChunk(
-      "post-tool-use.js",
+      POST_TOOL_USE_ENTRYPOINT,
       {
-        hook_event_name: "PostToolUse",
+        hook_event_name: HOOK_ENTRY_POST_TOOL_USE,
         cwd: hooksRoot,
         tool_name: "Write",
         tool_response: "cli tool output",
       },
       "cli tool output",
       {
-        MEMORY_MASON_CAPTURE_MODE: "full",
+        [ENV_KEY_CAPTURE_MODE]: CAPTURE_MODE_FULL,
       },
     );
   });
 
   it("executes pre-compact.js directly", () => {
-    const result = runCli("pre-compact.js", {
+    const result = runCli(PRE_COMPACT_ENTRYPOINT, {
       input: "{bad-json",
-      env: buildEnv(createTempDir("mm-home-")),
+      env: buildEnv(createTempDir(TEST_MM_HOME_PREFIX)),
     });
 
     expect(result.status).toBe(0);
@@ -207,14 +228,17 @@ describe("CLI direct execution", () => {
   });
 
   it("executes session-end.js directly", () => {
-    const transcriptPath = path.join(createTempDir("mm-tr-"), "session.jsonl");
+    const transcriptPath = path.join(
+      createTempDir(TEST_MM_TR_PREFIX),
+      TEST_DEFAULT_TRANSCRIPT_FILE,
+    );
 
     writeText(transcriptPath, buildTranscript(2));
 
     expectCliWritesDailyChunk(
-      "session-end.js",
+      SESSION_END_ENTRYPOINT,
       {
-        hook_event_name: "session_end",
+        hook_event_name: HOOK_EVENT_SESSION_END_SNAKE,
         cwd: hooksRoot,
         transcript_path: transcriptPath,
         session_id: "cli-session",
@@ -222,7 +246,7 @@ describe("CLI direct execution", () => {
       },
       "cli-session / stop",
       {
-        MEMORY_MASON_CAPTURE_MODE: "full",
+        [ENV_KEY_CAPTURE_MODE]: CAPTURE_MODE_FULL,
       },
     );
   });

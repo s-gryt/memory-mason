@@ -2,6 +2,17 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
+const {
+  CAPTURE_HASH_PREFIX_LENGTH,
+  DUPLICATE_CAPTURE_WINDOW_MS,
+  UTF8_ENCODING,
+} = require("../lib/constants");
+const {
+  TEST_DEFAULT_SESSION_ID,
+  TEST_DEFAULT_VAULT_PATH,
+  TEST_DEFAULT_SUBFOLDER: DEFAULT_SUBFOLDER,
+  TEST_HOOK_EVENT_PRE_COMPACT_KEBAB: HOOK_EVENT_PRE_COMPACT_KEBAB,
+} = require("./helpers/test-constants");
 const { createTempVaultFixture } = require("./helpers/fs-mock");
 const {
   defaultCaptureState,
@@ -18,6 +29,18 @@ const {
 
 const { createTempVaultPath, cleanupTempVaultPaths } =
   createTempVaultFixture("capture-state-test-");
+
+const TEST_NON_STRING_VALUE = 123;
+const TIMESTAMP_BASE_MS = 1714230000000;
+const TIMESTAMP_WITHIN_WINDOW_MS = 1714230005000;
+const TIMESTAMP_OUTSIDE_WINDOW_MS = 1714230065001;
+const TRANSCRIPT_COUNT_TWO = 2;
+const TRANSCRIPT_COUNT_THREE = 3;
+const TRANSCRIPT_COUNT_FOUR = 4;
+const TRANSCRIPT_COUNT_FIVE = 5;
+const TRANSCRIPT_COUNT_SIX = 6;
+const INVALID_NEGATIVE_COUNT = -1;
+const INVALID_FRACTIONAL_COUNT = 1.5;
 
 afterEach(() => {
   cleanupTempVaultPaths();
@@ -42,77 +65,82 @@ describe("defaultCaptureState", () => {
 describe("capture state file I/O", () => {
   it("returns default state when capture state file does not exist", () => {
     const vaultPath = createTempVaultPath();
-    expect(loadCaptureState(vaultPath, "ai-knowledge")).toEqual(defaultCaptureState());
+    expect(loadCaptureState(vaultPath, DEFAULT_SUBFOLDER)).toEqual(defaultCaptureState());
   });
 
   it("saves and loads capture state", () => {
     const vaultPath = createTempVaultPath();
     const state = {
-      lastCapture: buildCaptureRecord("session-1", "pre-compact", "hello", 1714230000000),
+      lastCapture: buildCaptureRecord(
+        TEST_DEFAULT_SESSION_ID,
+        HOOK_EVENT_PRE_COMPACT_KEBAB,
+        "hello",
+        TIMESTAMP_BASE_MS,
+      ),
       mmSuppressed: false,
     };
 
-    saveCaptureState(vaultPath, "ai-knowledge", state);
+    saveCaptureState(vaultPath, DEFAULT_SUBFOLDER, state);
 
-    expect(loadCaptureState(vaultPath, "ai-knowledge")).toEqual(state);
+    expect(loadCaptureState(vaultPath, DEFAULT_SUBFOLDER)).toEqual(state);
   });
 
   it("returns default state when capture state file contains invalid JSON", () => {
     const vaultPath = createTempVaultPath();
-    const statePath = resolveCaptureStatePath(vaultPath, "ai-knowledge");
+    const statePath = resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER);
     fs.mkdirSync(path.dirname(statePath), { recursive: true });
-    fs.writeFileSync(statePath, "{invalid-json", "utf-8");
+    fs.writeFileSync(statePath, "{invalid-json", UTF8_ENCODING);
 
-    expect(loadCaptureState(vaultPath, "ai-knowledge")).toEqual(defaultCaptureState());
+    expect(loadCaptureState(vaultPath, DEFAULT_SUBFOLDER)).toEqual(defaultCaptureState());
   });
 
   it("returns default state when capture state JSON is an array", () => {
     const vaultPath = createTempVaultPath();
-    const statePath = resolveCaptureStatePath(vaultPath, "ai-knowledge");
+    const statePath = resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER);
     fs.mkdirSync(path.dirname(statePath), { recursive: true });
-    fs.writeFileSync(statePath, "[]", "utf-8");
+    fs.writeFileSync(statePath, "[]", UTF8_ENCODING);
 
-    expect(loadCaptureState(vaultPath, "ai-knowledge")).toEqual(defaultCaptureState());
+    expect(loadCaptureState(vaultPath, DEFAULT_SUBFOLDER)).toEqual(defaultCaptureState());
   });
 
   it("sanitizes invalid lastCapture records when loading state", () => {
     const vaultPath = createTempVaultPath();
-    const statePath = resolveCaptureStatePath(vaultPath, "ai-knowledge");
+    const statePath = resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER);
     fs.mkdirSync(path.dirname(statePath), { recursive: true });
     fs.writeFileSync(
       statePath,
       JSON.stringify({
         lastCapture: {
-          sessionId: "session-1",
+          sessionId: TEST_DEFAULT_SESSION_ID,
           source: "",
           contentHash: "abc",
-          timestampMs: 1714230000000,
+          timestampMs: TIMESTAMP_BASE_MS,
         },
       }),
-      "utf-8",
+      UTF8_ENCODING,
     );
 
-    expect(loadCaptureState(vaultPath, "ai-knowledge")).toEqual(defaultCaptureState());
+    expect(loadCaptureState(vaultPath, DEFAULT_SUBFOLDER)).toEqual(defaultCaptureState());
   });
 
   it("throws when saveCaptureState receives non-object state", () => {
-    expect(() => saveCaptureState("/vault", "ai-knowledge", null)).toThrow(
+    expect(() => saveCaptureState(TEST_DEFAULT_VAULT_PATH, DEFAULT_SUBFOLDER, null)).toThrow(
       "state must be an object",
     );
   });
 
   it("rethrows non-SyntaxError parsing failures", () => {
     const vaultPath = createTempVaultPath();
-    const statePath = resolveCaptureStatePath(vaultPath, "ai-knowledge");
+    const statePath = resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER);
     const originalParse = JSON.parse;
     fs.mkdirSync(path.dirname(statePath), { recursive: true });
-    fs.writeFileSync(statePath, '{"lastCapture":null}', "utf-8");
+    fs.writeFileSync(statePath, '{"lastCapture":null}', UTF8_ENCODING);
     JSON.parse = () => {
       throw new TypeError("parse failed");
     };
 
     try {
-      expect(() => loadCaptureState(vaultPath, "ai-knowledge")).toThrow("parse failed");
+      expect(() => loadCaptureState(vaultPath, DEFAULT_SUBFOLDER)).toThrow("parse failed");
     } finally {
       JSON.parse = originalParse;
     }
@@ -121,94 +149,110 @@ describe("capture state file I/O", () => {
 
 describe("buildCaptureRecord", () => {
   it("builds hashed capture record metadata", () => {
-    const record = buildCaptureRecord("session-1", "pre-compact", "hello", 1714230000000);
+    const record = buildCaptureRecord(
+      TEST_DEFAULT_SESSION_ID,
+      HOOK_EVENT_PRE_COMPACT_KEBAB,
+      "hello",
+      TIMESTAMP_BASE_MS,
+    );
 
-    expect(record.sessionId).toBe("session-1");
-    expect(record.source).toBe("pre-compact");
-    expect(record.contentHash).toHaveLength(16);
-    expect(record.timestampMs).toBe(1714230000000);
+    expect(record.sessionId).toBe(TEST_DEFAULT_SESSION_ID);
+    expect(record.source).toBe(HOOK_EVENT_PRE_COMPACT_KEBAB);
+    expect(record.contentHash).toHaveLength(CAPTURE_HASH_PREFIX_LENGTH);
+    expect(record.timestampMs).toBe(TIMESTAMP_BASE_MS);
   });
 
   it("throws when timestamp is not a positive integer", () => {
-    expect(() => buildCaptureRecord("session-1", "pre-compact", "hello", 0)).toThrow(
-      "timestampMs must be a positive integer",
-    );
+    expect(() =>
+      buildCaptureRecord(TEST_DEFAULT_SESSION_ID, HOOK_EVENT_PRE_COMPACT_KEBAB, "hello", 0),
+    ).toThrow("timestampMs must be a positive integer");
   });
 
   it("throws when content is not a string", () => {
-    expect(() => buildCaptureRecord("session-1", "pre-compact", null, 1714230000000)).toThrow(
-      "content must be a string",
-    );
+    expect(() =>
+      buildCaptureRecord(
+        TEST_DEFAULT_SESSION_ID,
+        HOOK_EVENT_PRE_COMPACT_KEBAB,
+        null,
+        TIMESTAMP_BASE_MS,
+      ),
+    ).toThrow("content must be a string");
   });
 });
 
 describe("isDuplicateCapture", () => {
   it("returns true for same session and same content hash within 60 seconds", () => {
     const firstCapture = buildCaptureRecord(
-      "session-1",
-      "pre-compact",
+      TEST_DEFAULT_SESSION_ID,
+      HOOK_EVENT_PRE_COMPACT_KEBAB,
       "same content",
-      1714230000000,
+      TIMESTAMP_BASE_MS,
     );
     const secondCapture = buildCaptureRecord(
-      "session-1",
+      TEST_DEFAULT_SESSION_ID,
       "session-end",
       "same content",
-      1714230005000,
+      TIMESTAMP_WITHIN_WINDOW_MS,
     );
 
-    expect(isDuplicateCapture(firstCapture, secondCapture, 60000)).toBe(true);
+    expect(isDuplicateCapture(firstCapture, secondCapture, DUPLICATE_CAPTURE_WINDOW_MS)).toBe(true);
   });
 
   it("returns false when content differs", () => {
     const firstCapture = buildCaptureRecord(
-      "session-1",
-      "pre-compact",
+      TEST_DEFAULT_SESSION_ID,
+      HOOK_EVENT_PRE_COMPACT_KEBAB,
       "first content",
-      1714230000000,
+      TIMESTAMP_BASE_MS,
     );
     const secondCapture = buildCaptureRecord(
-      "session-1",
+      TEST_DEFAULT_SESSION_ID,
       "session-end",
       "second content",
-      1714230005000,
+      TIMESTAMP_WITHIN_WINDOW_MS,
     );
 
-    expect(isDuplicateCapture(firstCapture, secondCapture, 60000)).toBe(false);
+    expect(isDuplicateCapture(firstCapture, secondCapture, DUPLICATE_CAPTURE_WINDOW_MS)).toBe(
+      false,
+    );
   });
 
   it("returns false when time window is exceeded", () => {
     const firstCapture = buildCaptureRecord(
-      "session-1",
-      "pre-compact",
+      TEST_DEFAULT_SESSION_ID,
+      HOOK_EVENT_PRE_COMPACT_KEBAB,
       "same content",
-      1714230000000,
+      TIMESTAMP_BASE_MS,
     );
     const secondCapture = buildCaptureRecord(
-      "session-1",
+      TEST_DEFAULT_SESSION_ID,
       "session-end",
       "same content",
-      1714230065001,
+      TIMESTAMP_OUTSIDE_WINDOW_MS,
     );
 
-    expect(isDuplicateCapture(firstCapture, secondCapture, 60000)).toBe(false);
+    expect(isDuplicateCapture(firstCapture, secondCapture, DUPLICATE_CAPTURE_WINDOW_MS)).toBe(
+      false,
+    );
   });
 
   it("returns false when session differs", () => {
     const firstCapture = buildCaptureRecord(
-      "session-1",
-      "pre-compact",
+      TEST_DEFAULT_SESSION_ID,
+      HOOK_EVENT_PRE_COMPACT_KEBAB,
       "same content",
-      1714230000000,
+      TIMESTAMP_BASE_MS,
     );
     const secondCapture = buildCaptureRecord(
       "session-2",
       "session-end",
       "same content",
-      1714230005000,
+      TIMESTAMP_WITHIN_WINDOW_MS,
     );
 
-    expect(isDuplicateCapture(firstCapture, secondCapture, 60000)).toBe(false);
+    expect(isDuplicateCapture(firstCapture, secondCapture, DUPLICATE_CAPTURE_WINDOW_MS)).toBe(
+      false,
+    );
   });
 
   it("returns false when previous capture is invalid", () => {
@@ -216,14 +260,16 @@ describe("isDuplicateCapture", () => {
       "session-2",
       "session-end",
       "same content",
-      1714230005000,
+      TIMESTAMP_WITHIN_WINDOW_MS,
     );
 
-    expect(isDuplicateCapture({ bad: true }, secondCapture, 60000)).toBe(false);
+    expect(isDuplicateCapture({ bad: true }, secondCapture, DUPLICATE_CAPTURE_WINDOW_MS)).toBe(
+      false,
+    );
   });
 
   it("throws when next capture is invalid", () => {
-    expect(() => isDuplicateCapture(null, null, 60000)).toThrow(
+    expect(() => isDuplicateCapture(null, null, DUPLICATE_CAPTURE_WINDOW_MS)).toThrow(
       "nextCapture must be a valid capture record",
     );
   });
@@ -236,61 +282,75 @@ describe("capture-state.js helpers", () => {
   });
 
   it("getTranscriptTurnCount returns stored count", () => {
-    const state = { lastCapture: null, transcriptTurnCounts: { "session-1": 5 } };
-    expect(getTranscriptTurnCount(state, "session-1")).toBe(5);
+    const state = {
+      lastCapture: null,
+      transcriptTurnCounts: { [TEST_DEFAULT_SESSION_ID]: TRANSCRIPT_COUNT_FIVE },
+    };
+    expect(getTranscriptTurnCount(state, TEST_DEFAULT_SESSION_ID)).toBe(TRANSCRIPT_COUNT_FIVE);
   });
 
   it("getTranscriptTurnCount returns 0 for invalid/empty sessionId", () => {
     const state = defaultCaptureState();
     expect(getTranscriptTurnCount(state, "")).toBe(0);
-    expect(getTranscriptTurnCount(null, "session-1")).toBe(0);
+    expect(getTranscriptTurnCount(null, TEST_DEFAULT_SESSION_ID)).toBe(0);
   });
 
   it("setTranscriptTurnCount stores count for sessionId", () => {
     const state = defaultCaptureState();
-    const next = setTranscriptTurnCount(state, "session-1", 4);
-    expect(next.transcriptTurnCounts["session-1"]).toBe(4);
+    const next = setTranscriptTurnCount(state, TEST_DEFAULT_SESSION_ID, TRANSCRIPT_COUNT_FOUR);
+    expect(next.transcriptTurnCounts[TEST_DEFAULT_SESSION_ID]).toBe(TRANSCRIPT_COUNT_FOUR);
     expect(next.lastCapture).toBe(null);
   });
 
   it("setTranscriptTurnCount preserves other session counts", () => {
-    const state = { lastCapture: null, transcriptTurnCounts: { "session-1": 2 } };
-    const next = setTranscriptTurnCount(state, "session-2", 6);
-    expect(next.transcriptTurnCounts["session-1"]).toBe(2);
-    expect(next.transcriptTurnCounts["session-2"]).toBe(6);
+    const state = {
+      lastCapture: null,
+      transcriptTurnCounts: { [TEST_DEFAULT_SESSION_ID]: TRANSCRIPT_COUNT_TWO },
+    };
+    const next = setTranscriptTurnCount(state, "session-2", TRANSCRIPT_COUNT_SIX);
+    expect(next.transcriptTurnCounts[TEST_DEFAULT_SESSION_ID]).toBe(TRANSCRIPT_COUNT_TWO);
+    expect(next.transcriptTurnCounts["session-2"]).toBe(TRANSCRIPT_COUNT_SIX);
   });
 
   it("setTranscriptTurnCount throws on empty sessionId", () => {
     expect(() => setTranscriptTurnCount(defaultCaptureState(), "", 1)).toThrow(
       "sessionId must be a non-empty string",
     );
-    expect(() => setTranscriptTurnCount(defaultCaptureState(), 123, 1)).toThrow(
+    expect(() => setTranscriptTurnCount(defaultCaptureState(), TEST_NON_STRING_VALUE, 1)).toThrow(
       "sessionId must be a non-empty string",
     );
   });
 
   it("setTranscriptTurnCount throws on invalid count", () => {
-    expect(() => setTranscriptTurnCount(defaultCaptureState(), "session-1", -1)).toThrow(
-      "count must be a non-negative integer",
-    );
-    expect(() => setTranscriptTurnCount(defaultCaptureState(), "session-1", 1.5)).toThrow(
-      "count must be a non-negative integer",
-    );
+    expect(() =>
+      setTranscriptTurnCount(
+        defaultCaptureState(),
+        TEST_DEFAULT_SESSION_ID,
+        INVALID_NEGATIVE_COUNT,
+      ),
+    ).toThrow("count must be a non-negative integer");
+    expect(() =>
+      setTranscriptTurnCount(
+        defaultCaptureState(),
+        TEST_DEFAULT_SESSION_ID,
+        INVALID_FRACTIONAL_COUNT,
+      ),
+    ).toThrow("count must be a non-negative integer");
   });
 
   it("setTranscriptTurnCount falls back to default state for non-object state", () => {
-    expect(setTranscriptTurnCount(null, "session-1", 2)).toEqual({
+    expect(setTranscriptTurnCount(null, TEST_DEFAULT_SESSION_ID, TRANSCRIPT_COUNT_TWO)).toEqual({
       lastCapture: null,
       mmSuppressed: false,
       transcriptTurnCounts: {
-        "session-1": 2,
+        [TEST_DEFAULT_SESSION_ID]: TRANSCRIPT_COUNT_TWO,
       },
     });
   });
 
   it("loadCaptureState sanitizes transcriptTurnCounts and keeps only non-negative integers", () => {
     const vaultPath = createTempVaultPath();
-    const statePath = resolveCaptureStatePath(vaultPath, "ai-knowledge");
+    const statePath = resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER);
 
     fs.mkdirSync(path.dirname(statePath), { recursive: true });
 
@@ -299,20 +359,20 @@ describe("capture-state.js helpers", () => {
       JSON.stringify({
         lastCapture: null,
         transcriptTurnCounts: {
-          "session-1": 3,
-          "session-2": -1,
-          "session-3": 1.5,
+          [TEST_DEFAULT_SESSION_ID]: TRANSCRIPT_COUNT_THREE,
+          "session-2": INVALID_NEGATIVE_COUNT,
+          "session-3": INVALID_FRACTIONAL_COUNT,
           "session-4": "4",
         },
       }),
-      "utf-8",
+      UTF8_ENCODING,
     );
 
-    expect(loadCaptureState(vaultPath, "ai-knowledge")).toEqual({
+    expect(loadCaptureState(vaultPath, DEFAULT_SUBFOLDER)).toEqual({
       lastCapture: null,
       mmSuppressed: false,
       transcriptTurnCounts: {
-        "session-1": 3,
+        [TEST_DEFAULT_SESSION_ID]: TRANSCRIPT_COUNT_THREE,
       },
     });
   });
@@ -363,10 +423,15 @@ describe("setMmSuppressed", () => {
 
   it("preserves other state fields", () => {
     const state = {
-      lastCapture: buildCaptureRecord("session-1", "pre-compact", "hello", 1714230000000),
+      lastCapture: buildCaptureRecord(
+        TEST_DEFAULT_SESSION_ID,
+        HOOK_EVENT_PRE_COMPACT_KEBAB,
+        "hello",
+        TIMESTAMP_BASE_MS,
+      ),
       mmSuppressed: false,
       transcriptTurnCounts: {
-        "session-1": 3,
+        [TEST_DEFAULT_SESSION_ID]: TRANSCRIPT_COUNT_THREE,
       },
     };
     const next = setMmSuppressed(state, true);
@@ -391,7 +456,7 @@ describe("setMmSuppressed", () => {
 describe("mergeWithDefaults - mmSuppressed", () => {
   it("preserves true when state.mmSuppressed is true", () => {
     const vaultPath = createTempVaultPath();
-    const statePath = resolveCaptureStatePath(vaultPath, "ai-knowledge");
+    const statePath = resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER);
 
     fs.mkdirSync(path.dirname(statePath), { recursive: true });
     fs.writeFileSync(
@@ -400,10 +465,10 @@ describe("mergeWithDefaults - mmSuppressed", () => {
         lastCapture: null,
         mmSuppressed: true,
       }),
-      "utf-8",
+      UTF8_ENCODING,
     );
 
-    expect(loadCaptureState(vaultPath, "ai-knowledge")).toEqual({
+    expect(loadCaptureState(vaultPath, DEFAULT_SUBFOLDER)).toEqual({
       lastCapture: null,
       mmSuppressed: true,
     });
@@ -411,7 +476,7 @@ describe("mergeWithDefaults - mmSuppressed", () => {
 
   it("preserves false when state.mmSuppressed is false", () => {
     const vaultPath = createTempVaultPath();
-    const statePath = resolveCaptureStatePath(vaultPath, "ai-knowledge");
+    const statePath = resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER);
 
     fs.mkdirSync(path.dirname(statePath), { recursive: true });
     fs.writeFileSync(
@@ -420,10 +485,10 @@ describe("mergeWithDefaults - mmSuppressed", () => {
         lastCapture: null,
         mmSuppressed: false,
       }),
-      "utf-8",
+      UTF8_ENCODING,
     );
 
-    expect(loadCaptureState(vaultPath, "ai-knowledge")).toEqual({
+    expect(loadCaptureState(vaultPath, DEFAULT_SUBFOLDER)).toEqual({
       lastCapture: null,
       mmSuppressed: false,
     });
@@ -431,7 +496,7 @@ describe("mergeWithDefaults - mmSuppressed", () => {
 
   it("defaults to false when mmSuppressed is missing", () => {
     const vaultPath = createTempVaultPath();
-    const statePath = resolveCaptureStatePath(vaultPath, "ai-knowledge");
+    const statePath = resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER);
 
     fs.mkdirSync(path.dirname(statePath), { recursive: true });
     fs.writeFileSync(
@@ -439,10 +504,10 @@ describe("mergeWithDefaults - mmSuppressed", () => {
       JSON.stringify({
         lastCapture: null,
       }),
-      "utf-8",
+      UTF8_ENCODING,
     );
 
-    expect(loadCaptureState(vaultPath, "ai-knowledge")).toEqual({
+    expect(loadCaptureState(vaultPath, DEFAULT_SUBFOLDER)).toEqual({
       lastCapture: null,
       mmSuppressed: false,
     });
@@ -450,7 +515,7 @@ describe("mergeWithDefaults - mmSuppressed", () => {
 
   it("defaults to false when mmSuppressed is not boolean", () => {
     const vaultPath = createTempVaultPath();
-    const statePath = resolveCaptureStatePath(vaultPath, "ai-knowledge");
+    const statePath = resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER);
 
     fs.mkdirSync(path.dirname(statePath), { recursive: true });
     fs.writeFileSync(
@@ -459,10 +524,10 @@ describe("mergeWithDefaults - mmSuppressed", () => {
         lastCapture: null,
         mmSuppressed: "true",
       }),
-      "utf-8",
+      UTF8_ENCODING,
     );
 
-    expect(loadCaptureState(vaultPath, "ai-knowledge")).toEqual({
+    expect(loadCaptureState(vaultPath, DEFAULT_SUBFOLDER)).toEqual({
       lastCapture: null,
       mmSuppressed: false,
     });

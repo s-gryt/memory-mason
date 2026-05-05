@@ -38,18 +38,6 @@
       }
     }
   },
-  "overrides": [
-    {
-      "includes": ["**/__tests__/**", "**/*.test.js"],
-      "linter": {
-        "rules": {
-          "style": {
-            "noMagicNumbers": "off"
-          }
-        }
-      }
-    }
-  ],
   "javascript": {
     "formatter": {
       "quoteStyle": "double",

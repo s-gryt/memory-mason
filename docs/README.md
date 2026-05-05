@@ -123,7 +123,7 @@ To exclude entire sessions from capture, set `sync` to `false` in your config fi
 
 ### Compile
 
-Run `/mmc` to compile daily logs into structured knowledge articles. The host LLM reads raw logs and produces concept pages and Q&A entries in `concepts/`, plus MOC-driven linking through `atlas/` pages and `[[wikilinks]]` for Obsidian graph navigation. Compilation also generates session bootstrap context at `_meta/context.md`, updates `_meta/manifest.json` for source-to-page lineage tracking, and writes compile state at `_meta/state.json`.
+Run `/mmc` to compile daily logs into structured knowledge articles. The host LLM reads raw logs and produces atomic concept pages in `concepts/`, cross-session synthesis pages in `synthesis/`, and MOC navigation pages in `atlas/` — all interlinked with `[[wikilinks]]` for Obsidian graph navigation. Compilation also generates session bootstrap context at `_meta/context.md`, updates `_meta/manifest.json` for source-to-page lineage tracking, and writes compile state at `_meta/state.json`.
 
 For large daily logs (over 50KB), `/mmc` splits the content into chunks and compiles them incrementally with per-chunk checkpoints in `_meta/state.json`. Already-compiled chunks are skipped on re-runs.
 
@@ -132,7 +132,7 @@ _raw/YYYY-MM-DD/ ──> /mmc ──> concepts/
                              atlas/
                              synthesis/
                              index.md
-                             _meta/context.md     (session bootstrap cache)
+                             _meta/context.md     (session bootstrap context)
                              _meta/manifest.json  (source-to-page lineage)
 ```
 
@@ -158,7 +158,7 @@ Run `/mmq` with a question. Memory Mason checks `_meta/context.md` first for rec
 │   ├── state.json
 │   ├── manifest.json
 │   ├── log.md
-│   ├── context.md           # LLM session bootstrap (replaces hot.md)
+│   ├── context.md           # LLM session bootstrap context
 │   ├── taxonomy.md
 │   └── folds/               # Archived log folds
 ├── atlas/                   # MOCs — graph visible

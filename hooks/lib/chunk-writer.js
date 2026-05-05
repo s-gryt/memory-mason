@@ -5,7 +5,9 @@ const {
   DEFAULT_DAILY_CHUNK_CAP_BYTES,
   MAX_DAILY_CHUNK_COUNT,
   CHUNK_ID_WIDTH,
+  UTF8_ENCODING,
 } = require("./constants");
+const { DAILY_META_FILE_NAME } = require("./vault-paths");
 const {
   assertNonEmptyString,
   assertNonNegativeInteger,
@@ -84,10 +86,10 @@ const validateMeta = (meta) => {
 
 const loadMeta = (folderPath, fsApi = require("node:fs")) => {
   const safeFolderPath = assertNonEmptyString("folderPath", folderPath);
-  const metaPath = path.join(safeFolderPath, "meta.json");
+  const metaPath = path.join(safeFolderPath, DAILY_META_FILE_NAME);
   const rawMeta = (() => {
     try {
-      return fsApi.readFileSync(metaPath, "utf-8");
+      return fsApi.readFileSync(metaPath, UTF8_ENCODING);
     } catch (error) {
       if (error !== null && typeof error === "object" && error.code === "ENOENT") {
         return null;
@@ -123,9 +125,9 @@ const saveMeta = (folderPath, meta, fsApi = require("node:fs")) => {
   const safeMeta = validateMeta(meta);
   fsApi.mkdirSync(safeFolderPath, { recursive: true });
   fsApi.writeFileSync(
-    path.join(safeFolderPath, "meta.json"),
+    path.join(safeFolderPath, DAILY_META_FILE_NAME),
     JSON.stringify(safeMeta, null, 2),
-    "utf-8",
+    UTF8_ENCODING,
   );
 };
 
@@ -224,7 +226,7 @@ const appendToChunked = (vaultPath, subfolder, today, content, options = {}) => 
   }
 
   const currentChunk = getCurrentChunk(meta);
-  const contentByteLength = Buffer.byteLength(content, "utf-8");
+  const contentByteLength = Buffer.byteLength(content, UTF8_ENCODING);
   const rotate = needsNewChunk(currentChunk, contentByteLength, safeCapBytes);
 
   const nextMeta = (() => {
@@ -238,9 +240,9 @@ const appendToChunked = (vaultPath, subfolder, today, content, options = {}) => 
 
       const chunkHeader = buildChunkHeader(safeToday, chunkNum);
       const chunkText = chunkHeader + content;
-      const chunkSizeBytes = Buffer.byteLength(chunkText, "utf-8");
+      const chunkSizeBytes = Buffer.byteLength(chunkText, UTF8_ENCODING);
 
-      safeFsApi.writeFileSync(chunkPath, chunkText, "utf-8");
+      safeFsApi.writeFileSync(chunkPath, chunkText, UTF8_ENCODING);
 
       const newChunk = buildChunkEntry(chunkNum, chunkSizeBytes);
       return {
@@ -259,7 +261,7 @@ const appendToChunked = (vaultPath, subfolder, today, content, options = {}) => 
       throw new Error(`current chunk path is not a file: ${chunkPath}`);
     }
 
-    safeFsApi.appendFileSync(chunkPath, content, "utf-8");
+    safeFsApi.appendFileSync(chunkPath, content, UTF8_ENCODING);
 
     const updatedChunk = {
       ...currentChunk,
@@ -274,7 +276,7 @@ const appendToChunked = (vaultPath, subfolder, today, content, options = {}) => 
   saveMeta(folderPath, nextMeta, safeFsApi);
 
   const indexContent = buildChunkIndexContent(safeToday, nextMeta.chunks.length);
-  safeFsApi.writeFileSync(indexPath, indexContent, "utf-8");
+  safeFsApi.writeFileSync(indexPath, indexContent, UTF8_ENCODING);
 
   return undefined;
 };

@@ -1,20 +1,27 @@
 "use strict";
 
+const WINDOWS_CMD = "cmd.exe";
+const WIN_CMD_FLAG_D = "/d";
+const WIN_CMD_FLAG_S = "/s";
+const WIN_CMD_FLAG_C = "/c";
+const OBSIDIAN_BIN = "obsidian";
+
 const fs = require("node:fs");
 const { buildDailyFolderPath, buildDailyFilePath } = require("./vault");
 const { appendToChunked } = require("./chunk-writer");
-const { OBSIDIAN_CLI_TIMEOUT_MS } = require("./constants");
+const { OBSIDIAN_CLI_TIMEOUT_MS, UTF8_ENCODING } = require("./constants");
+const { PLATFORM_WIN32 } = require("./platforms");
 const { assertNonEmptyString, assertString } = require("./assert");
 
 const resolveObsidianCommand = (args, platform) =>
-  platform === "win32"
+  platform === PLATFORM_WIN32
     ? {
-        command: "cmd.exe",
-        args: ["/d", "/s", "/c", "obsidian"].concat(args),
+        command: WINDOWS_CMD,
+        args: [WIN_CMD_FLAG_D, WIN_CMD_FLAG_S, WIN_CMD_FLAG_C, OBSIDIAN_BIN].concat(args),
         options: { windowsHide: true },
       }
     : {
-        command: "obsidian",
+        command: OBSIDIAN_BIN,
         args,
         options: {},
       };
@@ -31,7 +38,7 @@ const tryObsidianCli = (args, options) => {
     command.command,
     command.args,
     Object.assign(
-      { encoding: "utf-8", timeout: OBSIDIAN_CLI_TIMEOUT_MS },
+      { encoding: UTF8_ENCODING, timeout: OBSIDIAN_CLI_TIMEOUT_MS },
       command.options,
       spawnOptions,
     ),
@@ -54,7 +61,7 @@ const appendToDaily = (vaultPath, subfolder, today, content) => {
   }
 
   if (fs.existsSync(flatPath)) {
-    fs.appendFileSync(flatPath, safeContent, "utf-8");
+    fs.appendFileSync(flatPath, safeContent, UTF8_ENCODING);
     return;
   }
 

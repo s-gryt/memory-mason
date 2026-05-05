@@ -8,16 +8,26 @@ const {
   extractPromptText,
   extractPromptEntry,
 } = require("../lib/prompt");
+const {
+  TEST_HOOK_ENTRY_USER_PROMPT: HOOK_ENTRY_USER_PROMPT,
+  TEST_HOOK_ENTRY_USER_PROMPT_EXPANSION: HOOK_ENTRY_USER_PROMPT_EXPANSION,
+  TEST_HOOK_ENTRY_USER_PROMPT_SUBMIT: HOOK_ENTRY_USER_PROMPT_SUBMIT,
+  TEST_HOOK_EVENT_USER_PROMPT_SUBMIT_KEBAB: HOOK_EVENT_USER_PROMPT_SUBMIT_KEBAB,
+  TEST_PLATFORM_CLAUDE_CODE: PLATFORM_CLAUDE_CODE,
+  TEST_PLATFORM_CODEX: PLATFORM_CODEX,
+  TEST_PLATFORM_COPILOT_CLI: PLATFORM_COPILOT_CLI,
+  TEST_PLATFORM_COPILOT_VSCODE: PLATFORM_COPILOT_VSCODE,
+} = require("./helpers/test-constants");
 
 const MM_COMMAND_NAMES = ["mma", "mmc", "mml", "mms", "mmq", "mmsetup"];
 
 describe("prompt helpers", () => {
   it("extracts hook event name from known fields", () => {
-    expect(extractHookEventName({ hook_event_name: "UserPromptExpansion" })).toBe(
-      "UserPromptExpansion",
+    expect(extractHookEventName({ hook_event_name: HOOK_ENTRY_USER_PROMPT_EXPANSION })).toBe(
+      HOOK_ENTRY_USER_PROMPT_EXPANSION,
     );
-    expect(extractHookEventName({ hookEventName: "user-prompt-submit" })).toBe(
-      "user-prompt-submit",
+    expect(extractHookEventName({ hookEventName: HOOK_EVENT_USER_PROMPT_SUBMIT_KEBAB })).toBe(
+      HOOK_EVENT_USER_PROMPT_SUBMIT_KEBAB,
     );
   });
 
@@ -64,27 +74,27 @@ describe("prompt helpers", () => {
 
   it("returns prompt expansion entry for Claude UserPromptExpansion", () => {
     expect(
-      extractPromptEntry("claude-code", {
-        hook_event_name: "UserPromptExpansion",
+      extractPromptEntry(PLATFORM_CLAUDE_CODE, {
+        hook_event_name: HOOK_ENTRY_USER_PROMPT_EXPANSION,
         prompt: "/caveman explain",
         command_name: "caveman:caveman",
       }),
     ).toEqual({
-      entryName: "UserPromptExpansion",
+      entryName: HOOK_ENTRY_USER_PROMPT_EXPANSION,
       text: "/caveman explain\ncommand: caveman:caveman",
     });
   });
 
   it("returns Memory Mason prompt expansion entry with derived command token", () => {
     expect(
-      extractPromptEntry("claude-code", {
-        hook_event_name: "UserPromptExpansion",
+      extractPromptEntry(PLATFORM_CLAUDE_CODE, {
+        hook_event_name: HOOK_ENTRY_USER_PROMPT_EXPANSION,
         prompt: "",
         expansion_type: "skill",
         command_name: "memory-mason:mmq",
       }),
     ).toEqual({
-      entryName: "UserPromptExpansion",
+      entryName: HOOK_ENTRY_USER_PROMPT_EXPANSION,
       text: "/memory-mason:mmq\ntype: skill\ncommand: memory-mason:mmq",
     });
   });
@@ -121,34 +131,36 @@ describe("prompt helpers", () => {
 
 describe("extractPromptText", () => {
   it("reads prompt for copilot vscode", () => {
-    expect(extractPromptText("copilot-vscode", { prompt: "  /mmc  " })).toBe("/mmc");
+    expect(extractPromptText(PLATFORM_COPILOT_VSCODE, { prompt: "  /mmc  " })).toBe("/mmc");
   });
 
   it("reads prompt for claude code", () => {
-    expect(extractPromptText("claude-code", { prompt: "/mml" })).toBe("/mml");
+    expect(extractPromptText(PLATFORM_CLAUDE_CODE, { prompt: "/mml" })).toBe("/mml");
   });
 
   it("reads prompt for codex", () => {
-    expect(extractPromptText("codex", { prompt: "$mmq hooks" })).toBe("$mmq hooks");
+    expect(extractPromptText(PLATFORM_CODEX, { prompt: "$mmq hooks" })).toBe("$mmq hooks");
   });
 
   it("falls back across known copilot cli prompt fields", () => {
-    expect(extractPromptText("copilot-cli", { initialPrompt: "/mms" })).toBe("/mms");
-    expect(extractPromptText("copilot-cli", { userPrompt: "/mmq writer" })).toBe("/mmq writer");
+    expect(extractPromptText(PLATFORM_COPILOT_CLI, { initialPrompt: "/mms" })).toBe("/mms");
+    expect(extractPromptText(PLATFORM_COPILOT_CLI, { userPrompt: "/mmq writer" })).toBe(
+      "/mmq writer",
+    );
   });
 
   it("falls back to camelCase commandName for derived Memory Mason prompt token", () => {
-    expect(extractPromptText("claude-code", { commandName: "memory-mason:mmc" })).toBe(
+    expect(extractPromptText(PLATFORM_CLAUDE_CODE, { commandName: "memory-mason:mmc" })).toBe(
       "/memory-mason:mmc",
     );
   });
 
   it("returns empty string for array input", () => {
-    expect(extractPromptText("claude-code", [])).toBe("");
+    expect(extractPromptText(PLATFORM_CLAUDE_CODE, [])).toBe("");
   });
 
   it("returns empty string when prompt missing", () => {
-    expect(extractPromptText("copilot-vscode", {})).toBe("");
+    expect(extractPromptText(PLATFORM_COPILOT_VSCODE, {})).toBe("");
   });
 
   it("throws for unsupported platform", () => {
@@ -159,9 +171,12 @@ describe("extractPromptText", () => {
 
   it("returns user prompt entry for non-expansion events", () => {
     expect(
-      extractPromptEntry("claude-code", { hook_event_name: "UserPromptSubmit", prompt: "/mml" }),
+      extractPromptEntry(PLATFORM_CLAUDE_CODE, {
+        hook_event_name: HOOK_ENTRY_USER_PROMPT_SUBMIT,
+        prompt: "/mml",
+      }),
     ).toEqual({
-      entryName: "UserPrompt",
+      entryName: HOOK_ENTRY_USER_PROMPT,
       text: "/mml",
     });
   });

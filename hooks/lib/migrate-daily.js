@@ -5,6 +5,7 @@ const {
   DEFAULT_DAILY_CHUNK_CAP_BYTES,
   MAX_DAILY_CHUNK_COUNT,
   CHUNK_ID_WIDTH,
+  UTF8_ENCODING,
 } = require("./constants");
 const {
   assertString,
@@ -79,7 +80,7 @@ const groupBlocksIntoChunkBodies = (blocks, dateIso, capBytes) => {
   blocks.forEach((nextBlock) => {
     const nextSize = Buffer.byteLength(
       buildChunkHeader(safeDateIso, chunkNum) + currentBody + nextBlock,
-      "utf-8",
+      UTF8_ENCODING,
     );
 
     if (currentBody === "") {
@@ -139,8 +140,8 @@ const migrateFlatToChunked = (vaultPath, subfolder, dateIso, options = {}) => {
     throw new Error(`source daily file is not a regular file: ${flatPath}`);
   }
 
-  const sourceText = safeFsApi.readFileSync(flatPath, "utf-8");
-  const bytesProcessed = Buffer.byteLength(sourceText, "utf-8");
+  const sourceText = safeFsApi.readFileSync(flatPath, UTF8_ENCODING);
+  const bytesProcessed = Buffer.byteLength(sourceText, UTF8_ENCODING);
   const standardHeader = buildDailyHeader(safeDateIso);
   const bodyText = sourceText.startsWith(standardHeader)
     ? sourceText.slice(standardHeader.length)
@@ -171,9 +172,9 @@ const migrateFlatToChunked = (vaultPath, subfolder, dateIso, options = {}) => {
     const chunkNum = index + 1;
     const chunkPath = buildDailyChunkPath(safeVaultPath, safeSubfolder, safeDateIso, chunkNum);
     const chunkText = buildChunkHeader(safeDateIso, chunkNum) + chunkBody;
-    safeFsApi.writeFileSync(chunkPath, chunkText, "utf-8");
+    safeFsApi.writeFileSync(chunkPath, chunkText, UTF8_ENCODING);
 
-    const chunkSizeBytes = Buffer.byteLength(chunkText, "utf-8");
+    const chunkSizeBytes = Buffer.byteLength(chunkText, UTF8_ENCODING);
     const padded = String(chunkNum).padStart(CHUNK_ID_WIDTH, "0");
     entries.push({
       id: padded,
@@ -184,10 +185,14 @@ const migrateFlatToChunked = (vaultPath, subfolder, dateIso, options = {}) => {
   });
 
   const metaPath = buildDailyMetaPath(safeVaultPath, safeSubfolder, safeDateIso);
-  safeFsApi.writeFileSync(metaPath, JSON.stringify({ chunks: entries }, null, 2), "utf-8");
+  safeFsApi.writeFileSync(metaPath, JSON.stringify({ chunks: entries }, null, 2), UTF8_ENCODING);
 
   const indexPath = buildDailyIndexPath(safeVaultPath, safeSubfolder, safeDateIso);
-  safeFsApi.writeFileSync(indexPath, buildChunkIndexContent(safeDateIso, entries.length), "utf-8");
+  safeFsApi.writeFileSync(
+    indexPath,
+    buildChunkIndexContent(safeDateIso, entries.length),
+    UTF8_ENCODING,
+  );
 
   return result;
 };

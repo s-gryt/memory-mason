@@ -31,11 +31,19 @@ const {
   SESSION_START_RECENT_LOG_LINES,
   HOT_CACHE_CONTEXT_MAX_CHARS,
   INDEX_CONTEXT_MAX_CHARS,
+  UTF8_ENCODING,
 } = require("./lib/constants");
+const {
+  KNOWLEDGE_BASE_INDEX_HEADING,
+  SESSION_CONTEXT_HEADING,
+  PLACEHOLDER_NO_ARTICLES,
+  PLACEHOLDER_NO_SESSION_CONTEXT,
+} = require("./lib/markdown-labels");
+const { HOOK_ENTRY_SESSION_START } = require("./lib/hook-events");
 
 function readFileOrEmpty(filePath) {
   try {
-    return fs.readFileSync(filePath, "utf-8");
+    return fs.readFileSync(filePath, UTF8_ENCODING);
   } catch (_error) {
     return "";
   }
@@ -65,11 +73,11 @@ function readDailyLogText(vaultPath, subfolder, dateIso, fsApi = fs) {
     }
 
     const lastChunk = chunkFiles[chunkFiles.length - 1];
-    return fsApi.readFileSync(path.join(folderPath, lastChunk), "utf-8");
+    return fsApi.readFileSync(path.join(folderPath, lastChunk), UTF8_ENCODING);
   }
 
   if (fsApi.existsSync(flatPath)) {
-    return fsApi.readFileSync(flatPath, "utf-8");
+    return fsApi.readFileSync(flatPath, UTF8_ENCODING);
   }
 
   return "";
@@ -103,8 +111,8 @@ function resolvePrimaryContext(resolvedConfig) {
     return {
       primaryText: sessionContextText,
       maxChars: HOT_CACHE_CONTEXT_MAX_CHARS,
-      primarySectionHeading: "Session Context",
-      primaryPlaceholderText: "(empty - no session context yet)",
+      primarySectionHeading: SESSION_CONTEXT_HEADING,
+      primaryPlaceholderText: PLACEHOLDER_NO_SESSION_CONTEXT,
     };
   }
 
@@ -114,8 +122,8 @@ function resolvePrimaryContext(resolvedConfig) {
   return {
     primaryText: indexText,
     maxChars: INDEX_CONTEXT_MAX_CHARS,
-    primarySectionHeading: "Knowledge Base Index",
-    primaryPlaceholderText: "(empty - no articles compiled yet)",
+    primarySectionHeading: KNOWLEDGE_BASE_INDEX_HEADING,
+    primaryPlaceholderText: PLACEHOLDER_NO_ARTICLES,
   };
 }
 
@@ -137,7 +145,7 @@ function buildSessionAdditionalContext(resolvedConfig) {
 function buildSessionStartStdout(additionalContext) {
   return `${JSON.stringify({
     hookSpecificOutput: {
-      hookEventName: "SessionStart",
+      hookEventName: HOOK_ENTRY_SESSION_START,
       additionalContext,
     },
   })}\n`;

@@ -3,6 +3,13 @@
 const { getMmCommandToken, isMmCommand } = require("./prompt");
 const { truncateContext } = require("./vault");
 const { CAPTURE_MODE_LITE, DEFAULT_CAPTURE_MODE } = require("./constants");
+const {
+  TRANSCRIPT_ROLE_USER,
+  TRANSCRIPT_ROLE_ASSISTANT,
+  TRANSCRIPT_BLOCK_TYPE_TEXT,
+  TRANSCRIPT_TYPE_USER_MESSAGE,
+  TRANSCRIPT_TYPE_ASSISTANT_MESSAGE,
+} = require("./transcript-labels");
 const { assertNonEmptyString, assertPositiveInteger } = require("./assert");
 
 const ANSI_ESCAPE_CHAR_CODE = 27;
@@ -98,8 +105,14 @@ const extractEntryPayload = (entry) => {
     };
   }
 
-  if (entry.type === "user.message" || entry.type === "assistant.message") {
-    const role = entry.type === "user.message" ? "user" : "assistant";
+  if (
+    entry.type === TRANSCRIPT_TYPE_USER_MESSAGE ||
+    entry.type === TRANSCRIPT_TYPE_ASSISTANT_MESSAGE
+  ) {
+    const role =
+      entry.type === TRANSCRIPT_TYPE_USER_MESSAGE
+        ? TRANSCRIPT_ROLE_USER
+        : TRANSCRIPT_ROLE_ASSISTANT;
     const data = entry.data;
     return {
       role,
@@ -118,7 +131,7 @@ const isTranscriptTextBlock = (block) =>
   block !== null &&
   typeof block === "object" &&
   !Array.isArray(block) &&
-  block.type === "text" &&
+  block.type === TRANSCRIPT_BLOCK_TYPE_TEXT &&
   typeof block.text === "string";
 
 const extractTextContentFromString = (rawContent, captureMode = DEFAULT_CAPTURE_MODE) => {
@@ -164,7 +177,8 @@ const parseJsonlLine = (line) => {
   }
 };
 
-const isSupportedTranscriptRole = (role) => role === "user" || role === "assistant";
+const isSupportedTranscriptRole = (role) =>
+  role === TRANSCRIPT_ROLE_USER || role === TRANSCRIPT_ROLE_ASSISTANT;
 
 const mapEntryToTranscriptTurn = (entry, captureMode = DEFAULT_CAPTURE_MODE) => {
   const payload = extractEntryPayload(entry);
@@ -194,7 +208,7 @@ const collapseIntermediateAssistants = (turns) => {
   const result = [];
 
   turns.forEach((turn) => {
-    if (turn.role === "assistant") {
+    if (turn.role === TRANSCRIPT_ROLE_ASSISTANT) {
       pendingAssistant = turn;
       return;
     }
@@ -235,19 +249,19 @@ const filterMmTurns = (turns) => {
   const filteredTurns = [];
 
   turns.forEach((turn) => {
-    const isUserMmCommand = turn.role === "user" && isMmCommand(turn.content);
+    const isUserMmCommand = turn.role === TRANSCRIPT_ROLE_USER && isMmCommand(turn.content);
 
     if (isUserMmCommand) {
       skipAssistantAfterMm = true;
       return;
     }
 
-    if (skipAssistantAfterMm && turn.role === "assistant") {
+    if (skipAssistantAfterMm && turn.role === TRANSCRIPT_ROLE_ASSISTANT) {
       skipAssistantAfterMm = false;
       return;
     }
 
-    if (skipAssistantAfterMm && turn.role !== "assistant") {
+    if (skipAssistantAfterMm && turn.role !== TRANSCRIPT_ROLE_ASSISTANT) {
       skipAssistantAfterMm = false;
     }
 
@@ -281,7 +295,7 @@ const renderTurnsAsMarkdown = (turns) => {
       throw new Error(`turn at index ${index} must be an object`);
     }
 
-    if (turn.role !== "user" && turn.role !== "assistant") {
+    if (turn.role !== TRANSCRIPT_ROLE_USER && turn.role !== TRANSCRIPT_ROLE_ASSISTANT) {
       throw new Error(`turn at index ${index} has invalid role`);
     }
 
@@ -289,7 +303,7 @@ const renderTurnsAsMarkdown = (turns) => {
       throw new Error(`turn at index ${index} must have non-empty content`);
     }
 
-    const label = turn.role === "user" ? "User" : "Assistant";
+    const label = turn.role === TRANSCRIPT_ROLE_USER ? "User" : "Assistant";
     return `**${label}:** ${turn.content}\n`;
   });
 

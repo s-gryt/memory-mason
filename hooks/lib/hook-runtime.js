@@ -5,8 +5,13 @@ const path = require("node:path");
 const os = require("node:os");
 const { resolveVaultConfig } = require("./config");
 const { writeIfPresent } = require("./cli");
-
-const STDIN_BUFFER_BYTES = 65536;
+const { STDIN_BUFFER_BYTES, UTF8_ENCODING } = require("./constants");
+const {
+  PROJECT_CONFIG_FILE_NAME,
+  DOTENV_FILE_NAME,
+  GLOBAL_MM_DIR_NAME,
+  GLOBAL_CONFIG_FILE_NAME,
+} = require("./config-keys");
 
 function chooseFirst(candidates, predicate) {
   return candidates.find((value) => predicate(value));
@@ -32,7 +37,7 @@ function readStdin(fsApi = fs) {
     return [chunk.slice(0, bytesRead)].concat(readChunks());
   }
 
-  return Buffer.concat(readChunks()).toString("utf-8");
+  return Buffer.concat(readChunks()).toString(UTF8_ENCODING);
 }
 
 function toStringOrEmpty(value) {
@@ -45,35 +50,35 @@ function firstNonEmptyString(values) {
 }
 
 function readConfigText(cwd) {
-  const configPath = path.join(cwd, "memory-mason.json");
+  const configPath = path.join(cwd, PROJECT_CONFIG_FILE_NAME);
   if (!fs.existsSync(configPath)) {
     return "";
   }
-  return fs.readFileSync(configPath, "utf-8");
+  return fs.readFileSync(configPath, UTF8_ENCODING);
 }
 
 function readDotEnvText(cwd) {
-  const envPath = path.join(cwd, ".env");
+  const envPath = path.join(cwd, DOTENV_FILE_NAME);
   if (!fs.existsSync(envPath)) {
     return "";
   }
-  return fs.readFileSync(envPath, "utf-8");
+  return fs.readFileSync(envPath, UTF8_ENCODING);
 }
 
 function readGlobalConfigText(homedir) {
-  const globalConfigPath = path.join(homedir, ".memory-mason", "config.json");
+  const globalConfigPath = path.join(homedir, GLOBAL_MM_DIR_NAME, GLOBAL_CONFIG_FILE_NAME);
   if (!fs.existsSync(globalConfigPath)) {
     return "";
   }
-  return fs.readFileSync(globalConfigPath, "utf-8");
+  return fs.readFileSync(globalConfigPath, UTF8_ENCODING);
 }
 
 function readGlobalDotEnvText(homedir) {
-  const globalEnvPath = path.join(homedir, ".memory-mason", ".env");
+  const globalEnvPath = path.join(homedir, GLOBAL_MM_DIR_NAME, DOTENV_FILE_NAME);
   if (!fs.existsSync(globalEnvPath)) {
     return "";
   }
-  return fs.readFileSync(globalEnvPath, "utf-8");
+  return fs.readFileSync(globalEnvPath, UTF8_ENCODING);
 }
 
 function resolveRuntimeEnv(runtime) {

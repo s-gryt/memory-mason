@@ -1,5 +1,13 @@
 "use strict";
 
+const {
+  PLATFORM_COPILOT_VSCODE,
+  PLATFORM_CLAUDE_CODE,
+  PLATFORM_COPILOT_CLI,
+  PLATFORM_CODEX,
+} = require("./platforms");
+const { HOOK_ENTRY_USER_PROMPT_EXPANSION, HOOK_ENTRY_USER_PROMPT } = require("./hook-events");
+
 const firstNonEmptyString = (values) => {
   const stringValues = values.filter((value) => typeof value === "string");
   const match = stringValues.find((value) => value.trim() !== "");
@@ -73,11 +81,15 @@ const buildPromptExpansionText = (input) => {
 const extractPromptText = (platform, input) => {
   const mmCommandToken = getMmCommandToken(extractCommandName(input));
 
-  if (platform === "copilot-vscode" || platform === "claude-code" || platform === "codex") {
+  if (
+    platform === PLATFORM_COPILOT_VSCODE ||
+    platform === PLATFORM_CLAUDE_CODE ||
+    platform === PLATFORM_CODEX
+  ) {
     return firstNonEmptyString([input.prompt, mmCommandToken]);
   }
 
-  if (platform === "copilot-cli") {
+  if (platform === PLATFORM_COPILOT_CLI) {
     return firstNonEmptyString([
       input.prompt,
       input.userPrompt,
@@ -90,15 +102,18 @@ const extractPromptText = (platform, input) => {
 };
 
 const extractPromptEntry = (platform, input) => {
-  if (platform === "claude-code" && extractHookEventName(input) === "UserPromptExpansion") {
+  if (
+    platform === PLATFORM_CLAUDE_CODE &&
+    extractHookEventName(input) === HOOK_ENTRY_USER_PROMPT_EXPANSION
+  ) {
     return {
-      entryName: "UserPromptExpansion",
+      entryName: HOOK_ENTRY_USER_PROMPT_EXPANSION,
       text: buildPromptExpansionText(input),
     };
   }
 
   return {
-    entryName: "UserPrompt",
+    entryName: HOOK_ENTRY_USER_PROMPT,
     text: extractPromptText(platform, input),
   };
 };

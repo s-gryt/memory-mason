@@ -3,6 +3,19 @@
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { PRE_COMPACT_MIN_TURNS, UTF8_ENCODING } = require("../lib/constants");
+const {
+  ENV_KEY_VAULT_PATH,
+  ENV_KEY_SUBFOLDER,
+  ENV_KEY_CAPTURE_MODE,
+  ENV_KEY_INVOKED_BY,
+  CONFIG_KEY_VAULT_PATH,
+  CONFIG_KEY_SUBFOLDER,
+  PROJECT_CONFIG_FILE_NAME,
+  DOTENV_FILE_NAME,
+  GLOBAL_MM_DIR_NAME,
+  GLOBAL_CONFIG_FILE_NAME,
+} = require("../lib/config-keys");
 const { buildDailyChunkPath, buildDailyFilePath, buildRootIndexPath } = require("../lib/vault");
 const { resolveCaptureStatePath } = require("../lib/capture-state");
 const sessionStart = require("../session-start");
@@ -13,57 +26,103 @@ const sessionEnd = require("../session-end");
 const installCopilotHooks = require("../install-copilot-hooks");
 const uninstallCopilotHooks = require("../uninstall-copilot-hooks");
 const { materializeProjectDotEnvConfig } = require("./helpers/project-dot-env");
+const {
+  TEST_VAULT_PREFIX,
+  TEST_HOME_PREFIX,
+  TEST_CWD_PREFIX,
+  TEST_TRANSCRIPT_PREFIX,
+  TEST_MM_HOME_PREFIX,
+  TEST_MM_VAULT_PREFIX,
+  TEST_MM_CWD_PREFIX,
+  TEST_MM_TR_PREFIX,
+  TEST_DEFAULT_TRANSCRIPT_FILE,
+  TEST_DEFAULT_SESSION_ID,
+  TEST_DEFAULT_SUBFOLDER: DEFAULT_SUBFOLDER,
+  TEST_CAPTURE_MODE_FULL: CAPTURE_MODE_FULL,
+  TEST_HOOK_ENTRY_USER_PROMPT_SUBMIT: HOOK_ENTRY_USER_PROMPT_SUBMIT,
+  TEST_HOOK_ENTRY_POST_TOOL_USE: HOOK_ENTRY_POST_TOOL_USE,
+  TEST_HOOK_EVENT_STOP: HOOK_EVENT_STOP,
+  TEST_HOOK_EVENT_STOP_PASCAL: HOOK_EVENT_STOP_PASCAL,
+  TEST_HOOK_EVENT_SESSION_END_SNAKE: HOOK_EVENT_SESSION_END_SNAKE,
+  TEST_HOOK_EVENT_USER_PROMPT_SUBMIT_KEBAB: HOOK_EVENT_USER_PROMPT_SUBMIT_KEBAB,
+  TEST_HOOK_EVENT_POST_TOOL_USE_KEBAB: HOOK_EVENT_POST_TOOL_USE_KEBAB,
+  TEST_HOOK_EVENT_PRE_COMPACT_KEBAB: HOOK_EVENT_PRE_COMPACT_KEBAB,
+  TEST_TRANSCRIPT_ROLE_USER: TRANSCRIPT_ROLE_USER,
+  TEST_TRANSCRIPT_ROLE_ASSISTANT: TRANSCRIPT_ROLE_ASSISTANT,
+  TEST_ASSISTANT_REPLY_ENTRY_NAME: ASSISTANT_REPLY_ENTRY_NAME,
+} = require("./helpers/test-constants");
 
 const hooksRoot = path.resolve(__dirname, "..");
 const repoRoot = path.resolve(hooksRoot, "..");
+const SESSION_END_FILE = "session-end.js";
+const SESSION_START_FILE = "session-start.js";
+const USER_PROMPT_SUBMIT_FILE = "user-prompt-submit.js";
+const POST_TOOL_USE_FILE = "post-tool-use.js";
+const PRE_COMPACT_FILE = "pre-compact.js";
+const EMPTY_CWD_PREFIX = "memory-mason-cwd-empty-";
+const EMPTY_HOME_PREFIX = "memory-mason-home-empty-";
+const TEST_TURN_COUNT_SHORT = 4;
+const TEST_TURN_COUNT_STANDARD = 6;
+const TEST_TURN_COUNT_BASELINE = 3;
+const TEST_TURN_COUNT_EXTENDED = 40;
+const TEST_LONG_TRANSCRIPT_REPEAT_COUNT = 17000;
+const TEST_INVALID_SESSION_ID_NUMBER = 123;
+const TEST_INVALID_NON_INTEGER_COUNT = 1.5;
+const TEST_LONG_ASSISTANT_REPLY_LENGTH = 6000;
+const TEST_INVALID_NUMBER_INPUT = 42;
 const tempDirs = [];
 const generatedEnvPaths = [];
 const scriptModules = {
-  "session-start.js": sessionStart,
-  "user-prompt-submit.js": userPromptSubmit,
-  "post-tool-use.js": postToolUse,
-  "pre-compact.js": preCompact,
-  "session-end.js": sessionEnd,
+  [SESSION_START_FILE]: sessionStart,
+  [USER_PROMPT_SUBMIT_FILE]: userPromptSubmit,
+  [POST_TOOL_USE_FILE]: postToolUse,
+  [PRE_COMPACT_FILE]: preCompact,
+  [SESSION_END_FILE]: sessionEnd,
   "install-copilot-hooks.js": installCopilotHooks,
   "uninstall-copilot-hooks.js": uninstallCopilotHooks,
 };
 const entrypointConfigReaderModules = [
-  { scriptName: "session-start.js", scriptModule: sessionStart },
-  { scriptName: "user-prompt-submit.js", scriptModule: userPromptSubmit },
-  { scriptName: "post-tool-use.js", scriptModule: postToolUse },
-  { scriptName: "pre-compact.js", scriptModule: preCompact },
-  { scriptName: "session-end.js", scriptModule: sessionEnd },
+  { scriptName: SESSION_START_FILE, scriptModule: sessionStart },
+  { scriptName: USER_PROMPT_SUBMIT_FILE, scriptModule: userPromptSubmit },
+  { scriptName: POST_TOOL_USE_FILE, scriptModule: postToolUse },
+  { scriptName: PRE_COMPACT_FILE, scriptModule: preCompact },
+  { scriptName: SESSION_END_FILE, scriptModule: sessionEnd },
 ];
 const copilotHookDefinitions = [
   {
     fileName: "session-start.json",
     eventName: "SessionStart",
-    scriptName: "session-start.js",
+    scriptName: SESSION_START_FILE,
     timeout: 10,
   },
   {
     fileName: "user-prompt-submit.json",
-    eventName: "UserPromptSubmit",
-    scriptName: "user-prompt-submit.js",
-    timeout: 5,
+    eventName: HOOK_ENTRY_USER_PROMPT_SUBMIT,
+    scriptName: USER_PROMPT_SUBMIT_FILE,
+    timeout: PRE_COMPACT_MIN_TURNS,
   },
   {
     fileName: "post-tool-use.json",
-    eventName: "PostToolUse",
-    scriptName: "post-tool-use.js",
-    timeout: 5,
+    eventName: HOOK_ENTRY_POST_TOOL_USE,
+    scriptName: POST_TOOL_USE_FILE,
+    timeout: PRE_COMPACT_MIN_TURNS,
   },
   {
     fileName: "pre-compact.json",
     eventName: "PreCompact",
-    scriptName: "pre-compact.js",
+    scriptName: PRE_COMPACT_FILE,
     timeout: 15,
   },
-  { fileName: "stop.json", eventName: "Stop", scriptName: "session-end.js", timeout: 15 },
+  {
+    fileName: "stop.json",
+    eventName: HOOK_EVENT_STOP_PASCAL,
+    scriptName: SESSION_END_FILE,
+    timeout: 15,
+  },
   {
     fileName: "session-end.json",
     eventName: "SessionEnd",
-    scriptName: "session-end.js",
+    scriptName: SESSION_END_FILE,
     timeout: 15,
   },
 ];
@@ -86,29 +145,29 @@ const buildEnv = (homeDir, overrides = {}) => ({
 const hasEnvVaultPath = (env) =>
   env !== null &&
   typeof env === "object" &&
-  typeof env.MEMORY_MASON_VAULT_PATH === "string" &&
-  env.MEMORY_MASON_VAULT_PATH !== "";
+  typeof env[ENV_KEY_VAULT_PATH] === "string" &&
+  env[ENV_KEY_VAULT_PATH] !== "";
 
 const remapHooksRootCwd = (targetCwd, isolatedProjectCwd) =>
   targetCwd === hooksRoot && isolatedProjectCwd !== "" ? isolatedProjectCwd : targetCwd;
 
 const withMemoryMasonCaptureMode = (value, callback) => {
-  const hadCaptureMode = Object.hasOwn(process.env, "MEMORY_MASON_CAPTURE_MODE");
-  const previousCaptureMode = process.env.MEMORY_MASON_CAPTURE_MODE;
+  const hadCaptureMode = Object.hasOwn(process.env, ENV_KEY_CAPTURE_MODE);
+  const previousCaptureMode = process.env[ENV_KEY_CAPTURE_MODE];
 
   if (typeof value === "string") {
-    process.env.MEMORY_MASON_CAPTURE_MODE = value;
+    process.env[ENV_KEY_CAPTURE_MODE] = value;
   } else {
-    delete process.env.MEMORY_MASON_CAPTURE_MODE;
+    delete process.env[ENV_KEY_CAPTURE_MODE];
   }
 
   try {
     return callback();
   } finally {
     if (hadCaptureMode && typeof previousCaptureMode === "string") {
-      process.env.MEMORY_MASON_CAPTURE_MODE = previousCaptureMode;
+      process.env[ENV_KEY_CAPTURE_MODE] = previousCaptureMode;
     } else {
-      delete process.env.MEMORY_MASON_CAPTURE_MODE;
+      delete process.env[ENV_KEY_CAPTURE_MODE];
     }
   }
 };
@@ -136,7 +195,7 @@ const runScript = (scriptName, options = {}) => {
   const payloadCwd = payload !== null && typeof payload.cwd === "string" ? payload.cwd : "";
   const isolatedProjectCwd =
     hasEnvVaultPath(env) && (requestedRuntimeCwd === hooksRoot || payloadCwd === hooksRoot)
-      ? createTempDir("mm-cwd-")
+      ? createTempDir(TEST_MM_CWD_PREFIX)
       : "";
   const resolvedPayload =
     payload !== null && payloadCwd !== ""
@@ -164,12 +223,12 @@ const runScript = (scriptName, options = {}) => {
 
 const writeText = (filePath, content) => {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, content, "utf-8");
+  fs.writeFileSync(filePath, content, UTF8_ENCODING);
 };
 
 const assertInstalledCopilotHook = (hooksDirectory, hookRoot, definition) => {
   const installedPath = path.join(hooksDirectory, definition.fileName);
-  const installed = JSON.parse(fs.readFileSync(installedPath, "utf-8"));
+  const installed = JSON.parse(fs.readFileSync(installedPath, UTF8_ENCODING));
   const entries = installed.hooks[definition.eventName];
 
   expect(Array.isArray(entries)).toBe(true);
@@ -184,7 +243,7 @@ const assertInstalledCopilotHook = (hooksDirectory, hookRoot, definition) => {
 const buildTranscript = (turnCount, firstUserContent = "user turn") =>
   Array.from({ length: turnCount }, (_, index) => {
     const isUser = index % 2 === 0;
-    const role = isUser ? "user" : "assistant";
+    const role = isUser ? TRANSCRIPT_ROLE_USER : TRANSCRIPT_ROLE_ASSISTANT;
     const content = isUser && index === 0 ? firstUserContent : `${role} turn ${index}`;
     return JSON.stringify({ message: { role, content } });
   }).join("\n");
@@ -194,7 +253,7 @@ const buildVsCodeTranscript = (turns) => {
     {
       type: "session.start",
       data: {
-        sessionId: "session-1",
+        sessionId: TEST_DEFAULT_SESSION_ID,
         version: 1,
         producer: "copilot-agent",
         copilotVersion: "0.0.0",
@@ -271,50 +330,53 @@ afterEach(() => {
 describe("entrypoint config readers", () => {
   entrypointConfigReaderModules.forEach(({ scriptName, scriptModule }) => {
     it(`reads .env text for ${scriptName}`, () => {
-      const cwd = createTempDir("memory-mason-cwd-");
-      const envText = "MEMORY_MASON_VAULT_PATH=/vault/path\nMEMORY_MASON_SUBFOLDER=notes";
+      const cwd = createTempDir(TEST_CWD_PREFIX);
+      const envText = `${ENV_KEY_VAULT_PATH}=/vault/path\n${ENV_KEY_SUBFOLDER}=notes`;
 
-      writeText(path.join(cwd, ".env"), envText);
+      writeText(path.join(cwd, DOTENV_FILE_NAME), envText);
 
       expect(scriptModule.readDotEnvText(cwd)).toBe(envText);
-      expect(scriptModule.readDotEnvText(createTempDir("memory-mason-cwd-empty-"))).toBe("");
+      expect(scriptModule.readDotEnvText(createTempDir(EMPTY_CWD_PREFIX))).toBe("");
     });
 
     it(`reads global config text for ${scriptName}`, () => {
-      const homeDir = createTempDir("memory-mason-home-");
-      const configText = JSON.stringify({ vaultPath: "/vault", subfolder: "notes" });
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const configText = JSON.stringify({
+        [CONFIG_KEY_VAULT_PATH]: "/vault",
+        [CONFIG_KEY_SUBFOLDER]: "notes",
+      });
 
-      writeText(path.join(homeDir, ".memory-mason", "config.json"), configText);
+      writeText(path.join(homeDir, GLOBAL_MM_DIR_NAME, GLOBAL_CONFIG_FILE_NAME), configText);
 
       expect(scriptModule.readGlobalConfigText(homeDir)).toBe(configText);
-      expect(scriptModule.readGlobalConfigText(createTempDir("memory-mason-home-empty-"))).toBe("");
+      expect(scriptModule.readGlobalConfigText(createTempDir(EMPTY_HOME_PREFIX))).toBe("");
     });
 
     it(`reads global .env text for ${scriptName}`, () => {
-      const homeDir = createTempDir("memory-mason-home-");
-      const envText = "MEMORY_MASON_VAULT_PATH=~/vault\nMEMORY_MASON_SUBFOLDER=global-brain";
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const envText = `${ENV_KEY_VAULT_PATH}=~/vault\n${ENV_KEY_SUBFOLDER}=global-brain`;
 
-      writeText(path.join(homeDir, ".memory-mason", ".env"), envText);
+      writeText(path.join(homeDir, GLOBAL_MM_DIR_NAME, DOTENV_FILE_NAME), envText);
 
       expect(scriptModule.readGlobalDotEnvText(homeDir)).toBe(envText);
-      expect(scriptModule.readGlobalDotEnvText(createTempDir("memory-mason-home-empty-"))).toBe("");
+      expect(scriptModule.readGlobalDotEnvText(createTempDir(EMPTY_HOME_PREFIX))).toBe("");
     });
   });
 });
 
-describe("session-start.js", () => {
+describe(SESSION_START_FILE, () => {
   it("reads memory-mason.json and returns KB context with today log", () => {
-    const cwd = createTempDir("memory-mason-cwd-");
-    const vaultPath = createTempDir("memory-mason-vault-");
-    const configPath = path.join(cwd, "memory-mason.json");
-    const indexPath = buildRootIndexPath(vaultPath, "ai-knowledge");
-    const dailyPath = buildDailyFilePath(vaultPath, "ai-knowledge", today());
+    const cwd = createTempDir(TEST_CWD_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const configPath = path.join(cwd, PROJECT_CONFIG_FILE_NAME);
+    const indexPath = buildRootIndexPath(vaultPath, DEFAULT_SUBFOLDER);
+    const dailyPath = buildDailyFilePath(vaultPath, DEFAULT_SUBFOLDER, today());
 
-    writeText(configPath, JSON.stringify({ vaultPath, subfolder: "ai-knowledge" }));
+    writeText(configPath, JSON.stringify({ vaultPath, [CONFIG_KEY_SUBFOLDER]: DEFAULT_SUBFOLDER }));
     writeText(indexPath, "# Index\n\n[[Topic]]");
     writeText(dailyPath, "# Daily Log\n\nrecent line");
 
-    const result = runScript("session-start.js", { payload: { cwd }, cwd, env: buildEnv(cwd) });
+    const result = runScript(SESSION_START_FILE, { payload: { cwd }, cwd, env: buildEnv(cwd) });
     const parsed = JSON.parse(result.stdout);
 
     expect(result.status).toBe(0);
@@ -325,15 +387,15 @@ describe("session-start.js", () => {
   });
 
   it("falls back to yesterday log when today log missing", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
-    const dailyPath = buildDailyFilePath(vaultPath, "ai-knowledge", yesterday());
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const dailyPath = buildDailyFilePath(vaultPath, DEFAULT_SUBFOLDER, yesterday());
 
     writeText(dailyPath, "# Daily Log\n\nyesterday line");
 
-    const result = runScript("session-start.js", {
+    const result = runScript(SESSION_START_FILE, {
       payload: { cwd: hooksRoot },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
     const parsed = JSON.parse(result.stdout);
 
@@ -342,12 +404,12 @@ describe("session-start.js", () => {
   });
 
   it("uses empty placeholders when KB files are missing", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
 
-    const result = runScript("session-start.js", {
+    const result = runScript(SESSION_START_FILE, {
       payload: { cwd: hooksRoot },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
     const parsed = JSON.parse(result.stdout);
 
@@ -359,18 +421,18 @@ describe("session-start.js", () => {
   });
 
   it("uses global config fallback when project config and env var are absent", () => {
-    const cwd = createTempDir("memory-mason-cwd-");
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
+    const cwd = createTempDir(TEST_CWD_PREFIX);
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
     const dailyPath = buildDailyFilePath(vaultPath, "global-brain", today());
 
     writeText(
-      path.join(homeDir, ".memory-mason", "config.json"),
-      JSON.stringify({ vaultPath, subfolder: "global-brain" }),
+      path.join(homeDir, GLOBAL_MM_DIR_NAME, GLOBAL_CONFIG_FILE_NAME),
+      JSON.stringify({ vaultPath, [CONFIG_KEY_SUBFOLDER]: "global-brain" }),
     );
     writeText(dailyPath, "# Daily Log\n\nfrom global config");
 
-    const result = runScript("session-start.js", { payload: { cwd }, cwd, env: buildEnv(homeDir) });
+    const result = runScript(SESSION_START_FILE, { payload: { cwd }, cwd, env: buildEnv(homeDir) });
     const parsed = JSON.parse(result.stdout);
 
     expect(result.status).toBe(0);
@@ -378,18 +440,18 @@ describe("session-start.js", () => {
   });
 
   it("uses .env fallback when project config and env var are absent", () => {
-    const cwd = createTempDir("memory-mason-cwd-");
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
+    const cwd = createTempDir(TEST_CWD_PREFIX);
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
     const dailyPath = buildDailyFilePath(vaultPath, "dotenv-brain", today());
 
     writeText(
-      path.join(cwd, ".env"),
+      path.join(cwd, DOTENV_FILE_NAME),
       `MEMORY_MASON_VAULT_PATH=${vaultPath}\nMEMORY_MASON_SUBFOLDER=dotenv-brain`,
     );
     writeText(dailyPath, "# Daily Log\n\nfrom dotenv config");
 
-    const result = runScript("session-start.js", { payload: { cwd }, cwd, env: buildEnv(homeDir) });
+    const result = runScript(SESSION_START_FILE, { payload: { cwd }, cwd, env: buildEnv(homeDir) });
     const parsed = JSON.parse(result.stdout);
 
     expect(result.status).toBe(0);
@@ -397,12 +459,12 @@ describe("session-start.js", () => {
   });
 
   it("reports invalid stdin to stderr", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
 
-    const result = runScript("session-start.js", {
+    const result = runScript(SESSION_START_FILE, {
       stdinText: "{not-json",
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
     expect(result.status).toBe(0);
@@ -410,26 +472,30 @@ describe("session-start.js", () => {
   });
 });
 
-describe("user-prompt-submit.js", () => {
+describe(USER_PROMPT_SUBMIT_FILE, () => {
   it("writes prompt into daily log", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
 
-    const result = runScript("user-prompt-submit.js", {
-      payload: { hookEventName: "user-prompt-submit", cwd: hooksRoot, prompt: " remember hooks " },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+    const result = runScript(USER_PROMPT_SUBMIT_FILE, {
+      payload: {
+        hookEventName: HOOK_EVENT_USER_PROMPT_SUBMIT_KEBAB,
+        cwd: hooksRoot,
+        prompt: " remember hooks ",
+      },
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
-    const dailyPath = buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1);
+    const dailyPath = buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1);
     expect(result.status).toBe(0);
-    expect(fs.readFileSync(dailyPath, "utf-8")).toContain("remember hooks");
+    expect(fs.readFileSync(dailyPath, UTF8_ENCODING)).toContain("remember hooks");
   });
 
   it("writes rich slash-command metadata for Claude prompt expansion events", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
 
-    const result = runScript("user-prompt-submit.js", {
+    const result = runScript(USER_PROMPT_SUBMIT_FILE, {
       payload: {
         hook_event_name: "UserPromptExpansion",
         cwd: hooksRoot,
@@ -439,11 +505,11 @@ describe("user-prompt-submit.js", () => {
         command_args: "analyze attachments",
         command_source: "plugin",
       },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
-    const dailyPath = buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1);
-    const dailyContent = fs.readFileSync(dailyPath, "utf-8");
+    const dailyPath = buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1);
+    const dailyContent = fs.readFileSync(dailyPath, UTF8_ENCODING);
 
     expect(result.status).toBe(0);
     expect(dailyContent).toContain("UserPromptExpansion");
@@ -453,49 +519,53 @@ describe("user-prompt-submit.js", () => {
   });
 
   it("uses project .env over memory-mason.json when both exist", () => {
-    const cwd = createTempDir("memory-mason-cwd-");
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
+    const cwd = createTempDir(TEST_CWD_PREFIX);
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
 
     writeText(
-      path.join(cwd, "memory-mason.json"),
-      JSON.stringify({ vaultPath: "/ignored", subfolder: "my-brain" }),
+      path.join(cwd, PROJECT_CONFIG_FILE_NAME),
+      JSON.stringify({ [CONFIG_KEY_VAULT_PATH]: "/ignored", [CONFIG_KEY_SUBFOLDER]: "my-brain" }),
     );
 
-    const result = runScript("user-prompt-submit.js", {
-      payload: { hookEventName: "user-prompt-submit", cwd, prompt: "remember this" },
+    const result = runScript(USER_PROMPT_SUBMIT_FILE, {
+      payload: { hookEventName: HOOK_EVENT_USER_PROMPT_SUBMIT_KEBAB, cwd, prompt: "remember this" },
       cwd,
       env: buildEnv(homeDir, {
-        MEMORY_MASON_VAULT_PATH: vaultPath,
-        MEMORY_MASON_SUBFOLDER: "my-brain",
+        [ENV_KEY_VAULT_PATH]: vaultPath,
+        [ENV_KEY_SUBFOLDER]: "my-brain",
       }),
     });
 
     expect(result.status).toBe(0);
     expect(
-      fs.readFileSync(buildDailyChunkPath(vaultPath, "my-brain", today(), 1), "utf-8"),
+      fs.readFileSync(buildDailyChunkPath(vaultPath, "my-brain", today(), 1), UTF8_ENCODING),
     ).toContain("remember this");
-    expect(fs.existsSync(buildDailyFilePath(vaultPath, "ai-knowledge", today()))).toBe(false);
+    expect(fs.existsSync(buildDailyFilePath(vaultPath, DEFAULT_SUBFOLDER, today()))).toBe(false);
   });
 
   it("skips when prompt text is empty", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
 
-    const result = runScript("user-prompt-submit.js", {
-      payload: { hookEventName: "user-prompt-submit", cwd: hooksRoot },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+    const result = runScript(USER_PROMPT_SUBMIT_FILE, {
+      payload: { hookEventName: HOOK_EVENT_USER_PROMPT_SUBMIT_KEBAB, cwd: hooksRoot },
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
     expect(result.status).toBe(0);
-    expect(fs.existsSync(buildDailyFilePath(vaultPath, "ai-knowledge", today()))).toBe(false);
+    expect(fs.existsSync(buildDailyFilePath(vaultPath, DEFAULT_SUBFOLDER, today()))).toBe(false);
   });
 
   it("reports missing config when prompt exists but vault config does not", () => {
-    const homeDir = createTempDir("memory-mason-home-");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
 
-    const result = runScript("user-prompt-submit.js", {
-      payload: { hookEventName: "user-prompt-submit", cwd: hooksRoot, prompt: "capture this" },
+    const result = runScript(USER_PROMPT_SUBMIT_FILE, {
+      payload: {
+        hookEventName: HOOK_EVENT_USER_PROMPT_SUBMIT_KEBAB,
+        cwd: hooksRoot,
+        prompt: "capture this",
+      },
       env: buildEnv(homeDir),
     });
 
@@ -506,227 +576,230 @@ describe("user-prompt-submit.js", () => {
   });
 
   it("does not backfill assistant turns on prompt submit after transcript grows", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
-    const transcriptDir = createTempDir("memory-mason-transcript-");
-    const transcriptPath = path.join(transcriptDir, "session.jsonl");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const transcriptDir = createTempDir(TEST_TRANSCRIPT_PREFIX);
+    const transcriptPath = path.join(transcriptDir, TEST_DEFAULT_TRANSCRIPT_FILE);
 
     writeText(transcriptPath, buildTranscript(2));
 
-    runScript("user-prompt-submit.js", {
+    runScript(USER_PROMPT_SUBMIT_FILE, {
       payload: {
-        hookEventName: "user-prompt-submit",
+        hookEventName: HOOK_EVENT_USER_PROMPT_SUBMIT_KEBAB,
         cwd: hooksRoot,
         prompt: "first user prompt",
         transcript_path: transcriptPath,
         session_id: "session-anchor",
       },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
-    const dailyPathAfterFirst = buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1);
-    const contentAfterFirst = fs.readFileSync(dailyPathAfterFirst, "utf-8");
-    expect(contentAfterFirst).not.toContain("AssistantReply");
+    const dailyPathAfterFirst = buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1);
+    const contentAfterFirst = fs.readFileSync(dailyPathAfterFirst, UTF8_ENCODING);
+    expect(contentAfterFirst).not.toContain(ASSISTANT_REPLY_ENTRY_NAME);
     expect(contentAfterFirst).toContain("first user prompt");
 
-    writeText(transcriptPath, buildTranscript(4));
+    writeText(transcriptPath, buildTranscript(TEST_TURN_COUNT_SHORT));
 
-    const result = runScript("user-prompt-submit.js", {
+    const result = runScript(USER_PROMPT_SUBMIT_FILE, {
       payload: {
-        hookEventName: "user-prompt-submit",
+        hookEventName: HOOK_EVENT_USER_PROMPT_SUBMIT_KEBAB,
         cwd: hooksRoot,
         prompt: "second user prompt",
         transcript_path: transcriptPath,
         session_id: "session-anchor",
       },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
-    const dailyContent = fs.readFileSync(dailyPathAfterFirst, "utf-8");
+    const dailyContent = fs.readFileSync(dailyPathAfterFirst, UTF8_ENCODING);
 
     expect(result.status).toBe(0);
     expect(dailyContent).toContain("second user prompt");
-    expect(dailyContent).not.toContain("AssistantReply");
+    expect(dailyContent).not.toContain(ASSISTANT_REPLY_ENTRY_NAME);
     expect(dailyContent).not.toContain("assistant turn 3");
   });
 
   it("skips assistant dump on first call even when transcript has historical turns", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
-    const transcriptDir = createTempDir("memory-mason-transcript-");
-    const transcriptPath = path.join(transcriptDir, "session.jsonl");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const transcriptDir = createTempDir(TEST_TRANSCRIPT_PREFIX);
+    const transcriptPath = path.join(transcriptDir, TEST_DEFAULT_TRANSCRIPT_FILE);
 
     writeText(transcriptPath, buildTranscript(10));
 
-    const result = runScript("user-prompt-submit.js", {
+    const result = runScript(USER_PROMPT_SUBMIT_FILE, {
       payload: {
-        hookEventName: "user-prompt-submit",
+        hookEventName: HOOK_EVENT_USER_PROMPT_SUBMIT_KEBAB,
         cwd: hooksRoot,
         prompt: "new prompt after long history",
         transcript_path: transcriptPath,
         session_id: "session-noorphan",
       },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
     const dailyContent = fs.readFileSync(
-      buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1),
-      "utf-8",
+      buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
+      UTF8_ENCODING,
     );
 
     expect(result.status).toBe(0);
-    expect(dailyContent).not.toContain("AssistantReply");
+    expect(dailyContent).not.toContain(ASSISTANT_REPLY_ENTRY_NAME);
     expect(dailyContent).toContain("new prompt after long history");
   });
 
   it("keeps first and second prompts adjacent without inserting assistant backfill", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
-    const transcriptDir = createTempDir("memory-mason-transcript-");
-    const transcriptPath = path.join(transcriptDir, "session.jsonl");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const transcriptDir = createTempDir(TEST_TRANSCRIPT_PREFIX);
+    const transcriptPath = path.join(transcriptDir, TEST_DEFAULT_TRANSCRIPT_FILE);
 
     writeText(transcriptPath, buildTranscript(2));
 
-    runScript("user-prompt-submit.js", {
+    runScript(USER_PROMPT_SUBMIT_FILE, {
       payload: {
-        hookEventName: "user-prompt-submit",
+        hookEventName: HOOK_EVENT_USER_PROMPT_SUBMIT_KEBAB,
         cwd: hooksRoot,
         prompt: "second prompt",
         transcript_path: transcriptPath,
         session_id: "session-dedup",
       },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
-    writeText(transcriptPath, buildTranscript(4));
+    writeText(transcriptPath, buildTranscript(TEST_TURN_COUNT_SHORT));
 
-    runScript("user-prompt-submit.js", {
+    runScript(USER_PROMPT_SUBMIT_FILE, {
       payload: {
-        hookEventName: "user-prompt-submit",
+        hookEventName: HOOK_EVENT_USER_PROMPT_SUBMIT_KEBAB,
         cwd: hooksRoot,
         prompt: "third prompt",
         transcript_path: transcriptPath,
         session_id: "session-dedup",
       },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
-    const dailyPath = buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1);
-    const dailyContent = fs.readFileSync(dailyPath, "utf-8");
+    const dailyPath = buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1);
+    const dailyContent = fs.readFileSync(dailyPath, UTF8_ENCODING);
 
     expect(dailyContent).toContain("second prompt");
     expect(dailyContent).toContain("third prompt");
-    expect(dailyContent).not.toContain("AssistantReply");
+    expect(dailyContent).not.toContain(ASSISTANT_REPLY_ENTRY_NAME);
     expect(dailyContent).not.toContain("assistant turn 3");
   });
 
   it("skips assistant capture when transcript_path is absent", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
 
-    const result = runScript("user-prompt-submit.js", {
+    const result = runScript(USER_PROMPT_SUBMIT_FILE, {
       payload: {
-        hookEventName: "user-prompt-submit",
+        hookEventName: HOOK_EVENT_USER_PROMPT_SUBMIT_KEBAB,
         cwd: hooksRoot,
         prompt: "no transcript here",
         session_id: "session-xyz",
       },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
     const dailyContent = fs.readFileSync(
-      buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1),
-      "utf-8",
+      buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
+      UTF8_ENCODING,
     );
 
     expect(result.status).toBe(0);
-    expect(dailyContent).not.toContain("AssistantReply");
+    expect(dailyContent).not.toContain(ASSISTANT_REPLY_ENTRY_NAME);
     expect(dailyContent).toContain("no transcript here");
   });
 
   it("skips assistant capture when session_id is absent", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
-    const transcriptDir = createTempDir("memory-mason-transcript-");
-    const transcriptPath = path.join(transcriptDir, "session.jsonl");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const transcriptDir = createTempDir(TEST_TRANSCRIPT_PREFIX);
+    const transcriptPath = path.join(transcriptDir, TEST_DEFAULT_TRANSCRIPT_FILE);
 
     writeText(transcriptPath, buildTranscript(2));
 
-    const result = runScript("user-prompt-submit.js", {
+    const result = runScript(USER_PROMPT_SUBMIT_FILE, {
       payload: {
-        hookEventName: "user-prompt-submit",
+        hookEventName: HOOK_EVENT_USER_PROMPT_SUBMIT_KEBAB,
         cwd: hooksRoot,
         prompt: "no session id",
         transcript_path: transcriptPath,
       },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
     const dailyContent = fs.readFileSync(
-      buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1),
-      "utf-8",
+      buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
+      UTF8_ENCODING,
     );
 
     expect(result.status).toBe(0);
-    expect(dailyContent).not.toContain("AssistantReply");
+    expect(dailyContent).not.toContain(ASSISTANT_REPLY_ENTRY_NAME);
   });
 
   it("skips assistant capture when transcript file does not exist", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
 
-    const result = runScript("user-prompt-submit.js", {
+    const result = runScript(USER_PROMPT_SUBMIT_FILE, {
       payload: {
-        hookEventName: "user-prompt-submit",
+        hookEventName: HOOK_EVENT_USER_PROMPT_SUBMIT_KEBAB,
         cwd: hooksRoot,
         prompt: "missing transcript file",
         transcript_path: path.join(hooksRoot, "does-not-exist.jsonl"),
         session_id: "session-missing",
       },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
     const dailyContent = fs.readFileSync(
-      buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1),
-      "utf-8",
+      buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
+      UTF8_ENCODING,
     );
 
     expect(result.status).toBe(0);
-    expect(dailyContent).not.toContain("AssistantReply");
+    expect(dailyContent).not.toContain(ASSISTANT_REPLY_ENTRY_NAME);
   });
 });
 
-describe("post-tool-use.js", () => {
+describe(POST_TOOL_USE_FILE, () => {
   it("writes tool output for copilot vscode payloads", () => {
-    withMemoryMasonCaptureMode("full", () => {
-      const homeDir = createTempDir("memory-mason-home-");
-      const vaultPath = createTempDir("memory-mason-vault-");
+    withMemoryMasonCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
 
-      const result = runScript("post-tool-use.js", {
+      const result = runScript(POST_TOOL_USE_FILE, {
         payload: {
-          hookEventName: "post-tool-use",
+          hookEventName: HOOK_EVENT_POST_TOOL_USE_KEBAB,
           cwd: hooksRoot,
           tool_name: "Edit",
           tool_response: "patched file",
         },
-        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       });
 
       expect(result.status).toBe(0);
       expect(
-        fs.readFileSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1), "utf-8"),
+        fs.readFileSync(
+          buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
+          UTF8_ENCODING,
+        ),
       ).toContain("patched file");
     });
   });
 
   it("writes structured tool output for claude payloads", () => {
-    withMemoryMasonCaptureMode("full", () => {
-      const homeDir = createTempDir("memory-mason-home-");
-      const vaultPath = createTempDir("memory-mason-vault-");
+    withMemoryMasonCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
 
-      const result = runScript("post-tool-use.js", {
+      const result = runScript(POST_TOOL_USE_FILE, {
         payload: {
-          hook_event_name: "PostToolUse",
+          hook_event_name: HOOK_ENTRY_POST_TOOL_USE,
           cwd: hooksRoot,
           tool_name: "Write",
           tool_response: {
@@ -736,27 +809,33 @@ describe("post-tool-use.js", () => {
             isImage: false,
           },
         },
-        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       });
 
       expect(result.status).toBe(0);
       expect(
-        fs.readFileSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1), "utf-8"),
+        fs.readFileSync(
+          buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
+          UTF8_ENCODING,
+        ),
       ).toContain("grep hit 1");
       expect(
-        fs.readFileSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1), "utf-8"),
+        fs.readFileSync(
+          buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
+          UTF8_ENCODING,
+        ),
       ).toContain("stdout");
     });
   });
 
   it("writes text blocks for structured claude tool outputs", () => {
-    withMemoryMasonCaptureMode("full", () => {
-      const homeDir = createTempDir("memory-mason-home-");
-      const vaultPath = createTempDir("memory-mason-vault-");
+    withMemoryMasonCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
 
-      const result = runScript("post-tool-use.js", {
+      const result = runScript(POST_TOOL_USE_FILE, {
         payload: {
-          hook_event_name: "PostToolUse",
+          hook_event_name: HOOK_ENTRY_POST_TOOL_USE,
           cwd: hooksRoot,
           tool_name: "apply_patch",
           tool_response: [
@@ -764,46 +843,55 @@ describe("post-tool-use.js", () => {
             { type: "text", text: "match 2" },
           ],
         },
-        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       });
 
       expect(result.status).toBe(0);
       expect(
-        fs.readFileSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1), "utf-8"),
+        fs.readFileSync(
+          buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
+          UTF8_ENCODING,
+        ),
       ).toContain("match 1");
       expect(
-        fs.readFileSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1), "utf-8"),
+        fs.readFileSync(
+          buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
+          UTF8_ENCODING,
+        ),
       ).toContain("match 2");
     });
   });
 
   it("writes tool output for copilot cli payloads", () => {
-    withMemoryMasonCaptureMode("full", () => {
-      const homeDir = createTempDir("memory-mason-home-");
-      const vaultPath = createTempDir("memory-mason-vault-");
+    withMemoryMasonCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
 
-      runScript("post-tool-use.js", {
+      runScript(POST_TOOL_USE_FILE, {
         payload: {
           timestamp: "2026-04-27T10:00:00.000Z",
           cwd: hooksRoot,
           toolName: "apply_patch",
           toolResult: { textResultForLlm: "patch ok" },
         },
-        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       });
 
       expect(
-        fs.readFileSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1), "utf-8"),
+        fs.readFileSync(
+          buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
+          UTF8_ENCODING,
+        ),
       ).toContain("patch ok");
     });
   });
 
   it("writes tool output for codex payloads", () => {
-    withMemoryMasonCaptureMode("full", () => {
-      const homeDir = createTempDir("memory-mason-home-");
-      const vaultPath = createTempDir("memory-mason-vault-");
+    withMemoryMasonCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
 
-      runScript("post-tool-use.js", {
+      runScript(POST_TOOL_USE_FILE, {
         payload: {
           hook_event_name: "post_tool_use",
           turn_id: "turn-1",
@@ -811,37 +899,40 @@ describe("post-tool-use.js", () => {
           tool_name: "apply_patch",
           tool_result: "codex result",
         },
-        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       });
 
       expect(
-        fs.readFileSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1), "utf-8"),
+        fs.readFileSync(
+          buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
+          UTF8_ENCODING,
+        ),
       ).toContain("codex result");
     });
   });
 
   it("skips noisy tools", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
 
-    const result = runScript("post-tool-use.js", {
+    const result = runScript(POST_TOOL_USE_FILE, {
       payload: {
-        hookEventName: "post-tool-use",
+        hookEventName: HOOK_EVENT_POST_TOOL_USE_KEBAB,
         cwd: hooksRoot,
         tool_name: "Read",
         tool_response: "ignored",
       },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
     expect(result.status).toBe(0);
-    expect(fs.existsSync(buildDailyFilePath(vaultPath, "ai-knowledge", today()))).toBe(false);
+    expect(fs.existsSync(buildDailyFilePath(vaultPath, DEFAULT_SUBFOLDER, today()))).toBe(false);
   });
 
   it("reports invalid payloads to stderr", () => {
-    const result = runScript("post-tool-use.js", {
+    const result = runScript(POST_TOOL_USE_FILE, {
       payload: { cwd: hooksRoot },
-      env: buildEnv(createTempDir("memory-mason-home-")),
+      env: buildEnv(createTempDir(TEST_HOME_PREFIX)),
     });
 
     expect(result.status).toBe(0);
@@ -849,102 +940,126 @@ describe("post-tool-use.js", () => {
   });
 });
 
-describe("pre-compact.js", () => {
+describe(PRE_COMPACT_FILE, () => {
   it("skips when invoked by another Memory Mason command", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
-    const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const transcriptPath = path.join(
+      createTempDir(TEST_TRANSCRIPT_PREFIX),
+      TEST_DEFAULT_TRANSCRIPT_FILE,
+    );
 
-    writeText(transcriptPath, buildTranscript(6));
+    writeText(transcriptPath, buildTranscript(TEST_TURN_COUNT_STANDARD));
 
-    const result = runScript("pre-compact.js", {
-      payload: { cwd: hooksRoot, transcript_path: transcriptPath, session_id: "session-1" },
+    const result = runScript(PRE_COMPACT_FILE, {
+      payload: {
+        cwd: hooksRoot,
+        transcript_path: transcriptPath,
+        session_id: TEST_DEFAULT_SESSION_ID,
+      },
       env: buildEnv(homeDir, {
-        MEMORY_MASON_VAULT_PATH: vaultPath,
-        MEMORY_MASON_INVOKED_BY: "mmc",
+        [ENV_KEY_VAULT_PATH]: vaultPath,
+        [ENV_KEY_INVOKED_BY]: "mmc",
       }),
     });
 
     expect(result.status).toBe(0);
-    expect(fs.existsSync(buildDailyFilePath(vaultPath, "ai-knowledge", today()))).toBe(false);
+    expect(fs.existsSync(buildDailyFilePath(vaultPath, DEFAULT_SUBFOLDER, today()))).toBe(false);
   });
 
   it("skips when transcript file missing", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
 
-    const result = runScript("pre-compact.js", {
+    const result = runScript(PRE_COMPACT_FILE, {
       payload: {
         cwd: hooksRoot,
         transcript_path: path.join(hooksRoot, "missing.jsonl"),
-        session_id: "session-1",
+        session_id: TEST_DEFAULT_SESSION_ID,
       },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
     expect(result.status).toBe(0);
-    expect(fs.existsSync(buildDailyFilePath(vaultPath, "ai-knowledge", today()))).toBe(false);
+    expect(fs.existsSync(buildDailyFilePath(vaultPath, DEFAULT_SUBFOLDER, today()))).toBe(false);
   });
 
   it("skips when transcript excerpt too small", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
-    const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const transcriptPath = path.join(
+      createTempDir(TEST_TRANSCRIPT_PREFIX),
+      TEST_DEFAULT_TRANSCRIPT_FILE,
+    );
 
-    writeText(transcriptPath, buildTranscript(4));
+    writeText(transcriptPath, buildTranscript(TEST_TURN_COUNT_SHORT));
 
-    runScript("pre-compact.js", {
-      payload: { cwd: hooksRoot, transcript_path: transcriptPath, session_id: "session-1" },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+    runScript(PRE_COMPACT_FILE, {
+      payload: {
+        cwd: hooksRoot,
+        transcript_path: transcriptPath,
+        session_id: TEST_DEFAULT_SESSION_ID,
+      },
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
-    expect(fs.existsSync(buildDailyFilePath(vaultPath, "ai-knowledge", today()))).toBe(false);
+    expect(fs.existsSync(buildDailyFilePath(vaultPath, DEFAULT_SUBFOLDER, today()))).toBe(false);
   });
 
   it("writes excerpt and capture state for valid transcript", () => {
-    withMemoryMasonCaptureMode("full", () => {
-      const homeDir = createTempDir("memory-mason-home-");
-      const vaultPath = createTempDir("memory-mason-vault-");
-      const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
+    withMemoryMasonCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+      const transcriptPath = path.join(
+        createTempDir(TEST_TRANSCRIPT_PREFIX),
+        TEST_DEFAULT_TRANSCRIPT_FILE,
+      );
 
-      writeText(transcriptPath, buildTranscript(6));
+      writeText(transcriptPath, buildTranscript(TEST_TURN_COUNT_STANDARD));
 
-      const result = runScript("pre-compact.js", {
-        payload: { cwd: hooksRoot, transcript_path: transcriptPath, session_id: "session-1" },
-        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      const result = runScript(PRE_COMPACT_FILE, {
+        payload: {
+          cwd: hooksRoot,
+          transcript_path: transcriptPath,
+          session_id: TEST_DEFAULT_SESSION_ID,
+        },
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       });
 
-      const dailyPath = buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1);
-      const statePath = resolveCaptureStatePath(vaultPath, "ai-knowledge");
+      const dailyPath = buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1);
+      const statePath = resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER);
       expect(result.status).toBe(0);
-      expect(fs.readFileSync(dailyPath, "utf-8")).toContain("session-1 / pre-compact");
-      expect(fs.readFileSync(dailyPath, "utf-8")).toContain("**User:** user turn");
-      expect(JSON.parse(fs.readFileSync(statePath, "utf-8")).lastCapture.source).toBe(
-        "pre-compact",
+      expect(fs.readFileSync(dailyPath, UTF8_ENCODING)).toContain("session-1 / pre-compact");
+      expect(fs.readFileSync(dailyPath, UTF8_ENCODING)).toContain("**User:** user turn");
+      expect(JSON.parse(fs.readFileSync(statePath, UTF8_ENCODING)).lastCapture.source).toBe(
+        HOOK_EVENT_PRE_COMPACT_KEBAB,
       );
     });
   });
 
   it("writes full transcript without turn or character truncation", () => {
-    withMemoryMasonCaptureMode("full", () => {
-      const homeDir = createTempDir("memory-mason-home-");
-      const vaultPath = createTempDir("memory-mason-vault-");
-      const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
-      const longFirstTurn = `first-user-turn-${"x".repeat(17000)}`;
+    withMemoryMasonCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+      const transcriptPath = path.join(
+        createTempDir(TEST_TRANSCRIPT_PREFIX),
+        TEST_DEFAULT_TRANSCRIPT_FILE,
+      );
+      const longFirstTurn = `first-user-turn-${"x".repeat(TEST_LONG_TRANSCRIPT_REPEAT_COUNT)}`;
 
-      writeText(transcriptPath, buildTranscript(40, longFirstTurn));
+      writeText(transcriptPath, buildTranscript(TEST_TURN_COUNT_EXTENDED, longFirstTurn));
 
-      const result = runScript("pre-compact.js", {
+      const result = runScript(PRE_COMPACT_FILE, {
         payload: {
           cwd: hooksRoot,
           transcript_path: transcriptPath,
           session_id: "session-full-pre-compact",
         },
-        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       });
 
-      const dailyPath = buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1);
-      const dailyContent = fs.readFileSync(dailyPath, "utf-8");
+      const dailyPath = buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1);
+      const dailyContent = fs.readFileSync(dailyPath, UTF8_ENCODING);
 
       expect(result.status).toBe(0);
       expect(dailyContent).toContain(longFirstTurn);
@@ -954,33 +1069,44 @@ describe("pre-compact.js", () => {
   });
 
   it("skips duplicate capture within duplicate window", () => {
-    withMemoryMasonCaptureMode("full", () => {
-      const homeDir = createTempDir("memory-mason-home-");
-      const vaultPath = createTempDir("memory-mason-vault-");
-      const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
+    withMemoryMasonCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+      const transcriptPath = path.join(
+        createTempDir(TEST_TRANSCRIPT_PREFIX),
+        TEST_DEFAULT_TRANSCRIPT_FILE,
+      );
 
-      writeText(transcriptPath, buildTranscript(6));
+      writeText(transcriptPath, buildTranscript(TEST_TURN_COUNT_STANDARD));
 
-      runScript("pre-compact.js", {
-        payload: { cwd: hooksRoot, transcript_path: transcriptPath, session_id: "session-1" },
-        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      runScript(PRE_COMPACT_FILE, {
+        payload: {
+          cwd: hooksRoot,
+          transcript_path: transcriptPath,
+          session_id: TEST_DEFAULT_SESSION_ID,
+        },
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       });
-      const dailyPath = buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1);
-      const firstContent = fs.readFileSync(dailyPath, "utf-8");
+      const dailyPath = buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1);
+      const firstContent = fs.readFileSync(dailyPath, UTF8_ENCODING);
 
-      runScript("pre-compact.js", {
-        payload: { cwd: hooksRoot, transcript_path: transcriptPath, session_id: "session-1" },
-        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      runScript(PRE_COMPACT_FILE, {
+        payload: {
+          cwd: hooksRoot,
+          transcript_path: transcriptPath,
+          session_id: TEST_DEFAULT_SESSION_ID,
+        },
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       });
 
-      expect(fs.readFileSync(dailyPath, "utf-8")).toBe(firstContent);
+      expect(fs.readFileSync(dailyPath, UTF8_ENCODING)).toBe(firstContent);
     });
   });
 
   it("reports invalid stdin to stderr", () => {
-    const result = runScript("pre-compact.js", {
+    const result = runScript(PRE_COMPACT_FILE, {
       stdinText: "{bad",
-      env: buildEnv(createTempDir("memory-mason-home-")),
+      env: buildEnv(createTempDir(TEST_HOME_PREFIX)),
     });
 
     expect(result.status).toBe(0);
@@ -988,150 +1114,163 @@ describe("pre-compact.js", () => {
   });
 });
 
-describe("session-end.js", () => {
+describe(SESSION_END_FILE, () => {
   it("skips when invoked by another Memory Mason command", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
-    const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const transcriptPath = path.join(
+      createTempDir(TEST_TRANSCRIPT_PREFIX),
+      TEST_DEFAULT_TRANSCRIPT_FILE,
+    );
 
     writeText(transcriptPath, buildTranscript(2));
 
-    const result = runScript("session-end.js", {
-      payload: { hook_event_name: "session_end", cwd: hooksRoot, transcript_path: transcriptPath },
+    const result = runScript(SESSION_END_FILE, {
+      payload: {
+        hook_event_name: HOOK_EVENT_SESSION_END_SNAKE,
+        cwd: hooksRoot,
+        transcript_path: transcriptPath,
+      },
       env: buildEnv(homeDir, {
-        MEMORY_MASON_VAULT_PATH: vaultPath,
-        MEMORY_MASON_INVOKED_BY: "mmq",
+        [ENV_KEY_VAULT_PATH]: vaultPath,
+        [ENV_KEY_INVOKED_BY]: "mmq",
       }),
     });
 
     expect(result.status).toBe(0);
-    expect(fs.existsSync(buildDailyFilePath(vaultPath, "ai-knowledge", today()))).toBe(false);
+    expect(fs.existsSync(buildDailyFilePath(vaultPath, DEFAULT_SUBFOLDER, today()))).toBe(false);
   });
 
   it("captures assistant replies on Stop and skips duplicates for unchanged transcript", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
-    const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const transcriptPath = path.join(
+      createTempDir(TEST_TRANSCRIPT_PREFIX),
+      TEST_DEFAULT_TRANSCRIPT_FILE,
+    );
 
     writeText(transcriptPath, buildTranscript(1, "first prompt turn"));
 
-    runScript("user-prompt-submit.js", {
+    runScript(USER_PROMPT_SUBMIT_FILE, {
       payload: {
-        hookEventName: "user-prompt-submit",
+        hookEventName: HOOK_EVENT_USER_PROMPT_SUBMIT_KEBAB,
         cwd: hooksRoot,
         prompt: "first prompt",
         transcript_path: transcriptPath,
         session_id: "session-stop-order",
       },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
-    const dailyPath = buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1);
-    const afterFirstPrompt = fs.readFileSync(dailyPath, "utf-8");
+    const dailyPath = buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1);
+    const afterFirstPrompt = fs.readFileSync(dailyPath, UTF8_ENCODING);
     expect(afterFirstPrompt).toContain("first prompt");
-    expect(afterFirstPrompt).not.toContain("AssistantReply");
+    expect(afterFirstPrompt).not.toContain(ASSISTANT_REPLY_ENTRY_NAME);
 
     writeText(transcriptPath, buildTranscript(2, "first prompt turn"));
 
-    runScript("session-end.js", {
+    runScript(SESSION_END_FILE, {
       payload: {
-        hookEventName: "Stop",
+        hookEventName: HOOK_EVENT_STOP_PASCAL,
         cwd: hooksRoot,
         transcript_path: transcriptPath,
         session_id: "session-stop-order",
       },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
-    const afterFirstStop = fs.readFileSync(dailyPath, "utf-8");
-    expect(afterFirstStop).toContain("AssistantReply");
+    const afterFirstStop = fs.readFileSync(dailyPath, UTF8_ENCODING);
+    expect(afterFirstStop).toContain(ASSISTANT_REPLY_ENTRY_NAME);
     expect(afterFirstStop).toContain("assistant turn 1");
     expect(afterFirstStop.indexOf("first prompt")).toBeLessThan(
       afterFirstStop.indexOf("assistant turn 1"),
     );
 
-    writeText(transcriptPath, buildTranscript(3, "first prompt turn"));
+    writeText(transcriptPath, buildTranscript(TEST_TURN_COUNT_BASELINE, "first prompt turn"));
 
-    runScript("user-prompt-submit.js", {
+    runScript(USER_PROMPT_SUBMIT_FILE, {
       payload: {
-        hookEventName: "user-prompt-submit",
+        hookEventName: HOOK_EVENT_USER_PROMPT_SUBMIT_KEBAB,
         cwd: hooksRoot,
         prompt: "second prompt",
         transcript_path: transcriptPath,
         session_id: "session-stop-order",
       },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
-    const afterSecondPrompt = fs.readFileSync(dailyPath, "utf-8");
+    const afterSecondPrompt = fs.readFileSync(dailyPath, UTF8_ENCODING);
     expect(afterSecondPrompt).toContain("second prompt");
     expect(afterSecondPrompt.split("assistant turn 1").length - 1).toBe(1);
     expect(afterSecondPrompt).not.toContain("assistant turn 3");
 
-    writeText(transcriptPath, buildTranscript(4, "first prompt turn"));
+    writeText(transcriptPath, buildTranscript(TEST_TURN_COUNT_SHORT, "first prompt turn"));
 
-    runScript("session-end.js", {
+    runScript(SESSION_END_FILE, {
       payload: {
-        hook_event_name: "stop",
+        hook_event_name: HOOK_EVENT_STOP,
         cwd: hooksRoot,
         transcript_path: transcriptPath,
         session_id: "session-stop-order",
       },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
-    const afterSecondStop = fs.readFileSync(dailyPath, "utf-8");
+    const afterSecondStop = fs.readFileSync(dailyPath, UTF8_ENCODING);
     expect(afterSecondStop).toContain("assistant turn 3");
     expect(afterSecondStop.indexOf("second prompt")).toBeLessThan(
       afterSecondStop.indexOf("assistant turn 3"),
     );
 
-    runScript("session-end.js", {
+    runScript(SESSION_END_FILE, {
       payload: {
-        hook_event_name: "stop",
+        hook_event_name: HOOK_EVENT_STOP,
         cwd: hooksRoot,
         transcript_path: transcriptPath,
         session_id: "session-stop-order",
       },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
-    const afterDuplicateStop = fs.readFileSync(dailyPath, "utf-8");
+    const afterDuplicateStop = fs.readFileSync(dailyPath, UTF8_ENCODING);
     expect(afterDuplicateStop).toBe(afterSecondStop);
     expect(afterDuplicateStop.split("assistant turn 3").length - 1).toBe(1);
   });
 
   it("captures first assistant reply on Stop when prompt submit could not anchor transcript count", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
-    const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const transcriptPath = path.join(
+      createTempDir(TEST_TRANSCRIPT_PREFIX),
+      TEST_DEFAULT_TRANSCRIPT_FILE,
+    );
 
-    runScript("user-prompt-submit.js", {
+    runScript(USER_PROMPT_SUBMIT_FILE, {
       payload: {
-        hook_event_name: "UserPromptSubmit",
+        hook_event_name: HOOK_ENTRY_USER_PROMPT_SUBMIT,
         cwd: hooksRoot,
         prompt: "first prompt",
         transcript_path: transcriptPath,
         session_id: "session-stop-first-turn",
       },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
     writeText(transcriptPath, buildTranscript(2, "first prompt turn"));
 
-    const result = runScript("session-end.js", {
+    const result = runScript(SESSION_END_FILE, {
       payload: {
-        hook_event_name: "Stop",
+        hook_event_name: HOOK_EVENT_STOP_PASCAL,
         cwd: hooksRoot,
         transcript_path: transcriptPath,
         session_id: "session-stop-first-turn",
       },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
     const dailyContent = fs.readFileSync(
-      buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1),
-      "utf-8",
+      buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
+      UTF8_ENCODING,
     );
 
     expect(result.status).toBe(0);
@@ -1143,50 +1282,53 @@ describe("session-end.js", () => {
   });
 
   it("uses last_assistant_message fallback on Stop without replaying duplicate assistant replies later", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
-    const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const transcriptPath = path.join(
+      createTempDir(TEST_TRANSCRIPT_PREFIX),
+      TEST_DEFAULT_TRANSCRIPT_FILE,
+    );
 
     writeText(transcriptPath, buildTranscript(1, "first prompt turn"));
 
-    runScript("user-prompt-submit.js", {
+    runScript(USER_PROMPT_SUBMIT_FILE, {
       payload: {
-        hook_event_name: "UserPromptSubmit",
+        hook_event_name: HOOK_ENTRY_USER_PROMPT_SUBMIT,
         cwd: hooksRoot,
         prompt: "first prompt",
         transcript_path: transcriptPath,
         session_id: "session-stop-payload-fallback",
       },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
-    runScript("session-end.js", {
+    runScript(SESSION_END_FILE, {
       payload: {
-        hook_event_name: "Stop",
+        hook_event_name: HOOK_EVENT_STOP_PASCAL,
         cwd: hooksRoot,
         transcript_path: transcriptPath,
         session_id: "session-stop-payload-fallback",
         last_assistant_message: "assistant turn 1",
       },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
     writeText(transcriptPath, buildTranscript(2, "first prompt turn"));
 
-    const result = runScript("session-end.js", {
+    const result = runScript(SESSION_END_FILE, {
       payload: {
-        hook_event_name: "Stop",
+        hook_event_name: HOOK_EVENT_STOP_PASCAL,
         cwd: hooksRoot,
         transcript_path: transcriptPath,
         session_id: "session-stop-payload-fallback",
         last_assistant_message: "assistant turn 1",
       },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
     const dailyContent = fs.readFileSync(
-      buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1),
-      "utf-8",
+      buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
+      UTF8_ENCODING,
     );
 
     expect(result.status).toBe(0);
@@ -1194,42 +1336,48 @@ describe("session-end.js", () => {
   });
 
   it("is a no-op on first Stop when transcript is empty and payload has no assistant message", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
-    const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const transcriptPath = path.join(
+      createTempDir(TEST_TRANSCRIPT_PREFIX),
+      TEST_DEFAULT_TRANSCRIPT_FILE,
+    );
 
     writeText(transcriptPath, "");
 
-    const result = runScript("session-end.js", {
+    const result = runScript(SESSION_END_FILE, {
       payload: {
-        hook_event_name: "Stop",
+        hook_event_name: HOOK_EVENT_STOP_PASCAL,
         cwd: hooksRoot,
         transcript_path: transcriptPath,
         session_id: "session-stop-empty-first",
       },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
     expect(result.status).toBe(0);
-    expect(fs.existsSync(buildDailyFilePath(vaultPath, "ai-knowledge", today()))).toBe(false);
+    expect(fs.existsSync(buildDailyFilePath(vaultPath, DEFAULT_SUBFOLDER, today()))).toBe(false);
   });
 
   it("captures assistant reply from VS Code transcript entries on Stop", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
-    const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const transcriptPath = path.join(
+      createTempDir(TEST_TRANSCRIPT_PREFIX),
+      TEST_DEFAULT_TRANSCRIPT_FILE,
+    );
 
     writeText(transcriptPath, buildVsCodeTranscript([{ user: "first prompt" }]));
 
-    runScript("user-prompt-submit.js", {
+    runScript(USER_PROMPT_SUBMIT_FILE, {
       payload: {
-        hook_event_name: "UserPromptSubmit",
+        hook_event_name: HOOK_ENTRY_USER_PROMPT_SUBMIT,
         cwd: hooksRoot,
         prompt: "first prompt",
         transcript_path: transcriptPath,
         session_id: "session-stop-vscode-transcript",
       },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
     writeText(
@@ -1237,19 +1385,19 @@ describe("session-end.js", () => {
       buildVsCodeTranscript([{ user: "first prompt", assistant: "assistant turn 1" }]),
     );
 
-    const result = runScript("session-end.js", {
+    const result = runScript(SESSION_END_FILE, {
       payload: {
-        hook_event_name: "Stop",
+        hook_event_name: HOOK_EVENT_STOP_PASCAL,
         cwd: hooksRoot,
         transcript_path: transcriptPath,
         session_id: "session-stop-vscode-transcript",
       },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
     const dailyContent = fs.readFileSync(
-      buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1),
-      "utf-8",
+      buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
+      UTF8_ENCODING,
     );
 
     expect(result.status).toBe(0);
@@ -1258,52 +1406,58 @@ describe("session-end.js", () => {
   });
 
   it("writes transcript from explicit transcript path", () => {
-    withMemoryMasonCaptureMode("full", () => {
-      const homeDir = createTempDir("memory-mason-home-");
-      const vaultPath = createTempDir("memory-mason-vault-");
-      const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
+    withMemoryMasonCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+      const transcriptPath = path.join(
+        createTempDir(TEST_TRANSCRIPT_PREFIX),
+        TEST_DEFAULT_TRANSCRIPT_FILE,
+      );
 
       writeText(transcriptPath, buildTranscript(2));
 
-      const result = runScript("session-end.js", {
+      const result = runScript(SESSION_END_FILE, {
         payload: {
-          hook_event_name: "session_end",
+          hook_event_name: HOOK_EVENT_SESSION_END_SNAKE,
           cwd: hooksRoot,
           transcript_path: transcriptPath,
-          session_id: "session-1",
-          source: "stop",
+          session_id: TEST_DEFAULT_SESSION_ID,
+          source: HOOK_EVENT_STOP,
         },
-        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       });
 
-      const dailyPath = buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1);
+      const dailyPath = buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1);
       expect(result.status).toBe(0);
-      expect(fs.readFileSync(dailyPath, "utf-8")).toContain("session-1 / stop");
+      expect(fs.readFileSync(dailyPath, UTF8_ENCODING)).toContain("session-1 / stop");
     });
   });
 
   it("writes full transcript from explicit path without truncation", () => {
-    withMemoryMasonCaptureMode("full", () => {
-      const homeDir = createTempDir("memory-mason-home-");
-      const vaultPath = createTempDir("memory-mason-vault-");
-      const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
-      const longFirstTurn = `session-end-first-user-${"y".repeat(17000)}`;
+    withMemoryMasonCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+      const transcriptPath = path.join(
+        createTempDir(TEST_TRANSCRIPT_PREFIX),
+        TEST_DEFAULT_TRANSCRIPT_FILE,
+      );
+      const longFirstTurn = `session-end-first-user-${"y".repeat(TEST_LONG_TRANSCRIPT_REPEAT_COUNT)}`;
 
-      writeText(transcriptPath, buildTranscript(40, longFirstTurn));
+      writeText(transcriptPath, buildTranscript(TEST_TURN_COUNT_EXTENDED, longFirstTurn));
 
-      const result = runScript("session-end.js", {
+      const result = runScript(SESSION_END_FILE, {
         payload: {
-          hook_event_name: "session_end",
+          hook_event_name: HOOK_EVENT_SESSION_END_SNAKE,
           cwd: hooksRoot,
           transcript_path: transcriptPath,
           session_id: "session-full-session-end",
-          source: "stop",
+          source: HOOK_EVENT_STOP,
         },
-        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       });
 
-      const dailyPath = buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1);
-      const dailyContent = fs.readFileSync(dailyPath, "utf-8");
+      const dailyPath = buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1);
+      const dailyContent = fs.readFileSync(dailyPath, UTF8_ENCODING);
 
       expect(result.status).toBe(0);
       expect(dailyContent).toContain(longFirstTurn);
@@ -1313,9 +1467,9 @@ describe("session-end.js", () => {
   });
 
   it("falls back to codex session files when transcript path missing", () => {
-    withMemoryMasonCaptureMode("full", () => {
-      const homeDir = createTempDir("memory-mason-home-");
-      const vaultPath = createTempDir("memory-mason-vault-");
+    withMemoryMasonCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
       const codexFile = path.join(
         homeDir,
         ".codex",
@@ -1326,101 +1480,110 @@ describe("session-end.js", () => {
 
       writeText(codexFile, buildTranscript(2));
 
-      runScript("session-end.js", {
+      runScript(SESSION_END_FILE, {
         payload: {
-          hook_event_name: "session_end",
+          hook_event_name: HOOK_EVENT_SESSION_END_SNAKE,
           turn_id: "turn-1",
           cwd: hooksRoot,
           session_id: "session-2",
         },
-        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       });
 
       expect(
-        fs.readFileSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1), "utf-8"),
+        fs.readFileSync(
+          buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
+          UTF8_ENCODING,
+        ),
       ).toContain("session-2 / codex");
     });
   });
 
   it("falls back to Copilot CLI session-state content", () => {
-    withMemoryMasonCaptureMode("full", () => {
-      const homeDir = createTempDir("memory-mason-home-");
-      const vaultPath = createTempDir("memory-mason-vault-");
+    withMemoryMasonCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
       const sessionDir = path.join(homeDir, ".copilot", "session-state", "session-a");
-      const cwd = createTempDir("memory-mason-cwd-");
+      const cwd = createTempDir(TEST_CWD_PREFIX);
       const transcriptPath = path.join(sessionDir, "state.jsonl");
 
       writeText(transcriptPath, buildTranscript(2, cwd));
 
-      runScript("session-end.js", {
+      runScript(SESSION_END_FILE, {
         payload: {
           timestamp: "2026-04-27T10:00:00.000Z",
           cwd,
         },
-        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       });
 
       expect(
-        fs.readFileSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1), "utf-8"),
+        fs.readFileSync(
+          buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
+          UTF8_ENCODING,
+        ),
       ).toContain("unknown / copilot-cli");
     });
   });
 
   it("skips when Copilot CLI session-state is missing", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
 
-    const result = runScript("session-end.js", {
+    const result = runScript(SESSION_END_FILE, {
       payload: {
         timestamp: "2026-04-27T10:00:00.000Z",
         cwd: hooksRoot,
       },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
     expect(result.status).toBe(0);
-    expect(fs.existsSync(buildDailyFilePath(vaultPath, "ai-knowledge", today()))).toBe(false);
+    expect(fs.existsSync(buildDailyFilePath(vaultPath, DEFAULT_SUBFOLDER, today()))).toBe(false);
   });
 
   it("skips duplicate transcript capture within duplicate window", () => {
-    withMemoryMasonCaptureMode("full", () => {
-      const homeDir = createTempDir("memory-mason-home-");
-      const vaultPath = createTempDir("memory-mason-vault-");
-      const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
+    withMemoryMasonCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+      const transcriptPath = path.join(
+        createTempDir(TEST_TRANSCRIPT_PREFIX),
+        TEST_DEFAULT_TRANSCRIPT_FILE,
+      );
 
       writeText(transcriptPath, buildTranscript(2));
 
-      runScript("session-end.js", {
+      runScript(SESSION_END_FILE, {
         payload: {
-          hook_event_name: "session_end",
+          hook_event_name: HOOK_EVENT_SESSION_END_SNAKE,
           cwd: hooksRoot,
           transcript_path: transcriptPath,
           session_id: "session-3",
         },
-        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       });
 
-      const dailyPath = buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1);
-      const firstContent = fs.readFileSync(dailyPath, "utf-8");
+      const dailyPath = buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1);
+      const firstContent = fs.readFileSync(dailyPath, UTF8_ENCODING);
 
-      runScript("session-end.js", {
+      runScript(SESSION_END_FILE, {
         payload: {
-          hook_event_name: "session_end",
+          hook_event_name: HOOK_EVENT_SESSION_END_SNAKE,
           cwd: hooksRoot,
           transcript_path: transcriptPath,
           session_id: "session-3",
         },
-        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       });
 
-      expect(fs.readFileSync(dailyPath, "utf-8")).toBe(firstContent);
+      expect(fs.readFileSync(dailyPath, UTF8_ENCODING)).toBe(firstContent);
     });
   });
 
   it("reports invalid stdin to stderr", () => {
-    const result = runScript("session-end.js", {
+    const result = runScript(SESSION_END_FILE, {
       stdinText: "{bad",
-      env: buildEnv(createTempDir("memory-mason-home-")),
+      env: buildEnv(createTempDir(TEST_HOME_PREFIX)),
     });
 
     expect(result.status).toBe(0);
@@ -1430,7 +1593,7 @@ describe("session-end.js", () => {
 
 describe("Copilot hook installer scripts", () => {
   it("installs user-level Copilot hook files with absolute commands and hook metadata", () => {
-    const homeDir = createTempDir("memory-mason-home-");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
     const result = runScript("install-copilot-hooks.js", {
       stdinText: "",
       cwd: repoRoot,
@@ -1447,7 +1610,7 @@ describe("Copilot hook installer scripts", () => {
   });
 
   it("installs workspace-level Copilot hook files with absolute commands and hook metadata", () => {
-    const homeDir = createTempDir("memory-mason-home-");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
     const workspaceDir = createTempDir("memory-mason-workspace-");
     const writes = [];
     const result = installCopilotHooks.main({
@@ -1473,7 +1636,7 @@ describe("Copilot hook installer scripts", () => {
   });
 
   it("falls back to inline definitions when source hook files are not available", () => {
-    const homeDir = createTempDir("memory-mason-home-");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
     const targetDir = createTempDir("memory-mason-copilot-target-");
     const missingSourceDir = path.join(
       createTempDir("memory-mason-missing-source-"),
@@ -1499,7 +1662,7 @@ describe("Copilot hook installer scripts", () => {
   });
 
   it("uninstalls user-level Copilot hook files", () => {
-    const homeDir = createTempDir("memory-mason-home-");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
 
     runScript("install-copilot-hooks.js", {
       stdinText: "",
@@ -1521,7 +1684,7 @@ describe("Copilot hook installer scripts", () => {
   });
 
   it("uninstalls workspace-level Copilot hook files", () => {
-    const homeDir = createTempDir("memory-mason-home-");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
     const workspaceDir = createTempDir("memory-mason-workspace-");
 
     installCopilotHooks.main({
@@ -1573,21 +1736,21 @@ describe("capture-state.js helpers", () => {
     const state = {
       lastCapture: null,
       mmSuppressed: false,
-      transcriptTurnCounts: { "session-1": 5 },
+      transcriptTurnCounts: { [TEST_DEFAULT_SESSION_ID]: PRE_COMPACT_MIN_TURNS },
     };
-    expect(getTranscriptTurnCount(state, "session-1")).toBe(5);
+    expect(getTranscriptTurnCount(state, TEST_DEFAULT_SESSION_ID)).toBe(PRE_COMPACT_MIN_TURNS);
   });
 
   it("getTranscriptTurnCount returns 0 for invalid/empty sessionId", () => {
     const state = defaultCaptureState();
     expect(getTranscriptTurnCount(state, "")).toBe(0);
-    expect(getTranscriptTurnCount(null, "session-1")).toBe(0);
+    expect(getTranscriptTurnCount(null, TEST_DEFAULT_SESSION_ID)).toBe(0);
   });
 
   it("setTranscriptTurnCount stores count for sessionId", () => {
     const state = defaultCaptureState();
-    const next = setTranscriptTurnCount(state, "session-1", 4);
-    expect(next.transcriptTurnCounts["session-1"]).toBe(4);
+    const next = setTranscriptTurnCount(state, TEST_DEFAULT_SESSION_ID, TEST_TURN_COUNT_SHORT);
+    expect(next.transcriptTurnCounts[TEST_DEFAULT_SESSION_ID]).toBe(TEST_TURN_COUNT_SHORT);
     expect(next.lastCapture).toBe(null);
   });
 
@@ -1595,44 +1758,48 @@ describe("capture-state.js helpers", () => {
     const state = {
       lastCapture: null,
       mmSuppressed: false,
-      transcriptTurnCounts: { "session-1": 2 },
+      transcriptTurnCounts: { [TEST_DEFAULT_SESSION_ID]: 2 },
     };
-    const next = setTranscriptTurnCount(state, "session-2", 6);
-    expect(next.transcriptTurnCounts["session-1"]).toBe(2);
-    expect(next.transcriptTurnCounts["session-2"]).toBe(6);
+    const next = setTranscriptTurnCount(state, "session-2", TEST_TURN_COUNT_STANDARD);
+    expect(next.transcriptTurnCounts[TEST_DEFAULT_SESSION_ID]).toBe(2);
+    expect(next.transcriptTurnCounts["session-2"]).toBe(TEST_TURN_COUNT_STANDARD);
   });
 
   it("setTranscriptTurnCount throws on empty sessionId", () => {
     expect(() => setTranscriptTurnCount(defaultCaptureState(), "", 1)).toThrow(
       "sessionId must be a non-empty string",
     );
-    expect(() => setTranscriptTurnCount(defaultCaptureState(), 123, 1)).toThrow(
-      "sessionId must be a non-empty string",
-    );
+    expect(() =>
+      setTranscriptTurnCount(defaultCaptureState(), TEST_INVALID_SESSION_ID_NUMBER, 1),
+    ).toThrow("sessionId must be a non-empty string");
   });
 
   it("setTranscriptTurnCount throws on invalid count", () => {
-    expect(() => setTranscriptTurnCount(defaultCaptureState(), "session-1", -1)).toThrow(
-      "count must be a non-negative integer",
-    );
-    expect(() => setTranscriptTurnCount(defaultCaptureState(), "session-1", 1.5)).toThrow(
-      "count must be a non-negative integer",
-    );
+    expect(() =>
+      setTranscriptTurnCount(defaultCaptureState(), TEST_DEFAULT_SESSION_ID, -1),
+    ).toThrow("count must be a non-negative integer");
+    expect(() =>
+      setTranscriptTurnCount(
+        defaultCaptureState(),
+        TEST_DEFAULT_SESSION_ID,
+        TEST_INVALID_NON_INTEGER_COUNT,
+      ),
+    ).toThrow("count must be a non-negative integer");
   });
 
   it("setTranscriptTurnCount falls back to default state for non-object state", () => {
-    expect(setTranscriptTurnCount(null, "session-1", 2)).toEqual({
+    expect(setTranscriptTurnCount(null, TEST_DEFAULT_SESSION_ID, 2)).toEqual({
       lastCapture: null,
       mmSuppressed: false,
       transcriptTurnCounts: {
-        "session-1": 2,
+        [TEST_DEFAULT_SESSION_ID]: 2,
       },
     });
   });
 
   it("loadCaptureState sanitizes transcriptTurnCounts and keeps only non-negative integers", () => {
-    const vaultPath = createTempDir("memory-mason-vault-");
-    const statePath = resolveCaptureStatePath(vaultPath, "ai-knowledge");
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const statePath = resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER);
 
     writeText(
       statePath,
@@ -1640,7 +1807,7 @@ describe("capture-state.js helpers", () => {
         lastCapture: null,
         mmSuppressed: false,
         transcriptTurnCounts: {
-          "session-1": 3,
+          [TEST_DEFAULT_SESSION_ID]: 3,
           "session-2": -1,
           "session-3": 1.5,
           "session-4": "4",
@@ -1648,11 +1815,11 @@ describe("capture-state.js helpers", () => {
       }),
     );
 
-    expect(loadCaptureState(vaultPath, "ai-knowledge")).toEqual({
+    expect(loadCaptureState(vaultPath, DEFAULT_SUBFOLDER)).toEqual({
       lastCapture: null,
       mmSuppressed: false,
       transcriptTurnCounts: {
-        "session-1": 3,
+        [TEST_DEFAULT_SESSION_ID]: 3,
       },
     });
   });
@@ -1663,13 +1830,13 @@ describe("vault.js buildAssistantReplyEntry", () => {
 
   it("builds a labeled AssistantReply entry", () => {
     const entry = buildAssistantReplyEntry("SELECT * FROM foo;", "14:22:31");
-    expect(entry).toContain("AssistantReply");
+    expect(entry).toContain(ASSISTANT_REPLY_ENTRY_NAME);
     expect(entry).toContain("14:22:31");
     expect(entry).toContain("SELECT * FROM foo;");
   });
 
   it("preserves full content exceeding 5000 chars", () => {
-    const longContent = "x".repeat(6000);
+    const longContent = "x".repeat(TEST_LONG_ASSISTANT_REPLY_LENGTH);
     const entry = buildAssistantReplyEntry(longContent, "09:00:00");
     expect(entry).toContain(longContent);
     expect(entry).not.toContain("...(truncated)");
@@ -1684,14 +1851,16 @@ describe("vault.js buildAssistantReplyEntry", () => {
 
   it("throws on non-string content", () => {
     expect(() => buildAssistantReplyEntry(null, "12:00:00")).toThrow("content must be a string");
-    expect(() => buildAssistantReplyEntry(42, "12:00:00")).toThrow("content must be a string");
+    expect(() => buildAssistantReplyEntry(TEST_INVALID_NUMBER_INPUT, "12:00:00")).toThrow(
+      "content must be a string",
+    );
   });
 });
 
 describe("session-start.js readStdin", () => {
   it("returns valid JSON string from mocked fd 0", () => {
     const payload = JSON.stringify({ cwd: "/tmp", hookEventName: "SessionStart" });
-    const payloadBuffer = Buffer.from(payload, "utf-8");
+    const payloadBuffer = Buffer.from(payload, UTF8_ENCODING);
     let callCount = 0;
     const mockFs = {
       readSync(_fd, chunk) {
@@ -1735,12 +1904,12 @@ describe("session-start.js readStdin", () => {
 
 describe("session-start.js main", () => {
   it("writes stdout and calls exit with status 0 on success", () => {
-    const homeDir = createTempDir("mm-home-");
-    const vaultPath = createTempDir("mm-vault-");
-    const cwd = createTempDir("mm-cwd-");
+    const homeDir = createTempDir(TEST_MM_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_MM_VAULT_PREFIX);
+    const cwd = createTempDir(TEST_MM_CWD_PREFIX);
     writeText(
-      path.join(cwd, "memory-mason.json"),
-      JSON.stringify({ vaultPath, subfolder: "ai-knowledge" }),
+      path.join(cwd, PROJECT_CONFIG_FILE_NAME),
+      JSON.stringify({ vaultPath, [CONFIG_KEY_SUBFOLDER]: DEFAULT_SUBFOLDER }),
     );
     const payload = JSON.stringify({ cwd });
     const buf = Buffer.from(payload);
@@ -1776,7 +1945,7 @@ describe("session-start.js main", () => {
   });
 
   it("writes stderr when config is missing and still exits 0", () => {
-    const homeDir = createTempDir("mm-home-");
+    const homeDir = createTempDir(TEST_MM_HOME_PREFIX);
     const payload = JSON.stringify({ cwd: createTempDir("mm-nocfg-") });
     const buf = Buffer.from(payload);
     let rc = 0;
@@ -1812,9 +1981,9 @@ describe("session-start.js main", () => {
   });
 
   it("uses io fallback functions when stdout/stderr not provided", () => {
-    const homeDir = createTempDir("mm-home-");
-    const vaultPath = createTempDir("mm-vault-");
-    const env = buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath });
+    const homeDir = createTempDir(TEST_MM_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_MM_VAULT_PREFIX);
+    const env = buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath });
     const payload = JSON.stringify({ cwd: homeDir });
     const buf = Buffer.from(payload);
     let rc = 0;
@@ -1847,7 +2016,10 @@ describe("session-start.js main", () => {
 
 describe("user-prompt-submit.js readStdin", () => {
   it("returns valid JSON string from mocked fd 0", () => {
-    const payload = JSON.stringify({ hook_event_name: "UserPromptSubmit", prompt: "hello" });
+    const payload = JSON.stringify({
+      hook_event_name: HOOK_ENTRY_USER_PROMPT_SUBMIT,
+      prompt: "hello",
+    });
     const buf = Buffer.from(payload);
     let rc = 0;
     expect(
@@ -1871,12 +2043,12 @@ describe("user-prompt-submit.js readStdin", () => {
 
 describe("user-prompt-submit.js main", () => {
   it("calls exit with status 0 after writing prompt", () => {
-    const homeDir = createTempDir("mm-home-");
-    const vaultPath = createTempDir("mm-vault-");
-    const cwd = createTempDir("mm-cwd-");
-    const env = buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath });
+    const homeDir = createTempDir(TEST_MM_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_MM_VAULT_PREFIX);
+    const cwd = createTempDir(TEST_MM_CWD_PREFIX);
+    const env = buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath });
     const payload = JSON.stringify({
-      hook_event_name: "UserPromptSubmit",
+      hook_event_name: HOOK_ENTRY_USER_PROMPT_SUBMIT,
       cwd,
       prompt: "main test",
     });
@@ -1913,9 +2085,9 @@ describe("user-prompt-submit.js main", () => {
   });
 
   it("writes stderr when config is missing", () => {
-    const homeDir = createTempDir("mm-home-");
+    const homeDir = createTempDir(TEST_MM_HOME_PREFIX);
     const payload = JSON.stringify({
-      hook_event_name: "UserPromptSubmit",
+      hook_event_name: HOOK_ENTRY_USER_PROMPT_SUBMIT,
       cwd: createTempDir("mm-nocfg-"),
       prompt: "test",
     });
@@ -1952,10 +2124,13 @@ describe("user-prompt-submit.js main", () => {
   });
 
   it("falls back to process stdout/stderr when io functions are missing", () => {
-    const homeDir = createTempDir("mm-home-");
-    const vaultPath = createTempDir("mm-vault-");
-    const env = buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath });
-    const payload = JSON.stringify({ hook_event_name: "UserPromptSubmit", cwd: homeDir });
+    const homeDir = createTempDir(TEST_MM_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_MM_VAULT_PREFIX);
+    const env = buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath });
+    const payload = JSON.stringify({
+      hook_event_name: HOOK_ENTRY_USER_PROMPT_SUBMIT,
+      cwd: homeDir,
+    });
     const buf = Buffer.from(payload);
     let rc = 0;
     materializeProjectDotEnvConfig(homeDir, env, generatedEnvPaths);
@@ -2007,7 +2182,7 @@ describe("post-tool-use.js serializeToolResponse", () => {
   it("returns empty string for null/undefined/numeric/boolean", () => {
     expect(postToolUse.serializeToolResponse(null)).toBe("");
     expect(postToolUse.serializeToolResponse(undefined)).toBe("");
-    expect(postToolUse.serializeToolResponse(42)).toBe("");
+    expect(postToolUse.serializeToolResponse(TEST_INVALID_NUMBER_INPUT)).toBe("");
     expect(postToolUse.serializeToolResponse(true)).toBe("");
   });
 
@@ -2058,27 +2233,27 @@ describe("post-tool-use.js runtime fallback branches", () => {
   it("resolveRuntimeEnv falls back when env is null", () => {
     const result = postToolUse.run(
       JSON.stringify({
-        hook_event_name: "PostToolUse",
-        cwd: createTempDir("mm-cwd-"),
+        hook_event_name: HOOK_ENTRY_POST_TOOL_USE,
+        cwd: createTempDir(TEST_MM_CWD_PREFIX),
         tool_name: "Bash",
         tool_response: "x",
       }),
-      { env: null, cwd: createTempDir("mm-cwd-"), homedir: createTempDir("mm-h-") },
+      { env: null, cwd: createTempDir(TEST_MM_CWD_PREFIX), homedir: createTempDir("mm-h-") },
     );
     expect(result.status).toBe(0);
   });
 
   it("resolveFallbackCwd falls back when cwd is not a string", () => {
-    const homeDir = createTempDir("mm-home-");
+    const homeDir = createTempDir(TEST_MM_HOME_PREFIX);
     const result = postToolUse.run(
       JSON.stringify({
-        hook_event_name: "PostToolUse",
+        hook_event_name: HOOK_ENTRY_POST_TOOL_USE,
         cwd: homeDir,
         tool_name: "Bash",
         tool_response: "x",
       }),
       {
-        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: createTempDir("mm-v-") }),
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: createTempDir("mm-v-") }),
         cwd: 123,
         homedir: homeDir,
       },
@@ -2087,16 +2262,16 @@ describe("post-tool-use.js runtime fallback branches", () => {
   });
 
   it("resolveRuntimeHomedir falls back when homedir is not a string", () => {
-    const homeDir = createTempDir("mm-home-");
+    const homeDir = createTempDir(TEST_MM_HOME_PREFIX);
     const result = postToolUse.run(
       JSON.stringify({
-        hook_event_name: "PostToolUse",
+        hook_event_name: HOOK_ENTRY_POST_TOOL_USE,
         cwd: homeDir,
         tool_name: "Bash",
         tool_response: "x",
       }),
       {
-        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: createTempDir("mm-v-") }),
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: createTempDir("mm-v-") }),
         cwd: homeDir,
         homedir: 42,
       },
@@ -2107,11 +2282,11 @@ describe("post-tool-use.js runtime fallback branches", () => {
 
 describe("post-tool-use.js main", () => {
   it("calls exit 0 after writing tool output", () => {
-    const homeDir = createTempDir("mm-home-");
-    const vaultPath = createTempDir("mm-vault-");
-    const env = buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath });
+    const homeDir = createTempDir(TEST_MM_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_MM_VAULT_PREFIX);
+    const env = buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath });
     const payload = JSON.stringify({
-      hook_event_name: "PostToolUse",
+      hook_event_name: HOOK_ENTRY_POST_TOOL_USE,
       cwd: homeDir,
       tool_name: "Bash",
       tool_response: "main out",
@@ -2149,9 +2324,9 @@ describe("post-tool-use.js main", () => {
   });
 
   it("writes stderr on config failure", () => {
-    const homeDir = createTempDir("mm-home-");
+    const homeDir = createTempDir(TEST_MM_HOME_PREFIX);
     const payload = JSON.stringify({
-      hook_event_name: "PostToolUse",
+      hook_event_name: HOOK_ENTRY_POST_TOOL_USE,
       cwd: createTempDir("mm-nocfg-"),
       tool_name: "Bash",
       tool_response: "x",
@@ -2189,10 +2364,10 @@ describe("post-tool-use.js main", () => {
   });
 
   it("falls back to process stdout/stderr when io functions are missing", () => {
-    const homeDir = createTempDir("mm-home-");
-    const vaultPath = createTempDir("mm-vault-");
+    const homeDir = createTempDir(TEST_MM_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_MM_VAULT_PREFIX);
     const payload = JSON.stringify({
-      hook_event_name: "PostToolUse",
+      hook_event_name: HOOK_ENTRY_POST_TOOL_USE,
       cwd: homeDir,
       tool_name: "Read",
       tool_response: "",
@@ -2212,7 +2387,7 @@ describe("post-tool-use.js main", () => {
         },
       },
       cwd: homeDir,
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       homedir: homeDir,
     });
     expect(result.status).toBe(0);
@@ -2247,19 +2422,24 @@ describe("pre-compact.js firstNonEmptyString", () => {
   it("throws when values is not an array", () => {
     expect(() => preCompact.firstNonEmptyString("not-an-array")).toThrow("values must be an array");
     expect(() => preCompact.firstNonEmptyString(null)).toThrow("values must be an array");
-    expect(() => preCompact.firstNonEmptyString(42)).toThrow("values must be an array");
+    expect(() => preCompact.firstNonEmptyString(TEST_INVALID_NUMBER_INPUT)).toThrow(
+      "values must be an array",
+    );
   });
 });
 
 describe("pre-compact.js main", () => {
   it("reads stdin via mock fs and calls exit", () => {
-    const homeDir = createTempDir("mm-home-");
-    const vaultPath = createTempDir("mm-vault-");
-    const env = buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath });
-    const transcriptPath = path.join(createTempDir("mm-tr-"), "session.jsonl");
-    writeText(transcriptPath, buildTranscript(6));
+    const homeDir = createTempDir(TEST_MM_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_MM_VAULT_PREFIX);
+    const env = buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath });
+    const transcriptPath = path.join(
+      createTempDir(TEST_MM_TR_PREFIX),
+      TEST_DEFAULT_TRANSCRIPT_FILE,
+    );
+    writeText(transcriptPath, buildTranscript(TEST_TURN_COUNT_STANDARD));
     const payload = JSON.stringify({
-      cwd: createTempDir("mm-cwd-"),
+      cwd: createTempDir(TEST_MM_CWD_PREFIX),
       transcript_path: transcriptPath,
       session_id: "session-main",
     });
@@ -2328,7 +2508,7 @@ describe("pre-compact.js main", () => {
 
 describe("session-end.js readStdin", () => {
   it("reads single chunk from mocked fd 0", () => {
-    const payload = JSON.stringify({ hook_event_name: "Stop" });
+    const payload = JSON.stringify({ hook_event_name: HOOK_EVENT_STOP_PASCAL });
     const buf = Buffer.from(payload);
     let rc = 0;
     expect(
@@ -2365,7 +2545,7 @@ describe("session-end.js utility functions", () => {
   it("findCodexSessionContent returns empty for dir with no json/jsonl files", () => {
     const dir = createTempDir("mm-codex-");
     writeText(path.join(dir, "readme.txt"), "not json");
-    expect(sessionEnd.findCodexSessionContent(dir, "session-1")).toBe("");
+    expect(sessionEnd.findCodexSessionContent(dir, TEST_DEFAULT_SESSION_ID)).toBe("");
   });
 
   it("findCodexSessionContent returns empty for nonexistent dir", () => {
@@ -2388,9 +2568,9 @@ describe("session-end.js utility functions", () => {
 
   it("collectAssistantTurnContents filters and collects from start index", () => {
     const turns = [
-      { role: "user", content: "hi" },
-      { role: "assistant", content: "hello" },
-      { role: "assistant", content: "bye" },
+      { role: TRANSCRIPT_ROLE_USER, content: "hi" },
+      { role: TRANSCRIPT_ROLE_ASSISTANT, content: "hello" },
+      { role: TRANSCRIPT_ROLE_ASSISTANT, content: "bye" },
     ];
     expect(sessionEnd.collectAssistantTurnContents(turns, 0)).toEqual(["hello", "bye"]);
     expect(sessionEnd.collectAssistantTurnContents(turns, 2)).toEqual(["bye"]);
@@ -2399,7 +2579,11 @@ describe("session-end.js utility functions", () => {
   it("collectAssistantTurnContents skips null and empty entries", () => {
     expect(
       sessionEnd.collectAssistantTurnContents(
-        [null, { role: "assistant", content: "" }, { role: "assistant", content: "ok" }],
+        [
+          null,
+          { role: TRANSCRIPT_ROLE_ASSISTANT, content: "" },
+          { role: TRANSCRIPT_ROLE_ASSISTANT, content: "ok" },
+        ],
         0,
       ),
     ).toEqual(["ok"]);
@@ -2408,8 +2592,8 @@ describe("session-end.js utility functions", () => {
   it("getLastAssistantTurnContent returns last assistant or empty", () => {
     expect(
       sessionEnd.getLastAssistantTurnContent([
-        { role: "assistant", content: "a" },
-        { role: "assistant", content: "b" },
+        { role: TRANSCRIPT_ROLE_ASSISTANT, content: "a" },
+        { role: TRANSCRIPT_ROLE_ASSISTANT, content: "b" },
       ]),
     ).toBe("b");
     expect(sessionEnd.getLastAssistantTurnContent([])).toBe("");
@@ -2418,16 +2602,16 @@ describe("session-end.js utility functions", () => {
 
 describe("session-end.js stop with empty session ID", () => {
   it("returns early", () => {
-    const homeDir = createTempDir("mm-home-");
-    const vaultPath = createTempDir("mm-vault-");
-    const projectCwd = createTempDir("mm-cwd-");
-    const env = buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath });
+    const homeDir = createTempDir(TEST_MM_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_MM_VAULT_PREFIX);
+    const projectCwd = createTempDir(TEST_MM_CWD_PREFIX);
+    const env = buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath });
     materializeProjectDotEnvConfig(projectCwd, env, generatedEnvPaths);
     const result = sessionEnd.run(
       JSON.stringify({
-        hook_event_name: "Stop",
+        hook_event_name: HOOK_EVENT_STOP_PASCAL,
         cwd: projectCwd,
-        transcript_path: path.join(createTempDir("mm-tr-"), "x.jsonl"),
+        transcript_path: path.join(createTempDir(TEST_MM_TR_PREFIX), "x.jsonl"),
       }),
       {
         cwd: projectCwd,
@@ -2441,18 +2625,21 @@ describe("session-end.js stop with empty session ID", () => {
 
 describe("session-end.js transcript with 0 turns on non-stop event", () => {
   it("skips when transcript has no user/assistant turns", () => {
-    const homeDir = createTempDir("mm-home-");
-    const vaultPath = createTempDir("mm-vault-");
-    const transcriptPath = path.join(createTempDir("mm-tr-"), "session.jsonl");
+    const homeDir = createTempDir(TEST_MM_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_MM_VAULT_PREFIX);
+    const transcriptPath = path.join(
+      createTempDir(TEST_MM_TR_PREFIX),
+      TEST_DEFAULT_TRANSCRIPT_FILE,
+    );
     writeText(transcriptPath, JSON.stringify({ message: { role: "system", content: "sys" } }));
-    const result = runScript("session-end.js", {
+    const result = runScript(SESSION_END_FILE, {
       payload: {
-        hook_event_name: "session_end",
+        hook_event_name: HOOK_EVENT_SESSION_END_SNAKE,
         cwd: hooksRoot,
         transcript_path: transcriptPath,
         session_id: "session-zero",
       },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
     expect(result.status).toBe(0);
   });
@@ -2460,12 +2647,15 @@ describe("session-end.js transcript with 0 turns on non-stop event", () => {
 
 describe("session-end.js main", () => {
   it("reads stdin via mock fs and calls exit", () => {
-    const homeDir = createTempDir("mm-home-");
-    const vaultPath = createTempDir("mm-vault-");
-    const transcriptPath = path.join(createTempDir("mm-tr-"), "session.jsonl");
+    const homeDir = createTempDir(TEST_MM_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_MM_VAULT_PREFIX);
+    const transcriptPath = path.join(
+      createTempDir(TEST_MM_TR_PREFIX),
+      TEST_DEFAULT_TRANSCRIPT_FILE,
+    );
     writeText(transcriptPath, buildTranscript(2));
     const payload = JSON.stringify({
-      hook_event_name: "session_end",
+      hook_event_name: HOOK_EVENT_SESSION_END_SNAKE,
       cwd: hooksRoot,
       transcript_path: transcriptPath,
       session_id: "se-main",
@@ -2486,7 +2676,7 @@ describe("session-end.js main", () => {
         },
       },
       cwd: hooksRoot,
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       homedir: homeDir,
       io: {
         stdout: () => {},
@@ -2590,9 +2780,11 @@ describe("install-copilot-hooks.js buildInlineHookFile", () => {
 
 describe("install-copilot-hooks.js rewriteEntry", () => {
   it("returns null/non-object entries unchanged", () => {
-    expect(installCopilotHooks.rewriteEntry(null, "/hooks", "session-start.js")).toBeNull();
-    expect(installCopilotHooks.rewriteEntry(42, "/hooks", "session-start.js")).toBe(42);
-    expect(installCopilotHooks.rewriteEntry("s", "/hooks", "session-start.js")).toBe("s");
+    expect(installCopilotHooks.rewriteEntry(null, "/hooks", SESSION_START_FILE)).toBeNull();
+    expect(
+      installCopilotHooks.rewriteEntry(TEST_INVALID_NUMBER_INPUT, "/hooks", SESSION_START_FILE),
+    ).toBe(TEST_INVALID_NUMBER_INPUT);
+    expect(installCopilotHooks.rewriteEntry("s", "/hooks", SESSION_START_FILE)).toBe("s");
   });
 });
 
@@ -2630,7 +2822,7 @@ describe("install-copilot-hooks.js rewriteHookFile", () => {
 
 describe("install-copilot-hooks.js main", () => {
   it("calls exit with status 0 and writes stdout", () => {
-    const homeDir = createTempDir("mm-home-");
+    const homeDir = createTempDir(TEST_MM_HOME_PREFIX);
     const writes = [];
     let exitCode = null;
     installCopilotHooks.main({
@@ -2673,7 +2865,7 @@ describe("uninstall-copilot-hooks.js parseArgs", () => {
 
 describe("uninstall-copilot-hooks.js resolveTargetDir", () => {
   it("falls back to homedir copilot hooks", () => {
-    const homeDir = createTempDir("mm-home-");
+    const homeDir = createTempDir(TEST_MM_HOME_PREFIX);
     expect(uninstallCopilotHooks.resolveTargetDir({ homedir: homeDir })).toBe(
       path.join(homeDir, ".copilot", "hooks"),
     );
@@ -2689,7 +2881,7 @@ describe("uninstall-copilot-hooks.js resolveTargetDir", () => {
 
 describe("uninstall-copilot-hooks.js main", () => {
   it("calls exit and writes stdout", () => {
-    const homeDir = createTempDir("mm-home-");
+    const homeDir = createTempDir(TEST_MM_HOME_PREFIX);
     const targetDir = createTempDir("mm-target-");
     writeText(path.join(targetDir, "session-start.json"), "{}");
     const writes = [];
@@ -2715,7 +2907,7 @@ describe("uninstall-copilot-hooks.js main", () => {
 
 describe("session-start.js runtime fallback branches", () => {
   it("falls back to process defaults when runtime properties are invalid", () => {
-    const result = sessionStart.run(JSON.stringify({ cwd: createTempDir("mm-cwd-") }), {
+    const result = sessionStart.run(JSON.stringify({ cwd: createTempDir(TEST_MM_CWD_PREFIX) }), {
       env: null,
       cwd: 123,
       homedir: 42,
@@ -2724,10 +2916,10 @@ describe("session-start.js runtime fallback branches", () => {
   });
 
   it("uses fallbackCwd when input has no cwd", () => {
-    const homeDir = createTempDir("mm-home-");
-    const vaultPath = createTempDir("mm-vault-");
+    const homeDir = createTempDir(TEST_MM_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_MM_VAULT_PREFIX);
     const result = sessionStart.run(JSON.stringify({}), {
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       cwd: createTempDir("mm-fb-cwd-"),
       homedir: homeDir,
     });
@@ -2744,19 +2936,19 @@ describe("session-start.js runtime fallback branches", () => {
 describe("user-prompt-submit.js runtime fallback branches", () => {
   it("falls back to process defaults when runtime properties are invalid", () => {
     const result = userPromptSubmit.run(
-      JSON.stringify({ hook_event_name: "UserPromptSubmit", prompt: "test" }),
+      JSON.stringify({ hook_event_name: HOOK_ENTRY_USER_PROMPT_SUBMIT, prompt: "test" }),
       { env: null, cwd: 123, homedir: 42 },
     );
     expect(result.status).toBe(0);
   });
 
   it("uses fallbackCwd when input has no cwd", () => {
-    const homeDir = createTempDir("mm-home-");
-    const vaultPath = createTempDir("mm-vault-");
+    const homeDir = createTempDir(TEST_MM_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_MM_VAULT_PREFIX);
     const result = userPromptSubmit.run(
-      JSON.stringify({ hook_event_name: "UserPromptSubmit", prompt: "test" }),
+      JSON.stringify({ hook_event_name: HOOK_ENTRY_USER_PROMPT_SUBMIT, prompt: "test" }),
       {
-        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
         cwd: createTempDir("mm-fb-"),
         homedir: homeDir,
       },
@@ -2767,7 +2959,7 @@ describe("user-prompt-submit.js runtime fallback branches", () => {
 
 describe("pre-compact.js runtime fallback branches", () => {
   it("falls back to process defaults when runtime properties are invalid", () => {
-    const result = preCompact.run(JSON.stringify({ cwd: createTempDir("mm-cwd-") }), {
+    const result = preCompact.run(JSON.stringify({ cwd: createTempDir(TEST_MM_CWD_PREFIX) }), {
       env: null,
       cwd: 123,
       homedir: 42,
@@ -2776,14 +2968,17 @@ describe("pre-compact.js runtime fallback branches", () => {
   });
 
   it("uses fallbackCwd when input has no cwd", () => {
-    const homeDir = createTempDir("mm-home-");
-    const vaultPath = createTempDir("mm-vault-");
-    const transcriptPath = path.join(createTempDir("mm-tr-"), "session.jsonl");
-    writeText(transcriptPath, buildTranscript(6));
+    const homeDir = createTempDir(TEST_MM_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_MM_VAULT_PREFIX);
+    const transcriptPath = path.join(
+      createTempDir(TEST_MM_TR_PREFIX),
+      TEST_DEFAULT_TRANSCRIPT_FILE,
+    );
+    writeText(transcriptPath, buildTranscript(TEST_TURN_COUNT_STANDARD));
     const result = preCompact.run(
       JSON.stringify({ transcript_path: transcriptPath, session_id: "nocwd" }),
       {
-        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
         cwd: createTempDir("mm-fb-"),
         homedir: homeDir,
       },
@@ -2795,20 +2990,26 @@ describe("pre-compact.js runtime fallback branches", () => {
 describe("session-end.js runtime fallback branches", () => {
   it("falls back to process defaults when runtime properties are invalid", () => {
     const result = sessionEnd.run(
-      JSON.stringify({ hook_event_name: "session_end", cwd: createTempDir("mm-cwd-") }),
+      JSON.stringify({
+        hook_event_name: HOOK_EVENT_SESSION_END_SNAKE,
+        cwd: createTempDir(TEST_MM_CWD_PREFIX),
+      }),
       { env: null, cwd: 123, homedir: 42 },
     );
     expect(result.status).toBe(0);
   });
 
   it("uses fallbackCwd when input has no cwd", () => {
-    const homeDir = createTempDir("mm-home-");
-    const vaultPath = createTempDir("mm-vault-");
-    const result = sessionEnd.run(JSON.stringify({ hook_event_name: "session_end" }), {
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
-      cwd: createTempDir("mm-fb-"),
-      homedir: homeDir,
-    });
+    const homeDir = createTempDir(TEST_MM_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_MM_VAULT_PREFIX);
+    const result = sessionEnd.run(
+      JSON.stringify({ hook_event_name: HOOK_EVENT_SESSION_END_SNAKE }),
+      {
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
+        cwd: createTempDir("mm-fb-"),
+        homedir: homeDir,
+      },
+    );
     expect(result.status).toBe(0);
   });
 });
@@ -2836,7 +3037,7 @@ describe("session-end.js findCopilotCliSessionContent empty content", () => {
   it("throws when jsonl files exist but are empty", () => {
     const sessionStateDir = createTempDir("mm-copilot-state-");
     const subDir = path.join(sessionStateDir, "session-b");
-    writeText(path.join(subDir, "session.jsonl"), "");
+    writeText(path.join(subDir, TEST_DEFAULT_TRANSCRIPT_FILE), "");
     expect(() => sessionEnd.findCopilotCliSessionContent(sessionStateDir, "")).toThrow(
       "no transcript content found in copilot session-state",
     );
@@ -2855,8 +3056,8 @@ describe("session-end.js readTranscriptFromPath", () => {
   });
 
   it("returns content when file exists", () => {
-    const dir = createTempDir("mm-tr-");
-    const filePath = path.join(dir, "session.jsonl");
+    const dir = createTempDir(TEST_MM_TR_PREFIX);
+    const filePath = path.join(dir, TEST_DEFAULT_TRANSCRIPT_FILE);
     writeText(filePath, "transcript content");
     expect(sessionEnd.readTranscriptFromPath(filePath)).toBe("transcript content");
   });
@@ -2873,12 +3074,12 @@ describe("session-end.js findCodexSessionContent with non-matching session id", 
 
 describe("post-tool-use.js copilot-cli payload with null toolResult", () => {
   it("falls back to empty object when toolResult is null", () => {
-    const homeDir = createTempDir("mm-home-");
-    const vaultPath = createTempDir("mm-vault-");
+    const homeDir = createTempDir(TEST_MM_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_MM_VAULT_PREFIX);
     const result = postToolUse.run(
       JSON.stringify({ timestamp: "2025-01-01T00:00:00.000Z", toolName: "Bash", toolResult: null }),
       {
-        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
         cwd: homeDir,
         homedir: homeDir,
       },
@@ -2889,12 +3090,16 @@ describe("post-tool-use.js copilot-cli payload with null toolResult", () => {
 
 describe("post-tool-use.js inputCwd fallback", () => {
   it("uses fallbackCwd when input has no cwd", () => {
-    const homeDir = createTempDir("mm-home-");
-    const vaultPath = createTempDir("mm-vault-");
+    const homeDir = createTempDir(TEST_MM_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_MM_VAULT_PREFIX);
     const result = postToolUse.run(
-      JSON.stringify({ hook_event_name: "PostToolUse", tool_name: "Bash", tool_response: "x" }),
+      JSON.stringify({
+        hook_event_name: HOOK_ENTRY_POST_TOOL_USE,
+        tool_name: "Bash",
+        tool_response: "x",
+      }),
       {
-        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
         cwd: homeDir,
         homedir: homeDir,
       },
@@ -2905,17 +3110,17 @@ describe("post-tool-use.js inputCwd fallback", () => {
 
 describe("post-tool-use.js textResultForLlm branch", () => {
   it("handles copilot-vscode payload with textResultForLlm", () => {
-    const homeDir = createTempDir("mm-home-");
-    const vaultPath = createTempDir("mm-vault-");
+    const homeDir = createTempDir(TEST_MM_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_MM_VAULT_PREFIX);
     const result = postToolUse.run(
       JSON.stringify({
-        hookEventName: "PostToolUse",
+        hookEventName: HOOK_ENTRY_POST_TOOL_USE,
         cwd: homeDir,
         toolName: "Bash",
         toolResult: { textResultForLlm: "llm text" },
       }),
       {
-        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
         cwd: homeDir,
         homedir: homeDir,
       },
@@ -2924,17 +3129,17 @@ describe("post-tool-use.js textResultForLlm branch", () => {
   });
 
   it("handles copilot-vscode payload without textResultForLlm", () => {
-    const homeDir = createTempDir("mm-home-");
-    const vaultPath = createTempDir("mm-vault-");
+    const homeDir = createTempDir(TEST_MM_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_MM_VAULT_PREFIX);
     const result = postToolUse.run(
       JSON.stringify({
-        hookEventName: "PostToolUse",
+        hookEventName: HOOK_ENTRY_POST_TOOL_USE,
         cwd: homeDir,
         toolName: "Bash",
         toolResult: { something: "else" },
       }),
       {
-        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
         cwd: homeDir,
         homedir: homeDir,
       },
@@ -2949,7 +3154,7 @@ describe("install-copilot-hooks.js runtime fallback branches", () => {
   });
 
   it("resolves target dir with homedir fallback", () => {
-    const homeDir = createTempDir("mm-home-");
+    const homeDir = createTempDir(TEST_MM_HOME_PREFIX);
     expect(installCopilotHooks.resolveTargetDir({ homedir: homeDir })).toBe(
       path.join(homeDir, ".copilot", "hooks"),
     );
@@ -2962,19 +3167,21 @@ describe("install-copilot-hooks.js runtime fallback branches", () => {
 
   it("rewriteEntry handles entry with non-PLACEHOLDER command", () => {
     const entry = { type: "command", command: "node hooks/session-start.js", timeout: 10 };
-    const result = installCopilotHooks.rewriteEntry(entry, "/my/hooks", "session-start.js");
+    const result = installCopilotHooks.rewriteEntry(entry, "/my/hooks", SESSION_START_FILE);
     expect(result.command).toContain("/my/hooks");
   });
 
   it("rewriteEntry handles entry with hooks array", () => {
-    const entry = { hooks: [{ type: "command", command: "PLACEHOLDER", timeout: 5 }] };
-    const result = installCopilotHooks.rewriteEntry(entry, "/my/hooks", "session-start.js");
+    const entry = {
+      hooks: [{ type: "command", command: "PLACEHOLDER", timeout: PRE_COMPACT_MIN_TURNS }],
+    };
+    const result = installCopilotHooks.rewriteEntry(entry, "/my/hooks", SESSION_START_FILE);
     expect(result.hooks[0].command).toContain("/my/hooks");
   });
 
   it("rewriteEntry handles entry without command or hooks", () => {
     const entry = { type: "filter", pattern: "*.js" };
-    const result = installCopilotHooks.rewriteEntry(entry, "/my/hooks", "session-start.js");
+    const result = installCopilotHooks.rewriteEntry(entry, "/my/hooks", SESSION_START_FILE);
     expect(result.type).toBe("filter");
   });
 
@@ -3006,15 +3213,20 @@ describe("uninstall-copilot-hooks.js runtime fallback branches", () => {
 
 describe("post-tool-use.js readConfigText with existing file", () => {
   it("uses memory-mason.json when no env vault path is set", () => {
-    const homeDir = createTempDir("mm-home-");
-    const vaultPath = createTempDir("mm-vault-");
-    const cwd = createTempDir("mm-cwd-");
+    const homeDir = createTempDir(TEST_MM_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_MM_VAULT_PREFIX);
+    const cwd = createTempDir(TEST_MM_CWD_PREFIX);
     writeText(
-      path.join(cwd, "memory-mason.json"),
-      JSON.stringify({ vaultPath, subfolder: "ai-knowledge" }),
+      path.join(cwd, PROJECT_CONFIG_FILE_NAME),
+      JSON.stringify({ vaultPath, [CONFIG_KEY_SUBFOLDER]: DEFAULT_SUBFOLDER }),
     );
-    const result = runScript("post-tool-use.js", {
-      payload: { hook_event_name: "PostToolUse", cwd, tool_name: "Bash", tool_response: "output" },
+    const result = runScript(POST_TOOL_USE_FILE, {
+      payload: {
+        hook_event_name: HOOK_ENTRY_POST_TOOL_USE,
+        cwd,
+        tool_name: "Bash",
+        tool_response: "output",
+      },
       cwd,
       env: buildEnv(homeDir),
     });
@@ -3025,15 +3237,19 @@ describe("post-tool-use.js readConfigText with existing file", () => {
 
 describe("post-tool-use.js MEMORY_MASON_INVOKED_BY skip", () => {
   it("returns empty when MEMORY_MASON_INVOKED_BY is set", () => {
-    const homeDir = createTempDir("mm-home-");
+    const homeDir = createTempDir(TEST_MM_HOME_PREFIX);
     const result = postToolUse.run(
       JSON.stringify({
-        hook_event_name: "PostToolUse",
-        cwd: createTempDir("mm-cwd-"),
+        hook_event_name: HOOK_ENTRY_POST_TOOL_USE,
+        cwd: createTempDir(TEST_MM_CWD_PREFIX),
         tool_name: "Bash",
         tool_response: "x",
       }),
-      { env: { MEMORY_MASON_INVOKED_BY: "mmc" }, cwd: createTempDir("mm-cwd-"), homedir: homeDir },
+      {
+        env: { [ENV_KEY_INVOKED_BY]: "mmc" },
+        cwd: createTempDir(TEST_MM_CWD_PREFIX),
+        homedir: homeDir,
+      },
     );
     expect(result).toEqual({ status: 0, stdout: "", stderr: "" });
   });
@@ -3041,16 +3257,19 @@ describe("post-tool-use.js MEMORY_MASON_INVOKED_BY skip", () => {
 
 describe("pre-compact.js readConfigText with existing file", () => {
   it("uses memory-mason.json when no env vault path is set", () => {
-    const homeDir = createTempDir("mm-home-");
-    const vaultPath = createTempDir("mm-vault-");
-    const cwd = createTempDir("mm-cwd-");
-    const transcriptPath = path.join(createTempDir("mm-tr-"), "session.jsonl");
-    writeText(transcriptPath, buildTranscript(6));
-    writeText(
-      path.join(cwd, "memory-mason.json"),
-      JSON.stringify({ vaultPath, subfolder: "ai-knowledge" }),
+    const homeDir = createTempDir(TEST_MM_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_MM_VAULT_PREFIX);
+    const cwd = createTempDir(TEST_MM_CWD_PREFIX);
+    const transcriptPath = path.join(
+      createTempDir(TEST_MM_TR_PREFIX),
+      TEST_DEFAULT_TRANSCRIPT_FILE,
     );
-    const result = runScript("pre-compact.js", {
+    writeText(transcriptPath, buildTranscript(TEST_TURN_COUNT_STANDARD));
+    writeText(
+      path.join(cwd, PROJECT_CONFIG_FILE_NAME),
+      JSON.stringify({ vaultPath, [CONFIG_KEY_SUBFOLDER]: DEFAULT_SUBFOLDER }),
+    );
+    const result = runScript(PRE_COMPACT_FILE, {
       payload: { cwd, transcript_path: transcriptPath, session_id: "cfg-test" },
       cwd,
       env: buildEnv(homeDir),
@@ -3061,18 +3280,21 @@ describe("pre-compact.js readConfigText with existing file", () => {
 
 describe("session-end.js readConfigText with existing file", () => {
   it("uses memory-mason.json when no env vault path is set", () => {
-    const homeDir = createTempDir("mm-home-");
-    const vaultPath = createTempDir("mm-vault-");
-    const cwd = createTempDir("mm-cwd-");
-    const transcriptPath = path.join(createTempDir("mm-tr-"), "session.jsonl");
-    writeText(transcriptPath, buildTranscript(4));
-    writeText(
-      path.join(cwd, "memory-mason.json"),
-      JSON.stringify({ vaultPath, subfolder: "ai-knowledge" }),
+    const homeDir = createTempDir(TEST_MM_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_MM_VAULT_PREFIX);
+    const cwd = createTempDir(TEST_MM_CWD_PREFIX);
+    const transcriptPath = path.join(
+      createTempDir(TEST_MM_TR_PREFIX),
+      TEST_DEFAULT_TRANSCRIPT_FILE,
     );
-    const result = runScript("session-end.js", {
+    writeText(transcriptPath, buildTranscript(TEST_TURN_COUNT_SHORT));
+    writeText(
+      path.join(cwd, PROJECT_CONFIG_FILE_NAME),
+      JSON.stringify({ vaultPath, [CONFIG_KEY_SUBFOLDER]: DEFAULT_SUBFOLDER }),
+    );
+    const result = runScript(SESSION_END_FILE, {
       payload: {
-        hook_event_name: "session_end",
+        hook_event_name: HOOK_EVENT_SESSION_END_SNAKE,
         cwd,
         transcript_path: transcriptPath,
         session_id: "cfg-test",
@@ -3087,7 +3309,7 @@ describe("session-end.js readConfigText with existing file", () => {
 describe("session-end.js findCodexSessionContent with empty session id", () => {
   it("returns content of most recent file when session id is empty", () => {
     const sessionRoot = createTempDir("mm-codex-");
-    writeText(path.join(sessionRoot, "session.jsonl"), buildTranscript(2));
+    writeText(path.join(sessionRoot, TEST_DEFAULT_TRANSCRIPT_FILE), buildTranscript(2));
     const result = sessionEnd.findCodexSessionContent(sessionRoot, "");
     expect(result).not.toBe("");
   });
@@ -3099,8 +3321,10 @@ describe("session-end.js findCopilotCliSessionContent with matching cwd", () => 
     const subDir = path.join(sessionStateDir, "session-a");
     const targetCwd = "/my/project";
     writeText(
-      path.join(subDir, "session.jsonl"),
-      JSON.stringify({ message: { role: "user", content: `hello from ${targetCwd}` } }),
+      path.join(subDir, TEST_DEFAULT_TRANSCRIPT_FILE),
+      JSON.stringify({
+        message: { role: TRANSCRIPT_ROLE_USER, content: `hello from ${targetCwd}` },
+      }),
     );
     const result = sessionEnd.findCopilotCliSessionContent(sessionStateDir, targetCwd);
     expect(result).toContain(targetCwd);
@@ -3110,8 +3334,8 @@ describe("session-end.js findCopilotCliSessionContent with matching cwd", () => 
     const sessionStateDir = createTempDir("mm-copilot-");
     const subDir = path.join(sessionStateDir, "session-a");
     writeText(
-      path.join(subDir, "session.jsonl"),
-      JSON.stringify({ message: { role: "user", content: "hello" } }),
+      path.join(subDir, TEST_DEFAULT_TRANSCRIPT_FILE),
+      JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "hello" } }),
     );
     const result = sessionEnd.findCopilotCliSessionContent(sessionStateDir, "/nonexistent/path");
     expect(result).toContain("hello");
@@ -3120,18 +3344,18 @@ describe("session-end.js findCopilotCliSessionContent with matching cwd", () => 
 
 describe("session-end.js calculateNextTurnCount edge cases", () => {
   it("handles stop event with non-empty last_assistant_message and empty transcript", () => {
-    const homeDir = createTempDir("mm-home-");
-    const vaultPath = createTempDir("mm-vault-");
+    const homeDir = createTempDir(TEST_MM_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_MM_VAULT_PREFIX);
     const result = sessionEnd.run(
       JSON.stringify({
-        hook_event_name: "Stop",
+        hook_event_name: HOOK_EVENT_STOP_PASCAL,
         cwd: hooksRoot,
         session_id: "calc-test",
         last_assistant_message: "test reply",
       }),
       {
         cwd: hooksRoot,
-        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
         homedir: homeDir,
       },
     );

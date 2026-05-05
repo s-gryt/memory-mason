@@ -4,6 +4,17 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 
+const {
+  DEFAULT_DAILY_CHUNK_CAP_BYTES,
+  MAX_DAILY_CHUNK_COUNT,
+  CHUNK_ID_WIDTH,
+  UTF8_ENCODING,
+} = require("../lib/constants");
+const {
+  TEST_DEFAULT_DATE,
+  TEST_DEFAULT_SUBFOLDER: DEFAULT_SUBFOLDER,
+} = require("./helpers/test-constants");
+
 const { migrateFlatToChunked } = require("../lib/migrate-daily");
 const {
   buildDailyFilePath,
@@ -15,6 +26,11 @@ const {
   buildChunkHeader,
   buildChunkIndexContent,
 } = require("../lib/vault");
+
+const TWO = 2;
+const THREE = CHUNK_ID_WIDTH;
+const SIXTY = 60;
+const THOUSAND = MAX_DAILY_CHUNK_COUNT + 1;
 
 function makeFsApi(initialFiles = {}) {
   const files = { ...initialFiles };
@@ -42,9 +58,9 @@ function makeFsApi(initialFiles = {}) {
   };
 }
 
-function makePaths(dateIso = "2026-04-30") {
+function makePaths(dateIso = TEST_DEFAULT_DATE) {
   const vaultPath = path.join("vault-root");
-  const subfolder = "ai-knowledge";
+  const subfolder = DEFAULT_SUBFOLDER;
   return {
     vaultPath,
     subfolder,
@@ -85,8 +101,8 @@ describe("migrateFlatToChunked - dry run", () => {
     });
 
     expect(result).toEqual({
-      chunksCreated: 2,
-      bytesProcessed: Buffer.byteLength(sourceText, "utf-8"),
+      chunksCreated: TWO,
+      bytesProcessed: Buffer.byteLength(sourceText, UTF8_ENCODING),
       originalPath: paths.flatPath,
       folderPath: paths.folderPath,
       dryRun: true,
@@ -110,7 +126,7 @@ describe("migrateFlatToChunked - dry run", () => {
       fsApi,
     });
 
-    expect(result.chunksCreated).toBe(3);
+    expect(result.chunksCreated).toBe(THREE);
   });
 
   it("dryRun flag is true in return value", () => {
@@ -137,21 +153,21 @@ describe("migrateFlatToChunked - dry run", () => {
 
   it("uses default fsApi when omitted", () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "memory-mason-migrate-"));
-    const subfolder = "ai-knowledge";
-    const dateIso = "2026-04-30";
+    const subfolder = DEFAULT_SUBFOLDER;
+    const dateIso = TEST_DEFAULT_DATE;
     const flatPath = buildDailyFilePath(tempRoot, subfolder, dateIso);
     const sourceText = "plain text\n";
 
     fs.mkdirSync(path.dirname(flatPath), { recursive: true });
-    fs.writeFileSync(flatPath, sourceText, "utf-8");
+    fs.writeFileSync(flatPath, sourceText, UTF8_ENCODING);
 
     try {
       const result = migrateFlatToChunked(tempRoot, subfolder, dateIso, {
         commit: false,
-        capBytes: 512000,
+        capBytes: DEFAULT_DAILY_CHUNK_CAP_BYTES,
       });
       expect(result.dryRun).toBe(true);
-      expect(result.bytesProcessed).toBe(Buffer.byteLength(sourceText, "utf-8"));
+      expect(result.bytesProcessed).toBe(Buffer.byteLength(sourceText, UTF8_ENCODING));
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }
@@ -164,7 +180,7 @@ describe("migrateFlatToChunked - dry run", () => {
 
     const result = migrateFlatToChunked(paths.vaultPath, paths.subfolder, paths.dateIso, {
       commit: false,
-      capBytes: 512000,
+      capBytes: DEFAULT_DAILY_CHUNK_CAP_BYTES,
       fsApi,
     });
 
@@ -188,25 +204,25 @@ describe("migrateFlatToChunked - multi-session file", () => {
   it("splits at real session headers", () => {
     const { paths, fsApi, result } = runCommit(
       "preface\n" +
-        sessionHeader("2026-04-30", "09:00:00", "s1") +
+        sessionHeader(TEST_DEFAULT_DATE, "09:00:00", "s1") +
         "first\n" +
-        sessionHeader("2026-04-30", "10:00:00", "s2") +
+        sessionHeader(TEST_DEFAULT_DATE, "10:00:00", "s2") +
         "second\n",
       { capBytes: 1 },
     );
     const chunk1Path = buildDailyChunkPath(paths.vaultPath, paths.subfolder, paths.dateIso, 1);
-    const chunk2Path = buildDailyChunkPath(paths.vaultPath, paths.subfolder, paths.dateIso, 2);
-    const chunk3Path = buildDailyChunkPath(paths.vaultPath, paths.subfolder, paths.dateIso, 3);
+    const chunk2Path = buildDailyChunkPath(paths.vaultPath, paths.subfolder, paths.dateIso, TWO);
+    const chunk3Path = buildDailyChunkPath(paths.vaultPath, paths.subfolder, paths.dateIso, THREE);
 
-    expect(result.chunksCreated).toBe(3);
+    expect(result.chunksCreated).toBe(THREE);
     expect(fsApi._files[chunk1Path]).toBe(`${buildChunkHeader(paths.dateIso, 1)}preface\n`);
     expect(fsApi._files[chunk2Path]).toBe(
-      buildChunkHeader(paths.dateIso, 2) +
+      buildChunkHeader(paths.dateIso, TWO) +
         sessionHeader(paths.dateIso, "09:00:00", "s1") +
         "first\n",
     );
     expect(fsApi._files[chunk3Path]).toBe(
-      buildChunkHeader(paths.dateIso, 3) +
+      buildChunkHeader(paths.dateIso, THREE) +
         sessionHeader(paths.dateIso, "10:00:00", "s2") +
         "second\n",
     );
@@ -216,17 +232,17 @@ describe("migrateFlatToChunked - multi-session file", () => {
     const { paths, fsApi, result } = runCommit(
       "intro\n" +
         "```md\n" +
-        sessionHeader("2026-04-30", "09:00:00", "fake") +
+        sessionHeader(TEST_DEFAULT_DATE, "09:00:00", "fake") +
         "inside\n" +
         "```\n" +
-        sessionHeader("2026-04-30", "10:00:00", "real") +
+        sessionHeader(TEST_DEFAULT_DATE, "10:00:00", "real") +
         "outside\n",
       { capBytes: 1 },
     );
     const chunk1Path = buildDailyChunkPath(paths.vaultPath, paths.subfolder, paths.dateIso, 1);
-    const chunk2Path = buildDailyChunkPath(paths.vaultPath, paths.subfolder, paths.dateIso, 2);
+    const chunk2Path = buildDailyChunkPath(paths.vaultPath, paths.subfolder, paths.dateIso, TWO);
 
-    expect(result.chunksCreated).toBe(2);
+    expect(result.chunksCreated).toBe(TWO);
     expect(fsApi._files[chunk1Path]).toContain(sessionHeader(paths.dateIso, "09:00:00", "fake"));
     expect(fsApi._files[chunk2Path]).toContain(sessionHeader(paths.dateIso, "10:00:00", "real"));
   });
@@ -235,9 +251,9 @@ describe("migrateFlatToChunked - multi-session file", () => {
 describe("migrateFlatToChunked - commit mode", () => {
   function runTwoChunkCommit() {
     return runCommit(
-      sessionHeader("2026-04-30", "10:00:00", "s1") +
+      sessionHeader(TEST_DEFAULT_DATE, "10:00:00", "s1") +
         "alpha\n" +
-        sessionHeader("2026-04-30", "11:00:00", "s2") +
+        sessionHeader(TEST_DEFAULT_DATE, "11:00:00", "s2") +
         "beta\n",
       { capBytes: 1 },
     );
@@ -251,7 +267,7 @@ describe("migrateFlatToChunked - commit mode", () => {
   it("writes all chunk files", () => {
     const { fsApi, paths } = runTwoChunkCommit();
     const chunk1Path = buildDailyChunkPath(paths.vaultPath, paths.subfolder, paths.dateIso, 1);
-    const chunk2Path = buildDailyChunkPath(paths.vaultPath, paths.subfolder, paths.dateIso, 2);
+    const chunk2Path = buildDailyChunkPath(paths.vaultPath, paths.subfolder, paths.dateIso, TWO);
 
     expect(typeof fsApi._files[chunk1Path]).toBe("string");
     expect(typeof fsApi._files[chunk2Path]).toBe("string");
@@ -261,7 +277,7 @@ describe("migrateFlatToChunked - commit mode", () => {
     const { fsApi, paths } = runTwoChunkCommit();
     const meta = JSON.parse(fsApi._files[paths.metaPath]);
 
-    expect(meta.chunks).toHaveLength(2);
+    expect(meta.chunks).toHaveLength(TWO);
     expect(meta.chunks[0].id).toBe("001");
     expect(meta.chunks[1].file).toBe("002.md");
   });
@@ -269,7 +285,7 @@ describe("migrateFlatToChunked - commit mode", () => {
   it("writes index.md", () => {
     const { fsApi, paths } = runTwoChunkCommit();
 
-    expect(fsApi._files[paths.indexPath]).toBe(buildChunkIndexContent(paths.dateIso, 2));
+    expect(fsApi._files[paths.indexPath]).toBe(buildChunkIndexContent(paths.dateIso, TWO));
   });
 
   it("does not delete source flat file", () => {
@@ -371,7 +387,7 @@ describe("migrateFlatToChunked - errors", () => {
     const paths = makePaths();
     const fsApi = makeFsApi({ [paths.flatPath]: "content\n" });
     fsApi.readFileSync = () => {
-      const value = Buffer.from("content\n", "utf-8");
+      const value = Buffer.from("content\n", UTF8_ENCODING);
       value.startsWith = () => false;
       return value;
     };
@@ -386,8 +402,8 @@ describe("migrateFlatToChunked - errors", () => {
 
   it("throws when chunk count exceeds 999", () => {
     const paths = makePaths();
-    const sourceText = Array.from({ length: 1000 }, (_, index) => {
-      const second = String(index % 60).padStart(2, "0");
+    const sourceText = Array.from({ length: THOUSAND }, (_, index) => {
+      const second = String(index % SIXTY).padStart(TWO, "0");
       return `${sessionHeader(paths.dateIso, `10:00:${second}`, `s${String(index + 1)}`)}entry\n`;
     }).join("");
     const fsApi = makeFsApi({ [paths.flatPath]: sourceText });
@@ -397,7 +413,7 @@ describe("migrateFlatToChunked - errors", () => {
         capBytes: 1,
         fsApi,
       }),
-    ).toThrow("chunk count exceeds 999");
+    ).toThrow(`chunk count exceeds ${String(MAX_DAILY_CHUNK_COUNT)}`);
   });
 
   it("throws when block validation fails", () => {
@@ -421,7 +437,7 @@ describe("migrateFlatToChunked - errors", () => {
 describe("migrateFlatToChunked - header and prefix handling", () => {
   it("preserves non-session prefix content in the first chunk", () => {
     const { paths, fsApi } = runCommit(
-      `prefix line 1\nprefix line 2\n${sessionHeader("2026-04-30", "12:00:00", "s1")}after\n`,
+      `prefix line 1\nprefix line 2\n${sessionHeader(TEST_DEFAULT_DATE, "12:00:00", "s1")}after\n`,
       { capBytes: 1 },
     );
     const firstChunkPath = buildDailyChunkPath(paths.vaultPath, paths.subfolder, paths.dateIso, 1);

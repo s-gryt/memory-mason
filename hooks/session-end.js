@@ -26,7 +26,11 @@ const {
   CAPTURE_MODE_LITE,
   HOOK_EVENT_STOP,
   DUPLICATE_CAPTURE_WINDOW_MS,
+  UTF8_ENCODING,
 } = require("./lib/constants");
+const { PLATFORM_COPILOT_CLI, PLATFORM_CODEX } = require("./lib/platforms");
+const { UNKNOWN_LABEL } = require("./lib/markdown-labels");
+const { ENV_KEY_INVOKED_BY } = require("./lib/config-keys");
 const {
   readStdin,
   toStringOrEmpty,
@@ -43,6 +47,11 @@ const {
   readGlobalConfigText,
   readGlobalDotEnvText,
 } = require("./lib/hook-runtime");
+
+const CODEX_DIR = ".codex";
+const CODEX_SESSIONS_DIR = "sessions";
+const COPILOT_STATE_DIR = ".copilot";
+const COPILOT_SESSION_STATE_DIR = "session-state";
 
 function firstNonEmptyString(values) {
   if (!Array.isArray(values)) {
@@ -61,7 +70,7 @@ function readTranscriptFromPath(transcriptPath) {
   if (transcriptPath === "" || !fs.existsSync(transcriptPath)) {
     return "";
   }
-  return fs.readFileSync(transcriptPath, "utf-8");
+  return fs.readFileSync(transcriptPath, UTF8_ENCODING);
 }
 
 function listFilesRecursive(rootPath) {
@@ -99,7 +108,7 @@ function findCodexSessionContent(sessionRootDir, sessionId) {
     }))
     .sort((left, right) => right.mtime - left.mtime);
 
-  return fs.readFileSync(sortedCandidates[0].filePath, "utf-8");
+  return fs.readFileSync(sortedCandidates[0].filePath, UTF8_ENCODING);
 }
 
 function findCopilotCliSessionContent(sessionStateDir, targetCwd) {
@@ -137,12 +146,14 @@ function findCopilotCliSessionContent(sessionStateDir, targetCwd) {
     safeTargetCwd === ""
       ? dirsWithJsonl[0]
       : dirsWithJsonl.find(({ jsonlFiles }) =>
-          jsonlFiles.some((filePath) => fs.readFileSync(filePath, "utf-8").includes(safeTargetCwd)),
+          jsonlFiles.some((filePath) =>
+            fs.readFileSync(filePath, UTF8_ENCODING).includes(safeTargetCwd),
+          ),
         );
 
   const selectedDir = typeof matchedDir === "undefined" ? dirsWithJsonl[0] : matchedDir;
   const content = selectedDir.jsonlFiles
-    .map((filePath) => fs.readFileSync(filePath, "utf-8"))
+    .map((filePath) => fs.readFileSync(filePath, UTF8_ENCODING))
     .join("\n");
 
   if (content === "") {
@@ -191,15 +202,15 @@ function resolveLastAssistantMessage(input) {
 }
 
 function resolveCodexTranscriptPath(homedir) {
-  return path.join(homedir, ".codex", "sessions");
+  return path.join(homedir, CODEX_DIR, CODEX_SESSIONS_DIR);
 }
 
 function resolveCopilotTranscriptPath(homedir) {
-  return path.join(homedir, ".copilot", "session-state");
+  return path.join(homedir, COPILOT_STATE_DIR, COPILOT_SESSION_STATE_DIR);
 }
 
 function resolveCodexTranscriptContent(platform, transcriptFromPath, homedir, sessionIdRaw) {
-  if (platform !== "codex" || transcriptFromPath !== "") {
+  if (platform !== PLATFORM_CODEX || transcriptFromPath !== "") {
     return "";
   }
 
@@ -207,7 +218,7 @@ function resolveCodexTranscriptContent(platform, transcriptFromPath, homedir, se
 }
 
 function resolveCopilotTranscriptContent(platform, homedir, cwd) {
-  if (platform !== "copilot-cli") {
+  if (platform !== PLATFORM_COPILOT_CLI) {
     return "";
   }
 
@@ -215,7 +226,7 @@ function resolveCopilotTranscriptContent(platform, homedir, cwd) {
 }
 
 function resolveTranscriptContent(platform, transcriptFromPath, codexContent, copilotCliContent) {
-  if (platform === "copilot-cli") {
+  if (platform === PLATFORM_COPILOT_CLI) {
     return copilotCliContent;
   }
 
@@ -237,7 +248,7 @@ function discoverTranscriptContent(platform, transcriptFromPath, homedir, sessio
   return resolveTranscriptContent(platform, transcriptFromPath, codexContent, copilotCliContent);
 }
 
-function parseTranscriptTurns(transcriptContent, captureMode = "lite") {
+function parseTranscriptTurns(transcriptContent, captureMode = CAPTURE_MODE_LITE) {
   if (transcriptContent === "") {
     return [];
   }
@@ -295,7 +306,7 @@ function run(rawStdin, runtime = {}) {
   const fallbackCwd = resolveFallbackCwd(runtime);
   const homedir = resolveRuntimeHomedir(runtime);
 
-  if (toStringOrEmpty(env.MEMORY_MASON_INVOKED_BY) !== "") {
+  if (toStringOrEmpty(env[ENV_KEY_INVOKED_BY]) !== "") {
     return buildSuccessResult();
   }
 
@@ -322,7 +333,7 @@ function run(rawStdin, runtime = {}) {
       return buildSuccessResult();
     }
 
-    if (normalizedHookEventName === "stop") {
+    if (normalizedHookEventName === HOOK_EVENT_STOP) {
       if (sessionIdRaw === "") {
         return buildSuccessResult();
       }
@@ -396,7 +407,7 @@ function run(rawStdin, runtime = {}) {
     const fullTranscriptMarkdown = renderTurnsAsMarkdown(filteredTurns);
 
     const today = localNow().date;
-    const sessionId = firstNonEmptyString([sessionIdRaw, "unknown"]);
+    const sessionId = firstNonEmptyString([sessionIdRaw, UNKNOWN_LABEL]);
     const source = firstNonEmptyString([toStringOrEmpty(input.source), platform]);
     const captureRecord = buildCaptureRecord(sessionId, source, fullTranscriptMarkdown, Date.now());
 

@@ -6,6 +6,18 @@ const {
   DEFAULT_CAPTURE_MODE,
   DEFAULT_SUBFOLDER,
 } = require("./constants");
+const {
+  ENV_KEY_VAULT_PATH,
+  ENV_KEY_SUBFOLDER,
+  ENV_KEY_SYNC,
+  ENV_KEY_CAPTURE_MODE,
+} = require("./config-keys");
+const {
+  PLATFORM_CLAUDE_CODE,
+  PLATFORM_COPILOT_VSCODE,
+  PLATFORM_COPILOT_CLI,
+  PLATFORM_CODEX,
+} = require("./platforms");
 const { assertNonEmptyString } = require("./assert");
 
 const JSON_ERROR_PREVIEW_CHARS = 200;
@@ -152,7 +164,7 @@ const parseEnvSyncOrNull = (envSyncValue) => {
     return true;
   }
 
-  throw new Error(`MEMORY_MASON_SYNC must be 'true' or 'false', got: ${envSyncValue}`);
+  throw new Error(`${ENV_KEY_SYNC} must be 'true' or 'false', got: ${envSyncValue}`);
 };
 
 const parseEnvCaptureModeOrNull = (envValue) => {
@@ -165,7 +177,7 @@ const parseEnvCaptureModeOrNull = (envValue) => {
   }
 
   throw new Error(
-    `MEMORY_MASON_CAPTURE_MODE must be '${CAPTURE_MODE_LITE}' or '${CAPTURE_MODE_FULL}', got: ${envValue}`,
+    `${ENV_KEY_CAPTURE_MODE} must be '${CAPTURE_MODE_LITE}' or '${CAPTURE_MODE_FULL}', got: ${envValue}`,
   );
 };
 
@@ -313,11 +325,9 @@ const resolveVaultConfig = (cwd, configText, homedir, options = {}) => {
   const safeConfigText = typeof configText === "string" ? configText : "";
   const safeOptions = options !== null && typeof options === "object" ? options : {};
   const safeEnvSync =
-    typeof process.env.MEMORY_MASON_SYNC === "string" ? process.env.MEMORY_MASON_SYNC : "";
+    typeof process.env[ENV_KEY_SYNC] === "string" ? process.env[ENV_KEY_SYNC] : "";
   const safeEnvCaptureMode =
-    typeof process.env.MEMORY_MASON_CAPTURE_MODE === "string"
-      ? process.env.MEMORY_MASON_CAPTURE_MODE
-      : "";
+    typeof process.env[ENV_KEY_CAPTURE_MODE] === "string" ? process.env[ENV_KEY_CAPTURE_MODE] : "";
   const safeDotEnvText = typeof safeOptions.dotEnvText === "string" ? safeOptions.dotEnvText : "";
   const safeGlobalConfigText =
     typeof safeOptions.globalConfigText === "string" ? safeOptions.globalConfigText : "";
@@ -329,37 +339,31 @@ const resolveVaultConfig = (cwd, configText, homedir, options = {}) => {
   const configCaptureMode = parseConfigCaptureModeOrNull(safeConfigText);
   const parsedDotEnv = parseDotEnv(safeDotEnvText);
   const dotEnvVaultPath =
-    typeof parsedDotEnv.MEMORY_MASON_VAULT_PATH === "string"
-      ? parsedDotEnv.MEMORY_MASON_VAULT_PATH
-      : "";
+    typeof parsedDotEnv[ENV_KEY_VAULT_PATH] === "string" ? parsedDotEnv[ENV_KEY_VAULT_PATH] : "";
   const dotEnvSubfolder =
-    typeof parsedDotEnv.MEMORY_MASON_SUBFOLDER === "string"
-      ? parsedDotEnv.MEMORY_MASON_SUBFOLDER
-      : "";
+    typeof parsedDotEnv[ENV_KEY_SUBFOLDER] === "string" ? parsedDotEnv[ENV_KEY_SUBFOLDER] : "";
   const dotEnvSync =
-    typeof parsedDotEnv.MEMORY_MASON_SYNC === "string" ? parsedDotEnv.MEMORY_MASON_SYNC : "";
+    typeof parsedDotEnv[ENV_KEY_SYNC] === "string" ? parsedDotEnv[ENV_KEY_SYNC] : "";
   const dotEnvCaptureMode =
-    typeof parsedDotEnv.MEMORY_MASON_CAPTURE_MODE === "string"
-      ? parsedDotEnv.MEMORY_MASON_CAPTURE_MODE
+    typeof parsedDotEnv[ENV_KEY_CAPTURE_MODE] === "string"
+      ? parsedDotEnv[ENV_KEY_CAPTURE_MODE]
       : "";
   const syncFromDotEnv = parseEnvSyncOrNull(dotEnvSync);
   const captureModeFromDotEnv = parseEnvCaptureModeOrNull(dotEnvCaptureMode);
   const parsedGlobalDotEnv = parseDotEnv(safeGlobalDotEnvText);
   const globalDotEnvVaultPath =
-    typeof parsedGlobalDotEnv.MEMORY_MASON_VAULT_PATH === "string"
-      ? parsedGlobalDotEnv.MEMORY_MASON_VAULT_PATH
+    typeof parsedGlobalDotEnv[ENV_KEY_VAULT_PATH] === "string"
+      ? parsedGlobalDotEnv[ENV_KEY_VAULT_PATH]
       : "";
   const globalDotEnvSubfolder =
-    typeof parsedGlobalDotEnv.MEMORY_MASON_SUBFOLDER === "string"
-      ? parsedGlobalDotEnv.MEMORY_MASON_SUBFOLDER
+    typeof parsedGlobalDotEnv[ENV_KEY_SUBFOLDER] === "string"
+      ? parsedGlobalDotEnv[ENV_KEY_SUBFOLDER]
       : "";
   const globalDotEnvSync =
-    typeof parsedGlobalDotEnv.MEMORY_MASON_SYNC === "string"
-      ? parsedGlobalDotEnv.MEMORY_MASON_SYNC
-      : "";
+    typeof parsedGlobalDotEnv[ENV_KEY_SYNC] === "string" ? parsedGlobalDotEnv[ENV_KEY_SYNC] : "";
   const globalDotEnvCaptureMode =
-    typeof parsedGlobalDotEnv.MEMORY_MASON_CAPTURE_MODE === "string"
-      ? parsedGlobalDotEnv.MEMORY_MASON_CAPTURE_MODE
+    typeof parsedGlobalDotEnv[ENV_KEY_CAPTURE_MODE] === "string"
+      ? parsedGlobalDotEnv[ENV_KEY_CAPTURE_MODE]
       : "";
   const syncFromGlobalDotEnv = parseEnvSyncOrNull(globalDotEnvSync);
   const captureModeFromGlobalDotEnv = parseEnvCaptureModeOrNull(globalDotEnvCaptureMode);
@@ -440,15 +444,15 @@ const detectPlatform = (input) => {
   }
 
   if (typeof input.hookEventName === "string") {
-    return "copilot-vscode";
+    return PLATFORM_COPILOT_VSCODE;
   }
 
   if (typeof input.hook_event_name === "string" && typeof input.turn_id === "string") {
-    return "codex";
+    return PLATFORM_CODEX;
   }
 
   if (typeof input.hook_event_name === "string") {
-    return "claude-code";
+    return PLATFORM_CLAUDE_CODE;
   }
 
   if (
@@ -456,7 +460,7 @@ const detectPlatform = (input) => {
     typeof input.hook_event_name === "undefined" &&
     typeof input.hookEventName === "undefined"
   ) {
-    return "copilot-cli";
+    return PLATFORM_COPILOT_CLI;
   }
 
   throw new Error(`cannot detect platform from stdin shape: ${JSON.stringify(Object.keys(input))}`);

@@ -3,6 +3,7 @@
 const path = require("node:path");
 const { assertNonEmptyString, isObjectRecord, assertObjectRecord } = require("./assert");
 const { loadJson, saveJson } = require("./json-state");
+const { VAULT_META_DIR_NAME, VAULT_STATE_FILE_NAME } = require("./vault-paths");
 
 const defaultState = () => ({
   ingested: {},
@@ -13,7 +14,7 @@ const defaultState = () => ({
 const resolveStatePath = (vaultPath, subfolder) => {
   const safeVaultPath = assertNonEmptyString("vaultPath", vaultPath);
   const safeSubfolder = assertNonEmptyString("subfolder", subfolder);
-  return path.join(safeVaultPath, safeSubfolder, "_meta", "state.json");
+  return path.join(safeVaultPath, safeSubfolder, VAULT_META_DIR_NAME, VAULT_STATE_FILE_NAME);
 };
 
 const mergeWithDefaults = (state) => {

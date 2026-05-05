@@ -3,6 +3,43 @@
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { UTF8_ENCODING } = require("../lib/constants");
+const {
+  ENV_KEY_VAULT_PATH,
+  ENV_KEY_SUBFOLDER,
+  ENV_KEY_CAPTURE_MODE,
+  ENV_KEY_INVOKED_BY,
+  PROJECT_CONFIG_FILE_NAME,
+  DOTENV_FILE_NAME,
+  GLOBAL_MM_DIR_NAME,
+  GLOBAL_CONFIG_FILE_NAME,
+} = require("../lib/config-keys");
+const {
+  TEST_VAULT_PREFIX,
+  TEST_HOME_PREFIX,
+  TEST_CWD_PREFIX,
+  TEST_TRANSCRIPT_PREFIX,
+  TEST_MM_HOME_PREFIX,
+  TEST_MM_VAULT_PREFIX,
+  TEST_MM_CWD_PREFIX,
+  TEST_MM_TR_PREFIX,
+  TEST_DEFAULT_TRANSCRIPT_FILE,
+  TEST_DEFAULT_SUBFOLDER: DEFAULT_SUBFOLDER,
+  TEST_CAPTURE_MODE_LITE: CAPTURE_MODE_LITE,
+  TEST_CAPTURE_MODE_FULL: CAPTURE_MODE_FULL,
+  TEST_HOOK_ENTRY_USER_PROMPT_SUBMIT: HOOK_ENTRY_USER_PROMPT_SUBMIT,
+  TEST_HOOK_EVENT_STOP: HOOK_EVENT_STOP,
+  TEST_HOOK_EVENT_STOP_PASCAL: HOOK_EVENT_STOP_PASCAL,
+  TEST_HOOK_EVENT_SESSION_END_SNAKE: HOOK_EVENT_SESSION_END_SNAKE,
+  TEST_HOOK_EVENT_USER_PROMPT_SUBMIT_KEBAB: HOOK_EVENT_USER_PROMPT_SUBMIT_KEBAB,
+  TEST_PLATFORM_CLAUDE_CODE: PLATFORM_CLAUDE_CODE,
+  TEST_PLATFORM_COPILOT_CLI: PLATFORM_COPILOT_CLI,
+  TEST_PLATFORM_CODEX: PLATFORM_CODEX,
+  TEST_TRANSCRIPT_ROLE_USER: TRANSCRIPT_ROLE_USER,
+  TEST_TRANSCRIPT_ROLE_ASSISTANT: TRANSCRIPT_ROLE_ASSISTANT,
+  TEST_ASSISTANT_REPLY_ENTRY_NAME: ASSISTANT_REPLY_ENTRY_NAME,
+  TEST_UNKNOWN_LABEL: UNKNOWN_LABEL,
+} = require("./helpers/test-constants");
 const { buildDailyChunkPath, buildDailyFilePath } = require("../lib/vault");
 const { resolveCaptureStatePath } = require("../lib/capture-state");
 const sessionEnd = require("../session-end");
@@ -10,6 +47,14 @@ const { buildStopAssistantSelection } = require("../session-end");
 const userPromptSubmit = require("../user-prompt-submit");
 const { materializeProjectDotEnvConfig } = require("./helpers/project-dot-env");
 const hooksRoot = path.resolve(__dirname, "..");
+
+const TWO = 2;
+const THREE = 3;
+const FOUR = 4;
+const FORTY = 40;
+const LONG_TURN_LENGTH = 17000;
+const ENTRYPOINT_FILE = "session-end.js";
+const USER_PROMPT_SUBMIT_ENTRYPOINT_FILE = "user-prompt-submit.js";
 
 const tempDirs = [];
 const generatedEnvPaths = [];
@@ -32,55 +77,55 @@ const buildEnv = (homeDir, overrides = {}) => ({
 const hasEnvVaultPath = (env) =>
   env !== null &&
   typeof env === "object" &&
-  typeof env.MEMORY_MASON_VAULT_PATH === "string" &&
-  env.MEMORY_MASON_VAULT_PATH !== "";
+  typeof env[ENV_KEY_VAULT_PATH] === "string" &&
+  env[ENV_KEY_VAULT_PATH] !== "";
 
 const remapHooksRootCwd = (targetCwd, isolatedProjectCwd) =>
   targetCwd === hooksRoot && isolatedProjectCwd !== "" ? isolatedProjectCwd : targetCwd;
 
 const withProcessCaptureMode = (value, callback) => {
-  const hadCaptureMode = Object.hasOwn(process.env, "MEMORY_MASON_CAPTURE_MODE");
-  const previousCaptureMode = process.env.MEMORY_MASON_CAPTURE_MODE;
+  const hadCaptureMode = Object.hasOwn(process.env, ENV_KEY_CAPTURE_MODE);
+  const previousCaptureMode = process.env[ENV_KEY_CAPTURE_MODE];
 
   if (typeof value === "string") {
-    process.env.MEMORY_MASON_CAPTURE_MODE = value;
+    process.env[ENV_KEY_CAPTURE_MODE] = value;
   } else {
-    delete process.env.MEMORY_MASON_CAPTURE_MODE;
+    delete process.env[ENV_KEY_CAPTURE_MODE];
   }
 
   try {
     return callback();
   } finally {
     if (hadCaptureMode && typeof previousCaptureMode === "string") {
-      process.env.MEMORY_MASON_CAPTURE_MODE = previousCaptureMode;
+      process.env[ENV_KEY_CAPTURE_MODE] = previousCaptureMode;
     } else {
-      delete process.env.MEMORY_MASON_CAPTURE_MODE;
+      delete process.env[ENV_KEY_CAPTURE_MODE];
     }
   }
 };
 
 const writeText = (filePath, content) => {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, content, "utf-8");
+  fs.writeFileSync(filePath, content, UTF8_ENCODING);
 };
 
 const today = () => {
   const now = new Date();
-  const pad = (n) => String(n).padStart(2, "0");
+  const pad = (n) => String(n).padStart(TWO, "0");
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 };
 
 const _yesterday = () => {
   const d = new Date();
   d.setDate(d.getDate() - 1);
-  const pad = (n) => String(n).padStart(2, "0");
+  const pad = (n) => String(n).padStart(TWO, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 };
 
 const buildTranscript = (turnCount, firstUserContent = "user turn") =>
   Array.from({ length: turnCount }, (_, index) => {
-    const isUser = index % 2 === 0;
-    const role = isUser ? "user" : "assistant";
+    const isUser = index % TWO === 0;
+    const role = isUser ? TRANSCRIPT_ROLE_USER : TRANSCRIPT_ROLE_ASSISTANT;
     const content = isUser && index === 0 ? firstUserContent : `${role} turn ${index}`;
     return JSON.stringify({ message: { role, content } });
   }).join("\n");
@@ -134,7 +179,7 @@ const buildVsCodeTranscript = (turns) => {
       JSON.stringify({
         ...entry,
         id: `entry-${index}`,
-        timestamp: `2025-01-01T00:00:${String(index).padStart(2, "0")}.000Z`,
+        timestamp: `2025-01-01T00:00:${String(index).padStart(TWO, "0")}.000Z`,
         parentId: index === 0 ? null : `entry-${index - 1}`,
       }),
     )
@@ -154,7 +199,7 @@ const runScript = (scriptName, options = {}) => {
   const payloadCwd = payload !== null && typeof payload.cwd === "string" ? payload.cwd : "";
   const isolatedProjectCwd =
     hasEnvVaultPath(env) && (requestedRuntimeCwd === hooksRoot || payloadCwd === hooksRoot)
-      ? createTempDir("mm-cwd-")
+      ? createTempDir(TEST_MM_CWD_PREFIX)
       : "";
   const resolvedPayload =
     payload !== null && payloadCwd !== ""
@@ -178,7 +223,9 @@ const runScript = (scriptName, options = {}) => {
   if (resolvedPayloadCwd !== "" && resolvedPayloadCwd !== runtime.cwd) {
     materializeProjectDotEnvConfig(resolvedPayloadCwd, env, generatedEnvPaths);
   }
-  if (scriptName === "user-prompt-submit.js") return userPromptSubmit.run(stdinText, runtime);
+  if (scriptName === USER_PROMPT_SUBMIT_ENTRYPOINT_FILE) {
+    return userPromptSubmit.run(stdinText, runtime);
+  }
   return sessionEnd.run(stdinText, runtime);
 };
 
@@ -193,184 +240,197 @@ afterEach(() => {
 });
 
 describe("entrypoint config readers", () => {
-  const scriptName = "session-end.js";
+  const scriptName = ENTRYPOINT_FILE;
   const scriptModule = sessionEnd;
 
   it(`reads .env text for ${scriptName}`, () => {
-    const cwd = createTempDir("memory-mason-cwd-");
-    const envText = "MEMORY_MASON_VAULT_PATH=/vault/path\nMEMORY_MASON_SUBFOLDER=notes";
+    const cwd = createTempDir(TEST_CWD_PREFIX);
+    const envText = `${ENV_KEY_VAULT_PATH}=/vault/path\n${ENV_KEY_SUBFOLDER}=notes`;
 
-    writeText(path.join(cwd, ".env"), envText);
+    writeText(path.join(cwd, DOTENV_FILE_NAME), envText);
 
     expect(scriptModule.readDotEnvText(cwd)).toBe(envText);
-    expect(scriptModule.readDotEnvText(createTempDir("memory-mason-cwd-empty-"))).toBe("");
+    expect(scriptModule.readDotEnvText(createTempDir(`${TEST_CWD_PREFIX}empty-`))).toBe("");
   });
 
   it(`reads global config text for ${scriptName}`, () => {
-    const homeDir = createTempDir("memory-mason-home-");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
     const configText = JSON.stringify({ vaultPath: "/vault", subfolder: "notes" });
 
-    writeText(path.join(homeDir, ".memory-mason", "config.json"), configText);
+    writeText(path.join(homeDir, GLOBAL_MM_DIR_NAME, GLOBAL_CONFIG_FILE_NAME), configText);
 
     expect(scriptModule.readGlobalConfigText(homeDir)).toBe(configText);
-    expect(scriptModule.readGlobalConfigText(createTempDir("memory-mason-home-empty-"))).toBe("");
+    expect(scriptModule.readGlobalConfigText(createTempDir(`${TEST_HOME_PREFIX}empty-`))).toBe("");
   });
 
   it(`reads global .env text for ${scriptName}`, () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const envText = "MEMORY_MASON_VAULT_PATH=~/vault\nMEMORY_MASON_SUBFOLDER=global-brain";
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const envText = `${ENV_KEY_VAULT_PATH}=~/vault\n${ENV_KEY_SUBFOLDER}=global-brain`;
 
-    writeText(path.join(homeDir, ".memory-mason", ".env"), envText);
+    writeText(path.join(homeDir, GLOBAL_MM_DIR_NAME, DOTENV_FILE_NAME), envText);
 
     expect(scriptModule.readGlobalDotEnvText(homeDir)).toBe(envText);
-    expect(scriptModule.readGlobalDotEnvText(createTempDir("memory-mason-home-empty-"))).toBe("");
+    expect(scriptModule.readGlobalDotEnvText(createTempDir(`${TEST_HOME_PREFIX}empty-`))).toBe("");
   });
 });
 
 describe("session-end.js", () => {
   it("skips when invoked by another Memory Mason command", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
-    const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const transcriptPath = path.join(
+      createTempDir(TEST_TRANSCRIPT_PREFIX),
+      TEST_DEFAULT_TRANSCRIPT_FILE,
+    );
 
     writeText(transcriptPath, buildTranscript(2));
 
-    const result = runScript("session-end.js", {
-      payload: { hook_event_name: "session_end", cwd: hooksRoot, transcript_path: transcriptPath },
+    const result = runScript(ENTRYPOINT_FILE, {
+      payload: {
+        hook_event_name: HOOK_EVENT_SESSION_END_SNAKE,
+        cwd: hooksRoot,
+        transcript_path: transcriptPath,
+      },
       env: buildEnv(homeDir, {
-        MEMORY_MASON_VAULT_PATH: vaultPath,
-        MEMORY_MASON_INVOKED_BY: "mmq",
+        [ENV_KEY_VAULT_PATH]: vaultPath,
+        [ENV_KEY_INVOKED_BY]: "mmq",
       }),
     });
 
     expect(result.status).toBe(0);
-    expect(fs.existsSync(buildDailyFilePath(vaultPath, "ai-knowledge", today()))).toBe(false);
+    expect(fs.existsSync(buildDailyFilePath(vaultPath, DEFAULT_SUBFOLDER, today()))).toBe(false);
   });
 
   it("captures assistant replies on Stop and skips duplicates for unchanged transcript", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
-    const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const transcriptPath = path.join(
+      createTempDir(TEST_TRANSCRIPT_PREFIX),
+      TEST_DEFAULT_TRANSCRIPT_FILE,
+    );
 
     writeText(transcriptPath, buildTranscript(1, "first prompt turn"));
 
-    runScript("user-prompt-submit.js", {
+    runScript(USER_PROMPT_SUBMIT_ENTRYPOINT_FILE, {
       payload: {
-        hookEventName: "user-prompt-submit",
+        hookEventName: HOOK_EVENT_USER_PROMPT_SUBMIT_KEBAB,
         cwd: hooksRoot,
         prompt: "first prompt",
         transcript_path: transcriptPath,
         session_id: "session-stop-order",
       },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
-    const dailyPath = buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1);
-    const afterFirstPrompt = fs.readFileSync(dailyPath, "utf-8");
+    const dailyPath = buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1);
+    const afterFirstPrompt = fs.readFileSync(dailyPath, UTF8_ENCODING);
     expect(afterFirstPrompt).toContain("first prompt");
-    expect(afterFirstPrompt).not.toContain("AssistantReply");
+    expect(afterFirstPrompt).not.toContain(ASSISTANT_REPLY_ENTRY_NAME);
 
     writeText(transcriptPath, buildTranscript(2, "first prompt turn"));
 
-    runScript("session-end.js", {
+    runScript(ENTRYPOINT_FILE, {
       payload: {
-        hookEventName: "Stop",
+        hookEventName: HOOK_EVENT_STOP_PASCAL,
         cwd: hooksRoot,
         transcript_path: transcriptPath,
         session_id: "session-stop-order",
       },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
-    const afterFirstStop = fs.readFileSync(dailyPath, "utf-8");
-    expect(afterFirstStop).toContain("AssistantReply");
+    const afterFirstStop = fs.readFileSync(dailyPath, UTF8_ENCODING);
+    expect(afterFirstStop).toContain(ASSISTANT_REPLY_ENTRY_NAME);
     expect(afterFirstStop).toContain("assistant turn 1");
     expect(afterFirstStop.indexOf("first prompt")).toBeLessThan(
       afterFirstStop.indexOf("assistant turn 1"),
     );
 
-    writeText(transcriptPath, buildTranscript(3, "first prompt turn"));
+    writeText(transcriptPath, buildTranscript(THREE, "first prompt turn"));
 
-    runScript("user-prompt-submit.js", {
+    runScript(USER_PROMPT_SUBMIT_ENTRYPOINT_FILE, {
       payload: {
-        hookEventName: "user-prompt-submit",
+        hookEventName: HOOK_EVENT_USER_PROMPT_SUBMIT_KEBAB,
         cwd: hooksRoot,
         prompt: "second prompt",
         transcript_path: transcriptPath,
         session_id: "session-stop-order",
       },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
-    const afterSecondPrompt = fs.readFileSync(dailyPath, "utf-8");
+    const afterSecondPrompt = fs.readFileSync(dailyPath, UTF8_ENCODING);
     expect(afterSecondPrompt).toContain("second prompt");
     expect(afterSecondPrompt.split("assistant turn 1").length - 1).toBe(1);
     expect(afterSecondPrompt).not.toContain("assistant turn 3");
 
-    writeText(transcriptPath, buildTranscript(4, "first prompt turn"));
+    writeText(transcriptPath, buildTranscript(FOUR, "first prompt turn"));
 
-    runScript("session-end.js", {
+    runScript(ENTRYPOINT_FILE, {
       payload: {
-        hook_event_name: "stop",
+        hook_event_name: HOOK_EVENT_STOP,
         cwd: hooksRoot,
         transcript_path: transcriptPath,
         session_id: "session-stop-order",
       },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
-    const afterSecondStop = fs.readFileSync(dailyPath, "utf-8");
+    const afterSecondStop = fs.readFileSync(dailyPath, UTF8_ENCODING);
     expect(afterSecondStop).toContain("assistant turn 3");
     expect(afterSecondStop.indexOf("second prompt")).toBeLessThan(
       afterSecondStop.indexOf("assistant turn 3"),
     );
 
-    runScript("session-end.js", {
+    runScript(ENTRYPOINT_FILE, {
       payload: {
-        hook_event_name: "stop",
+        hook_event_name: HOOK_EVENT_STOP,
         cwd: hooksRoot,
         transcript_path: transcriptPath,
         session_id: "session-stop-order",
       },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
-    const afterDuplicateStop = fs.readFileSync(dailyPath, "utf-8");
+    const afterDuplicateStop = fs.readFileSync(dailyPath, UTF8_ENCODING);
     expect(afterDuplicateStop).toBe(afterSecondStop);
     expect(afterDuplicateStop.split("assistant turn 3").length - 1).toBe(1);
   });
 
   it("captures first assistant reply on Stop when prompt submit could not anchor transcript count", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
-    const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const transcriptPath = path.join(
+      createTempDir(TEST_TRANSCRIPT_PREFIX),
+      TEST_DEFAULT_TRANSCRIPT_FILE,
+    );
 
-    runScript("user-prompt-submit.js", {
+    runScript(USER_PROMPT_SUBMIT_ENTRYPOINT_FILE, {
       payload: {
-        hook_event_name: "UserPromptSubmit",
+        hook_event_name: HOOK_ENTRY_USER_PROMPT_SUBMIT,
         cwd: hooksRoot,
         prompt: "first prompt",
         transcript_path: transcriptPath,
         session_id: "session-stop-first-turn",
       },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
     writeText(transcriptPath, buildTranscript(2, "first prompt turn"));
 
-    const result = runScript("session-end.js", {
+    const result = runScript(ENTRYPOINT_FILE, {
       payload: {
-        hook_event_name: "Stop",
+        hook_event_name: HOOK_EVENT_STOP_PASCAL,
         cwd: hooksRoot,
         transcript_path: transcriptPath,
         session_id: "session-stop-first-turn",
       },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
     const dailyContent = fs.readFileSync(
-      buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1),
-      "utf-8",
+      buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
+      UTF8_ENCODING,
     );
 
     expect(result.status).toBe(0);
@@ -382,50 +442,53 @@ describe("session-end.js", () => {
   });
 
   it("uses last_assistant_message fallback on Stop without replaying duplicate assistant replies later", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
-    const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const transcriptPath = path.join(
+      createTempDir(TEST_TRANSCRIPT_PREFIX),
+      TEST_DEFAULT_TRANSCRIPT_FILE,
+    );
 
     writeText(transcriptPath, buildTranscript(1, "first prompt turn"));
 
-    runScript("user-prompt-submit.js", {
+    runScript(USER_PROMPT_SUBMIT_ENTRYPOINT_FILE, {
       payload: {
-        hook_event_name: "UserPromptSubmit",
+        hook_event_name: HOOK_ENTRY_USER_PROMPT_SUBMIT,
         cwd: hooksRoot,
         prompt: "first prompt",
         transcript_path: transcriptPath,
         session_id: "session-stop-payload-fallback",
       },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
-    runScript("session-end.js", {
+    runScript(ENTRYPOINT_FILE, {
       payload: {
-        hook_event_name: "Stop",
+        hook_event_name: HOOK_EVENT_STOP_PASCAL,
         cwd: hooksRoot,
         transcript_path: transcriptPath,
         session_id: "session-stop-payload-fallback",
         last_assistant_message: "assistant turn 1",
       },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
     writeText(transcriptPath, buildTranscript(2, "first prompt turn"));
 
-    const result = runScript("session-end.js", {
+    const result = runScript(ENTRYPOINT_FILE, {
       payload: {
-        hook_event_name: "Stop",
+        hook_event_name: HOOK_EVENT_STOP_PASCAL,
         cwd: hooksRoot,
         transcript_path: transcriptPath,
         session_id: "session-stop-payload-fallback",
         last_assistant_message: "assistant turn 1",
       },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
     const dailyContent = fs.readFileSync(
-      buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1),
-      "utf-8",
+      buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
+      UTF8_ENCODING,
     );
 
     expect(result.status).toBe(0);
@@ -433,57 +496,63 @@ describe("session-end.js", () => {
   });
 
   it("is a no-op on first Stop when transcript is empty and payload has no assistant message", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
-    const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const transcriptPath = path.join(
+      createTempDir(TEST_TRANSCRIPT_PREFIX),
+      TEST_DEFAULT_TRANSCRIPT_FILE,
+    );
 
     writeText(transcriptPath, "");
 
-    const result = runScript("session-end.js", {
+    const result = runScript(ENTRYPOINT_FILE, {
       payload: {
-        hook_event_name: "Stop",
+        hook_event_name: HOOK_EVENT_STOP_PASCAL,
         cwd: hooksRoot,
         transcript_path: transcriptPath,
         session_id: "session-stop-empty-first",
       },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
     expect(result.status).toBe(0);
-    expect(fs.existsSync(buildDailyFilePath(vaultPath, "ai-knowledge", today()))).toBe(false);
+    expect(fs.existsSync(buildDailyFilePath(vaultPath, DEFAULT_SUBFOLDER, today()))).toBe(false);
   });
 
   it("stop path preserves <thinking> in transcript-derived assistant content in lite", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
-    const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const transcriptPath = path.join(
+      createTempDir(TEST_TRANSCRIPT_PREFIX),
+      TEST_DEFAULT_TRANSCRIPT_FILE,
+    );
 
     writeText(
       transcriptPath,
       [
-        JSON.stringify({ message: { role: "user", content: "question" } }),
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "question" } }),
         JSON.stringify({
           message: {
-            role: "assistant",
+            role: TRANSCRIPT_ROLE_ASSISTANT,
             content: "answer<thinking>hidden</thinking>",
           },
         }),
       ].join("\n"),
     );
 
-    const result = runScript("session-end.js", {
+    const result = runScript(ENTRYPOINT_FILE, {
       payload: {
-        hook_event_name: "Stop",
+        hook_event_name: HOOK_EVENT_STOP_PASCAL,
         cwd: hooksRoot,
         transcript_path: transcriptPath,
         session_id: "session-stop-lite-thinking-transcript",
       },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
     const dailyContent = fs.readFileSync(
-      buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1),
-      "utf-8",
+      buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
+      UTF8_ENCODING,
     );
 
     expect(result.status).toBe(0);
@@ -492,26 +561,29 @@ describe("session-end.js", () => {
   });
 
   it("stop path preserves <thinking> in last_assistant_message fallback in lite", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
-    const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const transcriptPath = path.join(
+      createTempDir(TEST_TRANSCRIPT_PREFIX),
+      TEST_DEFAULT_TRANSCRIPT_FILE,
+    );
 
     writeText(transcriptPath, "");
 
-    const result = runScript("session-end.js", {
+    const result = runScript(ENTRYPOINT_FILE, {
       payload: {
-        hook_event_name: "Stop",
+        hook_event_name: HOOK_EVENT_STOP_PASCAL,
         cwd: hooksRoot,
         transcript_path: transcriptPath,
         session_id: "session-stop-lite-thinking-fallback",
         last_assistant_message: "answer<thinking>hidden</thinking>",
       },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
     const dailyContent = fs.readFileSync(
-      buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1),
-      "utf-8",
+      buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
+      UTF8_ENCODING,
     );
 
     expect(result.status).toBe(0);
@@ -520,31 +592,38 @@ describe("session-end.js", () => {
   });
 
   it("stop path full mode preserves tags", () => {
-    const cwd = createTempDir("memory-mason-cwd-");
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
-    const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
+    const cwd = createTempDir(TEST_CWD_PREFIX);
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const transcriptPath = path.join(
+      createTempDir(TEST_TRANSCRIPT_PREFIX),
+      TEST_DEFAULT_TRANSCRIPT_FILE,
+    );
 
     writeText(
-      path.join(cwd, "memory-mason.json"),
-      JSON.stringify({ vaultPath, subfolder: "ai-knowledge", captureMode: "full" }, null, 2),
+      path.join(cwd, PROJECT_CONFIG_FILE_NAME),
+      JSON.stringify(
+        { vaultPath, subfolder: DEFAULT_SUBFOLDER, captureMode: CAPTURE_MODE_FULL },
+        null,
+        2,
+      ),
     );
     writeText(
       transcriptPath,
       [
-        JSON.stringify({ message: { role: "user", content: "question" } }),
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "question" } }),
         JSON.stringify({
           message: {
-            role: "assistant",
+            role: TRANSCRIPT_ROLE_ASSISTANT,
             content: "answer<thinking>hidden</thinking>",
           },
         }),
       ].join("\n"),
     );
 
-    const result = runScript("session-end.js", {
+    const result = runScript(ENTRYPOINT_FILE, {
       payload: {
-        hook_event_name: "Stop",
+        hook_event_name: HOOK_EVENT_STOP_PASCAL,
         cwd,
         transcript_path: transcriptPath,
         session_id: "session-stop-full-thinking",
@@ -554,8 +633,8 @@ describe("session-end.js", () => {
     });
 
     const dailyContent = fs.readFileSync(
-      buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1),
-      "utf-8",
+      buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
+      UTF8_ENCODING,
     );
 
     expect(result.status).toBe(0);
@@ -563,90 +642,109 @@ describe("session-end.js", () => {
   });
 
   it("Stop path in lite mode captures only last assistant turn from multi-intermediate batch", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
-    const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const transcriptPath = path.join(
+      createTempDir(TEST_TRANSCRIPT_PREFIX),
+      TEST_DEFAULT_TRANSCRIPT_FILE,
+    );
 
     writeText(
       transcriptPath,
       [
-        JSON.stringify({ message: { role: "user", content: "question" } }),
-        JSON.stringify({ message: { role: "assistant", content: "thinking..." } }),
-        JSON.stringify({ message: { role: "assistant", content: "intermediate step" } }),
-        JSON.stringify({ message: { role: "assistant", content: "final answer" } }),
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "question" } }),
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: "thinking..." } }),
+        JSON.stringify({
+          message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: "intermediate step" },
+        }),
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: "final answer" } }),
       ].join("\n"),
     );
 
-    const result = runScript("session-end.js", {
+    const result = runScript(ENTRYPOINT_FILE, {
       payload: {
-        hook_event_name: "Stop",
+        hook_event_name: HOOK_EVENT_STOP_PASCAL,
         cwd: hooksRoot,
         transcript_path: transcriptPath,
         session_id: "session-stop-lite-multi-assistant",
       },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
     const dailyContent = fs.readFileSync(
-      buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1),
-      "utf-8",
+      buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
+      UTF8_ENCODING,
     );
 
     expect(result.status).toBe(0);
     expect(dailyContent).toContain("final answer");
     expect(dailyContent).not.toContain("thinking...");
     expect(dailyContent).not.toContain("intermediate step");
-    expect(dailyContent.split("AssistantReply").length - 1).toBe(1);
+    expect(dailyContent.split(ASSISTANT_REPLY_ENTRY_NAME).length - 1).toBe(1);
   });
 
   it("session_end path lite skips entirely", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
-    const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const transcriptPath = path.join(
+      createTempDir(TEST_TRANSCRIPT_PREFIX),
+      TEST_DEFAULT_TRANSCRIPT_FILE,
+    );
 
     writeText(
       transcriptPath,
       [
-        JSON.stringify({ message: { role: "user", content: "u1<thinking>hidden</thinking>" } }),
-        JSON.stringify({ message: { role: "assistant", content: "a1" } }),
+        JSON.stringify({
+          message: { role: TRANSCRIPT_ROLE_USER, content: "u1<thinking>hidden</thinking>" },
+        }),
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: "a1" } }),
       ].join("\n"),
     );
 
-    const result = runScript("session-end.js", {
+    const result = runScript(ENTRYPOINT_FILE, {
       payload: {
-        hook_event_name: "session_end",
+        hook_event_name: HOOK_EVENT_SESSION_END_SNAKE,
         cwd: hooksRoot,
         transcript_path: transcriptPath,
         session_id: "session-end-lite-strip",
       },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
     expect(result.status).toBe(0);
-    expect(fs.existsSync(buildDailyFilePath(vaultPath, "ai-knowledge", today()))).toBe(false);
+    expect(fs.existsSync(buildDailyFilePath(vaultPath, DEFAULT_SUBFOLDER, today()))).toBe(false);
   });
 
   it("session_end path full mode preserves tags", () => {
-    const cwd = createTempDir("memory-mason-cwd-");
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
-    const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
+    const cwd = createTempDir(TEST_CWD_PREFIX);
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const transcriptPath = path.join(
+      createTempDir(TEST_TRANSCRIPT_PREFIX),
+      TEST_DEFAULT_TRANSCRIPT_FILE,
+    );
 
     writeText(
-      path.join(cwd, "memory-mason.json"),
-      JSON.stringify({ vaultPath, subfolder: "ai-knowledge", captureMode: "full" }, null, 2),
+      path.join(cwd, PROJECT_CONFIG_FILE_NAME),
+      JSON.stringify(
+        { vaultPath, subfolder: DEFAULT_SUBFOLDER, captureMode: CAPTURE_MODE_FULL },
+        null,
+        2,
+      ),
     );
     writeText(
       transcriptPath,
       [
-        JSON.stringify({ message: { role: "user", content: "u1<thinking>hidden</thinking>" } }),
-        JSON.stringify({ message: { role: "assistant", content: "a1" } }),
+        JSON.stringify({
+          message: { role: TRANSCRIPT_ROLE_USER, content: "u1<thinking>hidden</thinking>" },
+        }),
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: "a1" } }),
       ].join("\n"),
     );
 
-    const result = runScript("session-end.js", {
+    const result = runScript(ENTRYPOINT_FILE, {
       payload: {
-        hook_event_name: "session_end",
+        hook_event_name: HOOK_EVENT_SESSION_END_SNAKE,
         cwd,
         transcript_path: transcriptPath,
         session_id: "session-end-full-preserve",
@@ -656,8 +754,8 @@ describe("session-end.js", () => {
     });
 
     const dailyContent = fs.readFileSync(
-      buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1),
-      "utf-8",
+      buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
+      UTF8_ENCODING,
     );
 
     expect(result.status).toBe(0);
@@ -665,21 +763,24 @@ describe("session-end.js", () => {
   });
 
   it("captures assistant reply from VS Code transcript entries on Stop", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
-    const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const transcriptPath = path.join(
+      createTempDir(TEST_TRANSCRIPT_PREFIX),
+      TEST_DEFAULT_TRANSCRIPT_FILE,
+    );
 
     writeText(transcriptPath, buildVsCodeTranscript([{ user: "first prompt" }]));
 
-    runScript("user-prompt-submit.js", {
+    runScript(USER_PROMPT_SUBMIT_ENTRYPOINT_FILE, {
       payload: {
-        hook_event_name: "UserPromptSubmit",
+        hook_event_name: HOOK_ENTRY_USER_PROMPT_SUBMIT,
         cwd: hooksRoot,
         prompt: "first prompt",
         transcript_path: transcriptPath,
         session_id: "session-stop-vscode-transcript",
       },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
     writeText(
@@ -687,19 +788,19 @@ describe("session-end.js", () => {
       buildVsCodeTranscript([{ user: "first prompt", assistant: "assistant turn 1" }]),
     );
 
-    const result = runScript("session-end.js", {
+    const result = runScript(ENTRYPOINT_FILE, {
       payload: {
-        hook_event_name: "Stop",
+        hook_event_name: HOOK_EVENT_STOP_PASCAL,
         cwd: hooksRoot,
         transcript_path: transcriptPath,
         session_id: "session-stop-vscode-transcript",
       },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
     const dailyContent = fs.readFileSync(
-      buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1),
-      "utf-8",
+      buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
+      UTF8_ENCODING,
     );
 
     expect(result.status).toBe(0);
@@ -708,108 +809,122 @@ describe("session-end.js", () => {
   });
 
   it("writes transcript from explicit transcript path", () => {
-    withProcessCaptureMode("full", () => {
-      const homeDir = createTempDir("memory-mason-home-");
-      const vaultPath = createTempDir("memory-mason-vault-");
-      const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+      const transcriptPath = path.join(
+        createTempDir(TEST_TRANSCRIPT_PREFIX),
+        TEST_DEFAULT_TRANSCRIPT_FILE,
+      );
 
       writeText(transcriptPath, buildTranscript(2));
 
-      const result = runScript("session-end.js", {
+      const result = runScript(ENTRYPOINT_FILE, {
         payload: {
-          hook_event_name: "session_end",
+          hook_event_name: HOOK_EVENT_SESSION_END_SNAKE,
           cwd: hooksRoot,
           transcript_path: transcriptPath,
           session_id: "session-1",
-          source: "stop",
+          source: HOOK_EVENT_STOP,
         },
         env: buildEnv(homeDir, {
-          MEMORY_MASON_VAULT_PATH: vaultPath,
+          [ENV_KEY_VAULT_PATH]: vaultPath,
         }),
       });
 
-      const dailyPath = buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1);
+      const dailyPath = buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1);
       expect(result.status).toBe(0);
-      expect(fs.readFileSync(dailyPath, "utf-8")).toContain("session-1 / stop");
+      expect(fs.readFileSync(dailyPath, UTF8_ENCODING)).toContain("session-1 / stop");
     });
   });
 
   it("session_end path full mode skips when transcript is empty", () => {
-    withProcessCaptureMode("full", () => {
-      const homeDir = createTempDir("memory-mason-home-");
-      const vaultPath = createTempDir("memory-mason-vault-");
-      const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+      const transcriptPath = path.join(
+        createTempDir(TEST_TRANSCRIPT_PREFIX),
+        TEST_DEFAULT_TRANSCRIPT_FILE,
+      );
 
       writeText(transcriptPath, "");
 
-      const result = runScript("session-end.js", {
+      const result = runScript(ENTRYPOINT_FILE, {
         payload: {
-          hook_event_name: "session_end",
+          hook_event_name: HOOK_EVENT_SESSION_END_SNAKE,
           cwd: hooksRoot,
           transcript_path: transcriptPath,
           session_id: "session-end-full-empty",
         },
-        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       });
 
       expect(result.status).toBe(0);
-      expect(fs.existsSync(buildDailyFilePath(vaultPath, "ai-knowledge", today()))).toBe(false);
+      expect(fs.existsSync(buildDailyFilePath(vaultPath, DEFAULT_SUBFOLDER, today()))).toBe(false);
     });
   });
 
   it("session_end path full mode skips when all turns are filtered out as mm turns", () => {
-    withProcessCaptureMode("full", () => {
-      const homeDir = createTempDir("memory-mason-home-");
-      const vaultPath = createTempDir("memory-mason-vault-");
-      const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+      const transcriptPath = path.join(
+        createTempDir(TEST_TRANSCRIPT_PREFIX),
+        TEST_DEFAULT_TRANSCRIPT_FILE,
+      );
 
       writeText(
         transcriptPath,
         [
-          JSON.stringify({ message: { role: "user", content: "/mmc" } }),
-          JSON.stringify({ message: { role: "assistant", content: "compiled knowledge" } }),
+          JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "/mmc" } }),
+          JSON.stringify({
+            message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: "compiled knowledge" },
+          }),
         ].join("\n"),
       );
 
-      const result = runScript("session-end.js", {
+      const result = runScript(ENTRYPOINT_FILE, {
         payload: {
-          hook_event_name: "session_end",
+          hook_event_name: HOOK_EVENT_SESSION_END_SNAKE,
           cwd: hooksRoot,
           transcript_path: transcriptPath,
           session_id: "session-end-full-all-mm",
         },
-        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       });
 
       expect(result.status).toBe(0);
-      expect(fs.existsSync(buildDailyFilePath(vaultPath, "ai-knowledge", today()))).toBe(false);
+      expect(fs.existsSync(buildDailyFilePath(vaultPath, DEFAULT_SUBFOLDER, today()))).toBe(false);
     });
   });
 
   it("writes full transcript from explicit path without truncation", () => {
-    withProcessCaptureMode("full", () => {
-      const homeDir = createTempDir("memory-mason-home-");
-      const vaultPath = createTempDir("memory-mason-vault-");
-      const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
-      const longFirstTurn = `session-end-first-user-${"y".repeat(17000)}`;
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+      const transcriptPath = path.join(
+        createTempDir(TEST_TRANSCRIPT_PREFIX),
+        TEST_DEFAULT_TRANSCRIPT_FILE,
+      );
+      const longFirstTurn = `session-end-first-user-${"y".repeat(LONG_TURN_LENGTH)}`;
 
-      writeText(transcriptPath, buildTranscript(40, longFirstTurn));
+      writeText(transcriptPath, buildTranscript(FORTY, longFirstTurn));
 
-      const result = runScript("session-end.js", {
+      const result = runScript(ENTRYPOINT_FILE, {
         payload: {
-          hook_event_name: "session_end",
+          hook_event_name: HOOK_EVENT_SESSION_END_SNAKE,
           cwd: hooksRoot,
           transcript_path: transcriptPath,
           session_id: "session-full-session-end",
-          source: "stop",
+          source: HOOK_EVENT_STOP,
         },
         env: buildEnv(homeDir, {
-          MEMORY_MASON_VAULT_PATH: vaultPath,
+          [ENV_KEY_VAULT_PATH]: vaultPath,
         }),
       });
 
-      const dailyPath = buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1);
-      const dailyContent = fs.readFileSync(dailyPath, "utf-8");
+      const dailyPath = buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1);
+      const dailyContent = fs.readFileSync(dailyPath, UTF8_ENCODING);
 
       expect(result.status).toBe(0);
       expect(dailyContent).toContain(longFirstTurn);
@@ -819,9 +934,9 @@ describe("session-end.js", () => {
   });
 
   it("falls back to codex session files when transcript path missing", () => {
-    withProcessCaptureMode("full", () => {
-      const homeDir = createTempDir("memory-mason-home-");
-      const vaultPath = createTempDir("memory-mason-vault-");
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
       const codexFile = path.join(
         homeDir,
         ".codex",
@@ -832,109 +947,118 @@ describe("session-end.js", () => {
 
       writeText(codexFile, buildTranscript(2));
 
-      runScript("session-end.js", {
+      runScript(ENTRYPOINT_FILE, {
         payload: {
-          hook_event_name: "session_end",
+          hook_event_name: HOOK_EVENT_SESSION_END_SNAKE,
           turn_id: "turn-1",
           cwd: hooksRoot,
           session_id: "session-2",
         },
         env: buildEnv(homeDir, {
-          MEMORY_MASON_VAULT_PATH: vaultPath,
+          [ENV_KEY_VAULT_PATH]: vaultPath,
         }),
       });
 
       expect(
-        fs.readFileSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1), "utf-8"),
-      ).toContain("session-2 / codex");
+        fs.readFileSync(
+          buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
+          UTF8_ENCODING,
+        ),
+      ).toContain(`session-2 / ${PLATFORM_CODEX}`);
     });
   });
 
   it("falls back to Copilot CLI session-state content", () => {
-    withProcessCaptureMode("full", () => {
-      const homeDir = createTempDir("memory-mason-home-");
-      const vaultPath = createTempDir("memory-mason-vault-");
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
       const sessionDir = path.join(homeDir, ".copilot", "session-state", "session-a");
-      const cwd = createTempDir("memory-mason-cwd-");
+      const cwd = createTempDir(TEST_CWD_PREFIX);
       const transcriptPath = path.join(sessionDir, "state.jsonl");
 
       writeText(transcriptPath, buildTranscript(2, cwd));
 
-      runScript("session-end.js", {
+      runScript(ENTRYPOINT_FILE, {
         payload: {
           timestamp: "2026-04-27T10:00:00.000Z",
           cwd,
         },
         env: buildEnv(homeDir, {
-          MEMORY_MASON_VAULT_PATH: vaultPath,
+          [ENV_KEY_VAULT_PATH]: vaultPath,
         }),
       });
 
       expect(
-        fs.readFileSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1), "utf-8"),
-      ).toContain("unknown / copilot-cli");
+        fs.readFileSync(
+          buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
+          UTF8_ENCODING,
+        ),
+      ).toContain(`${UNKNOWN_LABEL} / ${PLATFORM_COPILOT_CLI}`);
     });
   });
 
   it("skips when Copilot CLI session-state is missing", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
 
-    const result = runScript("session-end.js", {
+    const result = runScript(ENTRYPOINT_FILE, {
       payload: {
         timestamp: "2026-04-27T10:00:00.000Z",
         cwd: hooksRoot,
       },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
     expect(result.status).toBe(0);
-    expect(fs.existsSync(buildDailyFilePath(vaultPath, "ai-knowledge", today()))).toBe(false);
+    expect(fs.existsSync(buildDailyFilePath(vaultPath, DEFAULT_SUBFOLDER, today()))).toBe(false);
   });
 
   it("skips duplicate transcript capture within duplicate window", () => {
-    withProcessCaptureMode("full", () => {
-      const homeDir = createTempDir("memory-mason-home-");
-      const vaultPath = createTempDir("memory-mason-vault-");
-      const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+      const transcriptPath = path.join(
+        createTempDir(TEST_TRANSCRIPT_PREFIX),
+        TEST_DEFAULT_TRANSCRIPT_FILE,
+      );
 
       writeText(transcriptPath, buildTranscript(2));
 
-      runScript("session-end.js", {
+      runScript(ENTRYPOINT_FILE, {
         payload: {
-          hook_event_name: "session_end",
+          hook_event_name: HOOK_EVENT_SESSION_END_SNAKE,
           cwd: hooksRoot,
           transcript_path: transcriptPath,
           session_id: "session-3",
         },
         env: buildEnv(homeDir, {
-          MEMORY_MASON_VAULT_PATH: vaultPath,
+          [ENV_KEY_VAULT_PATH]: vaultPath,
         }),
       });
 
-      const dailyPath = buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1);
-      const firstContent = fs.readFileSync(dailyPath, "utf-8");
+      const dailyPath = buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1);
+      const firstContent = fs.readFileSync(dailyPath, UTF8_ENCODING);
 
-      runScript("session-end.js", {
+      runScript(ENTRYPOINT_FILE, {
         payload: {
-          hook_event_name: "session_end",
+          hook_event_name: HOOK_EVENT_SESSION_END_SNAKE,
           cwd: hooksRoot,
           transcript_path: transcriptPath,
           session_id: "session-3",
         },
         env: buildEnv(homeDir, {
-          MEMORY_MASON_VAULT_PATH: vaultPath,
+          [ENV_KEY_VAULT_PATH]: vaultPath,
         }),
       });
 
-      expect(fs.readFileSync(dailyPath, "utf-8")).toBe(firstContent);
+      expect(fs.readFileSync(dailyPath, UTF8_ENCODING)).toBe(firstContent);
     });
   });
 
   it("reports invalid stdin to stderr", () => {
-    const result = runScript("session-end.js", {
+    const result = runScript(ENTRYPOINT_FILE, {
       stdinText: "{bad",
-      env: buildEnv(createTempDir("memory-mason-home-")),
+      env: buildEnv(createTempDir(TEST_HOME_PREFIX)),
     });
 
     expect(result.status).toBe(0);
@@ -956,7 +1080,7 @@ describe("buildStopAssistantSelection", () => {
       turns,
       1,
       "",
-      "full",
+      CAPTURE_MODE_FULL,
     );
     expect(selectedTurns).toEqual(["intermediate 1", "intermediate 2", "final"]);
     expect(shouldAppendPayloadAssistant).toBe(false);
@@ -973,7 +1097,7 @@ describe("buildStopAssistantSelection", () => {
       turns,
       0,
       "",
-      "lite",
+      CAPTURE_MODE_LITE,
     );
     expect(selectedTurns).toEqual(["final"]);
     expect(shouldAppendPayloadAssistant).toBe(false);
@@ -985,7 +1109,7 @@ describe("buildStopAssistantSelection", () => {
       turns,
       0,
       "payload answer",
-      "lite",
+      CAPTURE_MODE_LITE,
     );
     expect(selectedTurns).toEqual(["payload answer"]);
     expect(shouldAppendPayloadAssistant).toBe(true);
@@ -996,7 +1120,7 @@ describe("buildStopAssistantSelection", () => {
       [],
       0,
       "",
-      "lite",
+      CAPTURE_MODE_LITE,
     );
     expect(selectedTurns).toEqual([]);
     expect(shouldAppendPayloadAssistant).toBe(false);
@@ -1008,7 +1132,7 @@ describe("buildStopAssistantSelection", () => {
       turns,
       0,
       "payload answer",
-      "full",
+      CAPTURE_MODE_FULL,
     );
     expect(selectedTurns).toEqual(["transcript turn", "payload answer"]);
     expect(shouldAppendPayloadAssistant).toBe(true);
@@ -1017,10 +1141,13 @@ describe("buildStopAssistantSelection", () => {
 
 describe("run - mm suppression for Stop event", () => {
   it("skips writing assistant reply when mmSuppressed is true", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
-    const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
-    const statePath = resolveCaptureStatePath(vaultPath, "ai-knowledge");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const transcriptPath = path.join(
+      createTempDir(TEST_TRANSCRIPT_PREFIX),
+      TEST_DEFAULT_TRANSCRIPT_FILE,
+    );
+    const statePath = resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER);
 
     writeText(transcriptPath, buildTranscript(2, "stop-mm-user"));
     writeText(
@@ -1035,25 +1162,30 @@ describe("run - mm suppression for Stop event", () => {
       ),
     );
 
-    const result = runScript("session-end.js", {
+    const result = runScript(ENTRYPOINT_FILE, {
       payload: {
-        hook_event_name: "Stop",
+        hook_event_name: HOOK_EVENT_STOP_PASCAL,
         cwd: hooksRoot,
         transcript_path: transcriptPath,
         session_id: "session-stop-mm-true",
       },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
     expect(result.status).toBe(0);
-    expect(fs.existsSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1))).toBe(false);
+    expect(fs.existsSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1))).toBe(
+      false,
+    );
   });
 
   it("writes assistant reply when mmSuppressed is false", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
-    const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
-    const statePath = resolveCaptureStatePath(vaultPath, "ai-knowledge");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const transcriptPath = path.join(
+      createTempDir(TEST_TRANSCRIPT_PREFIX),
+      TEST_DEFAULT_TRANSCRIPT_FILE,
+    );
+    const statePath = resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER);
 
     writeText(transcriptPath, buildTranscript(2, "stop-mm-user"));
     writeText(
@@ -1068,19 +1200,19 @@ describe("run - mm suppression for Stop event", () => {
       ),
     );
 
-    const result = runScript("session-end.js", {
+    const result = runScript(ENTRYPOINT_FILE, {
       payload: {
-        hook_event_name: "Stop",
+        hook_event_name: HOOK_EVENT_STOP_PASCAL,
         cwd: hooksRoot,
         transcript_path: transcriptPath,
         session_id: "session-stop-mm-false",
       },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
     const dailyContent = fs.readFileSync(
-      buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1),
-      "utf-8",
+      buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
+      UTF8_ENCODING,
     );
 
     expect(result.status).toBe(0);
@@ -1090,11 +1222,14 @@ describe("run - mm suppression for Stop event", () => {
 
 describe("run - sync flag", () => {
   it("returns status 0 without vault write for Stop event when sync is false", () => {
-    const cwd = createTempDir("memory-mason-cwd-");
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
-    const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
-    const statePath = resolveCaptureStatePath(vaultPath, "ai-knowledge");
+    const cwd = createTempDir(TEST_CWD_PREFIX);
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const transcriptPath = path.join(
+      createTempDir(TEST_TRANSCRIPT_PREFIX),
+      TEST_DEFAULT_TRANSCRIPT_FILE,
+    );
+    const statePath = resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER);
     const initialState = {
       lastCapture: null,
       mmSuppressed: false,
@@ -1104,15 +1239,15 @@ describe("run - sync flag", () => {
     };
 
     writeText(
-      path.join(cwd, "memory-mason.json"),
-      JSON.stringify({ vaultPath, subfolder: "ai-knowledge", sync: false }),
+      path.join(cwd, PROJECT_CONFIG_FILE_NAME),
+      JSON.stringify({ vaultPath, subfolder: DEFAULT_SUBFOLDER, sync: false }),
     );
     writeText(transcriptPath, buildTranscript(2, "session-sync-user"));
     writeText(statePath, JSON.stringify(initialState, null, 2));
 
-    const result = runScript("session-end.js", {
+    const result = runScript(ENTRYPOINT_FILE, {
       payload: {
-        hook_event_name: "Stop",
+        hook_event_name: HOOK_EVENT_STOP_PASCAL,
         cwd,
         transcript_path: transcriptPath,
         session_id: "session-stop-sync-false",
@@ -1121,23 +1256,28 @@ describe("run - sync flag", () => {
       env: buildEnv(homeDir),
     });
 
-    const persistedState = JSON.parse(fs.readFileSync(statePath, "utf-8"));
+    const persistedState = JSON.parse(fs.readFileSync(statePath, UTF8_ENCODING));
 
     expect(result.status).toBe(0);
-    expect(fs.existsSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1))).toBe(false);
+    expect(fs.existsSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1))).toBe(
+      false,
+    );
     expect(persistedState).toEqual(initialState);
   });
 
   it("returns status 0 without vault write for SessionEnd event when sync is false", () => {
-    const cwd = createTempDir("memory-mason-cwd-");
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
-    const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
-    const statePath = resolveCaptureStatePath(vaultPath, "ai-knowledge");
+    const cwd = createTempDir(TEST_CWD_PREFIX);
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const transcriptPath = path.join(
+      createTempDir(TEST_TRANSCRIPT_PREFIX),
+      TEST_DEFAULT_TRANSCRIPT_FILE,
+    );
+    const statePath = resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER);
     const initialState = {
       lastCapture: {
         sessionId: "previous-session-sync",
-        source: "claude-code",
+        source: PLATFORM_CLAUDE_CODE,
         contentHash: "fedcba9876543210",
         timestampMs: 1,
       },
@@ -1145,15 +1285,15 @@ describe("run - sync flag", () => {
     };
 
     writeText(
-      path.join(cwd, "memory-mason.json"),
-      JSON.stringify({ vaultPath, subfolder: "ai-knowledge", sync: false }),
+      path.join(cwd, PROJECT_CONFIG_FILE_NAME),
+      JSON.stringify({ vaultPath, subfolder: DEFAULT_SUBFOLDER, sync: false }),
     );
     writeText(transcriptPath, buildTranscript(2, "session-sync-user"));
     writeText(statePath, JSON.stringify(initialState, null, 2));
 
-    const result = runScript("session-end.js", {
+    const result = runScript(ENTRYPOINT_FILE, {
       payload: {
-        hook_event_name: "session_end",
+        hook_event_name: HOOK_EVENT_SESSION_END_SNAKE,
         cwd,
         transcript_path: transcriptPath,
         session_id: "session-end-sync-false",
@@ -1162,42 +1302,53 @@ describe("run - sync flag", () => {
       env: buildEnv(homeDir),
     });
 
-    const persistedState = JSON.parse(fs.readFileSync(statePath, "utf-8"));
+    const persistedState = JSON.parse(fs.readFileSync(statePath, UTF8_ENCODING));
 
     expect(result.status).toBe(0);
-    expect(fs.existsSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1))).toBe(false);
+    expect(fs.existsSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1))).toBe(
+      false,
+    );
     expect(persistedState).toEqual(initialState);
   });
 });
 
 describe("run - mm transcript filtering for SessionEnd event", () => {
   it("filters out /mm turns from full transcript before writing", () => {
-    withProcessCaptureMode("full", () => {
-      const homeDir = createTempDir("memory-mason-home-");
-      const vaultPath = createTempDir("memory-mason-vault-");
-      const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+      const transcriptPath = path.join(
+        createTempDir(TEST_TRANSCRIPT_PREFIX),
+        TEST_DEFAULT_TRANSCRIPT_FILE,
+      );
       const mixedTranscript = [
-        JSON.stringify({ message: { role: "user", content: "/mmq summarize history" } }),
-        JSON.stringify({ message: { role: "assistant", content: "hidden mm assistant" } }),
-        JSON.stringify({ message: { role: "user", content: "normal prompt" } }),
-        JSON.stringify({ message: { role: "assistant", content: "normal assistant" } }),
+        JSON.stringify({
+          message: { role: TRANSCRIPT_ROLE_USER, content: "/mmq summarize history" },
+        }),
+        JSON.stringify({
+          message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: "hidden mm assistant" },
+        }),
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "normal prompt" } }),
+        JSON.stringify({
+          message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: "normal assistant" },
+        }),
       ].join("\n");
 
       writeText(transcriptPath, mixedTranscript);
 
-      const result = runScript("session-end.js", {
+      const result = runScript(ENTRYPOINT_FILE, {
         payload: {
-          hook_event_name: "session_end",
+          hook_event_name: HOOK_EVENT_SESSION_END_SNAKE,
           cwd: hooksRoot,
           transcript_path: transcriptPath,
           session_id: "session-filter-mixed",
         },
-        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       });
 
       const dailyContent = fs.readFileSync(
-        buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1),
-        "utf-8",
+        buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
+        UTF8_ENCODING,
       );
 
       expect(result.status).toBe(0);
@@ -1209,26 +1360,29 @@ describe("run - mm transcript filtering for SessionEnd event", () => {
   });
 
   it("writes full transcript when no /mm turns are present", () => {
-    withProcessCaptureMode("full", () => {
-      const homeDir = createTempDir("memory-mason-home-");
-      const vaultPath = createTempDir("memory-mason-vault-");
-      const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+      const transcriptPath = path.join(
+        createTempDir(TEST_TRANSCRIPT_PREFIX),
+        TEST_DEFAULT_TRANSCRIPT_FILE,
+      );
 
-      writeText(transcriptPath, buildTranscript(4, "normal first user turn"));
+      writeText(transcriptPath, buildTranscript(FOUR, "normal first user turn"));
 
-      const result = runScript("session-end.js", {
+      const result = runScript(ENTRYPOINT_FILE, {
         payload: {
-          hook_event_name: "session_end",
+          hook_event_name: HOOK_EVENT_SESSION_END_SNAKE,
           cwd: hooksRoot,
           transcript_path: transcriptPath,
           session_id: "session-filter-none",
         },
-        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       });
 
       const dailyContent = fs.readFileSync(
-        buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1),
-        "utf-8",
+        buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
+        UTF8_ENCODING,
       );
 
       expect(result.status).toBe(0);
@@ -1238,36 +1392,41 @@ describe("run - mm transcript filtering for SessionEnd event", () => {
   });
 
   it("skips writing full transcript when all turns are /mm commands", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
-    const transcriptPath = path.join(createTempDir("memory-mason-transcript-"), "session.jsonl");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const transcriptPath = path.join(
+      createTempDir(TEST_TRANSCRIPT_PREFIX),
+      TEST_DEFAULT_TRANSCRIPT_FILE,
+    );
     const mmOnlyTranscript = [
-      JSON.stringify({ message: { role: "user", content: "/mmc" } }),
-      JSON.stringify({ message: { role: "assistant", content: "compiled" } }),
-      JSON.stringify({ message: { role: "user", content: "/mml" } }),
-      JSON.stringify({ message: { role: "assistant", content: "linted" } }),
+      JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "/mmc" } }),
+      JSON.stringify({ message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: "compiled" } }),
+      JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "/mml" } }),
+      JSON.stringify({ message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: "linted" } }),
     ].join("\n");
 
     writeText(transcriptPath, mmOnlyTranscript);
 
-    const result = runScript("session-end.js", {
+    const result = runScript(ENTRYPOINT_FILE, {
       payload: {
-        hook_event_name: "session_end",
+        hook_event_name: HOOK_EVENT_SESSION_END_SNAKE,
         cwd: hooksRoot,
         transcript_path: transcriptPath,
         session_id: "session-filter-all-mm",
       },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
     expect(result.status).toBe(0);
-    expect(fs.existsSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1))).toBe(false);
+    expect(fs.existsSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1))).toBe(
+      false,
+    );
   });
 });
 
 describe("session-end.js readStdin", () => {
   it("reads single chunk from mocked fd 0", () => {
-    const payload = JSON.stringify({ hook_event_name: "Stop" });
+    const payload = JSON.stringify({ hook_event_name: HOOK_EVENT_STOP_PASCAL });
     const buf = Buffer.from(payload);
     let rc = 0;
     expect(
@@ -1349,7 +1508,7 @@ describe("session-end.js utility functions", () => {
   it("findCopilotCliSessionContent throws when jsonl files exist but are empty", () => {
     const sessionStateDir = createTempDir("mm-copilot-state-");
     const subDir = path.join(sessionStateDir, "session-b");
-    writeText(path.join(subDir, "session.jsonl"), "");
+    writeText(path.join(subDir, TEST_DEFAULT_TRANSCRIPT_FILE), "");
     expect(() => sessionEnd.findCopilotCliSessionContent(sessionStateDir, "")).toThrow(
       "no transcript content found in copilot session-state",
     );
@@ -1365,9 +1524,9 @@ describe("session-end.js utility functions", () => {
 
   it("collectAssistantTurnContents filters and collects from start index", () => {
     const turns = [
-      { role: "user", content: "hi" },
-      { role: "assistant", content: "hello" },
-      { role: "assistant", content: "bye" },
+      { role: TRANSCRIPT_ROLE_USER, content: "hi" },
+      { role: TRANSCRIPT_ROLE_ASSISTANT, content: "hello" },
+      { role: TRANSCRIPT_ROLE_ASSISTANT, content: "bye" },
     ];
     expect(sessionEnd.collectAssistantTurnContents(turns, 0)).toEqual(["hello", "bye"]);
     expect(sessionEnd.collectAssistantTurnContents(turns, 2)).toEqual(["bye"]);
@@ -1376,7 +1535,11 @@ describe("session-end.js utility functions", () => {
   it("collectAssistantTurnContents skips null and empty entries", () => {
     expect(
       sessionEnd.collectAssistantTurnContents(
-        [null, { role: "assistant", content: "" }, { role: "assistant", content: "ok" }],
+        [
+          null,
+          { role: TRANSCRIPT_ROLE_ASSISTANT, content: "" },
+          { role: TRANSCRIPT_ROLE_ASSISTANT, content: "ok" },
+        ],
         0,
       ),
     ).toEqual(["ok"]);
@@ -1385,8 +1548,8 @@ describe("session-end.js utility functions", () => {
   it("getLastAssistantTurnContent returns last assistant or empty", () => {
     expect(
       sessionEnd.getLastAssistantTurnContent([
-        { role: "assistant", content: "a" },
-        { role: "assistant", content: "b" },
+        { role: TRANSCRIPT_ROLE_ASSISTANT, content: "a" },
+        { role: TRANSCRIPT_ROLE_ASSISTANT, content: "b" },
       ]),
     ).toBe("b");
     expect(sessionEnd.getLastAssistantTurnContent([])).toBe("");
@@ -1395,16 +1558,16 @@ describe("session-end.js utility functions", () => {
 
 describe("session-end.js stop with empty session ID", () => {
   it("returns early", () => {
-    const homeDir = createTempDir("mm-home-");
-    const vaultPath = createTempDir("mm-vault-");
-    const projectCwd = createTempDir("mm-cwd-");
-    const env = buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath });
+    const homeDir = createTempDir(TEST_MM_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_MM_VAULT_PREFIX);
+    const projectCwd = createTempDir(TEST_MM_CWD_PREFIX);
+    const env = buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath });
     materializeProjectDotEnvConfig(projectCwd, env, generatedEnvPaths);
     const result = sessionEnd.run(
       JSON.stringify({
-        hook_event_name: "Stop",
+        hook_event_name: HOOK_EVENT_STOP_PASCAL,
         cwd: projectCwd,
-        transcript_path: path.join(createTempDir("mm-tr-"), "x.jsonl"),
+        transcript_path: path.join(createTempDir(TEST_MM_TR_PREFIX), "x.jsonl"),
       }),
       {
         cwd: projectCwd,
@@ -1418,43 +1581,49 @@ describe("session-end.js stop with empty session ID", () => {
 
 describe("session-end.js transcript with 0 turns on non-stop event", () => {
   it("skips when transcript has no user/assistant turns", () => {
-    const homeDir = createTempDir("mm-home-");
-    const vaultPath = createTempDir("mm-vault-");
-    const transcriptPath = path.join(createTempDir("mm-tr-"), "session.jsonl");
+    const homeDir = createTempDir(TEST_MM_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_MM_VAULT_PREFIX);
+    const transcriptPath = path.join(
+      createTempDir(TEST_MM_TR_PREFIX),
+      TEST_DEFAULT_TRANSCRIPT_FILE,
+    );
     writeText(transcriptPath, JSON.stringify({ message: { role: "system", content: "sys" } }));
-    const result = runScript("session-end.js", {
+    const result = runScript(ENTRYPOINT_FILE, {
       payload: {
-        hook_event_name: "session_end",
+        hook_event_name: HOOK_EVENT_SESSION_END_SNAKE,
         cwd: hooksRoot,
         transcript_path: transcriptPath,
         session_id: "session-zero",
       },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
     expect(result.status).toBe(0);
   });
 
   it("increments transcript turn count from payload assistant when transcript is empty", () => {
-    const homeDir = createTempDir("mm-home-");
-    const vaultPath = createTempDir("mm-vault-");
-    const transcriptPath = path.join(createTempDir("mm-tr-"), "session.jsonl");
+    const homeDir = createTempDir(TEST_MM_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_MM_VAULT_PREFIX);
+    const transcriptPath = path.join(
+      createTempDir(TEST_MM_TR_PREFIX),
+      TEST_DEFAULT_TRANSCRIPT_FILE,
+    );
     const sessionId = "session-stop-empty-payload";
 
     writeText(transcriptPath, "");
 
-    const result = runScript("session-end.js", {
+    const result = runScript(ENTRYPOINT_FILE, {
       payload: {
-        hook_event_name: "Stop",
+        hook_event_name: HOOK_EVENT_STOP_PASCAL,
         cwd: hooksRoot,
         transcript_path: transcriptPath,
         session_id: sessionId,
         last_assistant_message: "assistant from payload",
       },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
-    const statePath = resolveCaptureStatePath(vaultPath, "ai-knowledge");
-    const state = JSON.parse(fs.readFileSync(statePath, "utf-8"));
+    const statePath = resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER);
+    const state = JSON.parse(fs.readFileSync(statePath, UTF8_ENCODING));
 
     expect(result.status).toBe(0);
     expect(state.transcriptTurnCounts[sessionId]).toBe(2);
@@ -1463,20 +1632,23 @@ describe("session-end.js transcript with 0 turns on non-stop event", () => {
 
 describe("session-end.js readConfigText with existing file", () => {
   it("uses memory-mason.json when no env vault path is set", () => {
-    const homeDir = createTempDir("mm-home-");
-    const vaultPath = createTempDir("mm-vault-");
-    const cwd = createTempDir("mm-cwd-");
-    const transcriptPath = path.join(createTempDir("mm-tr-"), "session.jsonl");
+    const homeDir = createTempDir(TEST_MM_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_MM_VAULT_PREFIX);
+    const cwd = createTempDir(TEST_MM_CWD_PREFIX);
+    const transcriptPath = path.join(
+      createTempDir(TEST_MM_TR_PREFIX),
+      TEST_DEFAULT_TRANSCRIPT_FILE,
+    );
 
     writeText(
-      path.join(cwd, "memory-mason.json"),
-      JSON.stringify({ vaultPath, subfolder: "ai-knowledge", captureMode: "full" }),
+      path.join(cwd, PROJECT_CONFIG_FILE_NAME),
+      JSON.stringify({ vaultPath, subfolder: DEFAULT_SUBFOLDER, captureMode: CAPTURE_MODE_FULL }),
     );
     writeText(transcriptPath, buildTranscript(2));
 
-    const result = runScript("session-end.js", {
+    const result = runScript(ENTRYPOINT_FILE, {
       payload: {
-        hook_event_name: "session_end",
+        hook_event_name: HOOK_EVENT_SESSION_END_SNAKE,
         cwd,
         transcript_path: transcriptPath,
         session_id: "cfg-test",
@@ -1488,7 +1660,7 @@ describe("session-end.js readConfigText with existing file", () => {
     expect(result.status).toBe(0);
     expect(result.stderr).toBe("");
     expect(
-      fs.readFileSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1), "utf-8"),
+      fs.readFileSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1), UTF8_ENCODING),
     ).toContain("cfg-test /");
   });
 });
@@ -1496,32 +1668,41 @@ describe("session-end.js readConfigText with existing file", () => {
 describe("session-end.js runtime fallback branches", () => {
   it("falls back to process defaults when runtime properties are invalid", () => {
     const result = sessionEnd.run(
-      JSON.stringify({ hook_event_name: "session_end", cwd: createTempDir("mm-cwd-") }),
+      JSON.stringify({
+        hook_event_name: HOOK_EVENT_SESSION_END_SNAKE,
+        cwd: createTempDir(TEST_MM_CWD_PREFIX),
+      }),
       { env: null, cwd: 123, homedir: 42 },
     );
     expect(result.status).toBe(0);
   });
 
   it("uses fallbackCwd when input has no cwd", () => {
-    const homeDir = createTempDir("mm-home-");
-    const vaultPath = createTempDir("mm-vault-");
-    const result = sessionEnd.run(JSON.stringify({ hook_event_name: "session_end" }), {
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
-      cwd: createTempDir("mm-fb-"),
-      homedir: homeDir,
-    });
+    const homeDir = createTempDir(TEST_MM_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_MM_VAULT_PREFIX);
+    const result = sessionEnd.run(
+      JSON.stringify({ hook_event_name: HOOK_EVENT_SESSION_END_SNAKE }),
+      {
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
+        cwd: createTempDir("mm-fb-"),
+        homedir: homeDir,
+      },
+    );
     expect(result.status).toBe(0);
   });
 });
 
 describe("session-end.js main", () => {
   it("reads stdin via mock fs and calls exit", () => {
-    const homeDir = createTempDir("mm-home-");
-    const vaultPath = createTempDir("mm-vault-");
-    const transcriptPath = path.join(createTempDir("mm-tr-"), "session.jsonl");
+    const homeDir = createTempDir(TEST_MM_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_MM_VAULT_PREFIX);
+    const transcriptPath = path.join(
+      createTempDir(TEST_MM_TR_PREFIX),
+      TEST_DEFAULT_TRANSCRIPT_FILE,
+    );
     writeText(transcriptPath, buildTranscript(2));
     const payload = JSON.stringify({
-      hook_event_name: "session_end",
+      hook_event_name: HOOK_EVENT_SESSION_END_SNAKE,
       cwd: hooksRoot,
       transcript_path: transcriptPath,
       session_id: "se-main",
@@ -1542,7 +1723,7 @@ describe("session-end.js main", () => {
         },
       },
       cwd: hooksRoot,
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       homedir: homeDir,
       io: {
         stdout: () => {},

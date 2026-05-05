@@ -3,6 +3,7 @@
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { OBSIDIAN_CLI_TIMEOUT_MS, UTF8_ENCODING } = require("../lib/constants");
 const {
   buildDailyFilePath,
   buildDailyHeader,
@@ -12,6 +13,18 @@ const {
   buildChunkHeader,
 } = require("../lib/vault");
 const { tryObsidianCli, appendToDaily } = require("../lib/writer");
+const {
+  TEST_DEFAULT_SUBFOLDER: DEFAULT_SUBFOLDER,
+  TEST_PLATFORM_WIN32: PLATFORM_WIN32,
+} = require("./helpers/test-constants");
+
+const OBSIDIAN_BIN = "obsidian";
+const WINDOWS_CMD = "cmd.exe";
+const WINDOWS_CMD_FLAG_D = "/d";
+const WINDOWS_CMD_FLAG_S = "/s";
+const WINDOWS_CMD_FLAG_C = "/c";
+const JSON_INDENT_SPACES = 2;
+const SHIM_EXECUTABLE_MODE = 0o755;
 
 const pathKey = Object.keys(process.env).find((key) => key.toLowerCase() === "path") || "PATH";
 
@@ -24,7 +37,7 @@ const seedChunkedDay = (vaultPath, subfolder, today, existingContent = "") => {
   const chunkText = buildChunkHeader(today, 1) + existingContent;
 
   fs.mkdirSync(folderPath, { recursive: true });
-  fs.writeFileSync(chunkPath, chunkText, "utf-8");
+  fs.writeFileSync(chunkPath, chunkText, UTF8_ENCODING);
   fs.writeFileSync(
     metaPath,
     JSON.stringify(
@@ -33,15 +46,15 @@ const seedChunkedDay = (vaultPath, subfolder, today, existingContent = "") => {
           {
             id: "001",
             file: "001.md",
-            sizeBytes: Buffer.byteLength(chunkText, "utf-8"),
+            sizeBytes: Buffer.byteLength(chunkText, UTF8_ENCODING),
             createdAt: "2026-01-01T00:00:00.000Z",
           },
         ],
       },
       null,
-      2,
+      JSON_INDENT_SPACES,
     ),
-    "utf-8",
+    UTF8_ENCODING,
   );
 
   return {
@@ -70,15 +83,17 @@ describe("tryObsidianCli", () => {
   it("returns true when obsidian shim runs node --version successfully", () => {
     const tempDir = createTempDir("memory-mason-obsidian-");
     const shimPath =
-      process.platform === "win32"
+      process.platform === PLATFORM_WIN32
         ? path.join(tempDir, "obsidian.cmd")
-        : path.join(tempDir, "obsidian");
+        : path.join(tempDir, OBSIDIAN_BIN);
     const shimContent =
-      process.platform === "win32" ? "@echo off\r\nnode %*\r\n" : '#!/usr/bin/env sh\nnode "$@"\n';
-    fs.writeFileSync(shimPath, shimContent, "utf-8");
+      process.platform === PLATFORM_WIN32
+        ? "@echo off\r\nnode %*\r\n"
+        : '#!/usr/bin/env sh\nnode "$@"\n';
+    fs.writeFileSync(shimPath, shimContent, UTF8_ENCODING);
 
-    if (process.platform !== "win32") {
-      fs.chmodSync(shimPath, 0o755);
+    if (process.platform !== PLATFORM_WIN32) {
+      fs.chmodSync(shimPath, SHIM_EXECUTABLE_MODE);
     }
 
     const originalPath = process.env[pathKey];
@@ -105,11 +120,11 @@ describe("tryObsidianCli", () => {
     );
     expect(calls).toEqual([
       {
-        command: "obsidian",
+        command: OBSIDIAN_BIN,
         args: ["--version"],
         options: {
-          encoding: "utf-8",
-          timeout: 8000,
+          encoding: UTF8_ENCODING,
+          timeout: OBSIDIAN_CLI_TIMEOUT_MS,
           cwd: "/tmp/vault",
         },
       },
@@ -124,15 +139,21 @@ describe("tryObsidianCli", () => {
     };
 
     expect(
-      tryObsidianCli(["--version"], { platform: "win32", spawnSync, cwd: "C:/tmp/vault" }),
+      tryObsidianCli(["--version"], { platform: PLATFORM_WIN32, spawnSync, cwd: "C:/tmp/vault" }),
     ).toBe(true);
     expect(calls).toEqual([
       {
-        command: "cmd.exe",
-        args: ["/d", "/s", "/c", "obsidian", "--version"],
+        command: WINDOWS_CMD,
+        args: [
+          WINDOWS_CMD_FLAG_D,
+          WINDOWS_CMD_FLAG_S,
+          WINDOWS_CMD_FLAG_C,
+          OBSIDIAN_BIN,
+          "--version",
+        ],
         options: {
-          encoding: "utf-8",
-          timeout: 8000,
+          encoding: UTF8_ENCODING,
+          timeout: OBSIDIAN_CLI_TIMEOUT_MS,
           windowsHide: true,
           cwd: "C:/tmp/vault",
         },
@@ -144,7 +165,7 @@ describe("tryObsidianCli", () => {
 describe("appendToDaily", () => {
   it("creates chunked daily files when day does not exist", () => {
     const vaultPath = createTempDir("memory-mason-vault-");
-    const subfolder = "ai-knowledge";
+    const subfolder = DEFAULT_SUBFOLDER;
     const today = "2026-04-26";
     const content = "\n**[12:00:00] Write**\nhello\n";
 
@@ -158,33 +179,33 @@ describe("appendToDaily", () => {
       expect(fs.statSync(folderPath).isDirectory()).toBe(true);
       expect(fs.existsSync(chunkPath)).toBe(true);
       expect(fs.existsSync(flatPath)).toBe(false);
-      expect(fs.readFileSync(chunkPath, "utf-8")).toBe(buildChunkHeader(today, 1) + content);
+      expect(fs.readFileSync(chunkPath, UTF8_ENCODING)).toBe(buildChunkHeader(today, 1) + content);
     } finally {
       fs.rmSync(vaultPath, { recursive: true, force: true });
     }
   });
 
   it("throws when content is not a string", () => {
-    expect(() => appendToDaily("/tmp/vault", "ai-knowledge", "2026-04-26", null)).toThrow(
+    expect(() => appendToDaily("/tmp/vault", DEFAULT_SUBFOLDER, "2026-04-26", null)).toThrow(
       "content must be a string",
     );
   });
 
   it("appends to existing daily file without duplicating header", () => {
     const vaultPath = createTempDir("memory-mason-vault-");
-    const subfolder = "ai-knowledge";
+    const subfolder = DEFAULT_SUBFOLDER;
     const today = "2026-04-26";
     const dailyPath = buildDailyFilePath(vaultPath, subfolder, today);
     const existingContent = `${buildDailyHeader(today)}\n**[11:00:00] Edit**\nfirst\n`;
 
     fs.mkdirSync(path.dirname(dailyPath), { recursive: true });
-    fs.writeFileSync(dailyPath, existingContent, "utf-8");
+    fs.writeFileSync(dailyPath, existingContent, UTF8_ENCODING);
 
     try {
       const newContent = "\n**[12:00:00] Write**\nsecond\n";
       appendToDaily(vaultPath, subfolder, today, newContent);
 
-      const updated = fs.readFileSync(dailyPath, "utf-8");
+      const updated = fs.readFileSync(dailyPath, UTF8_ENCODING);
       expect(updated).toBe(existingContent + newContent);
       expect(updated.split("# Daily Log").length - 1).toBe(1);
     } finally {
@@ -194,7 +215,7 @@ describe("appendToDaily", () => {
 
   it("does not corrupt content containing special JSON characters", () => {
     const vaultPath = createTempDir("memory-mason-vault-");
-    const subfolder = "ai-knowledge";
+    const subfolder = DEFAULT_SUBFOLDER;
     const today = "2026-04-26";
     const sqlContent =
       "\n**[12:00:00] AssistantReply**\nSELECT * FROM foo WHERE id IN ('a', 'b'] AND x = \"y\";\n";
@@ -203,7 +224,7 @@ describe("appendToDaily", () => {
       appendToDaily(vaultPath, subfolder, today, sqlContent);
 
       const chunkPath = buildDailyChunkPath(vaultPath, subfolder, today, 1);
-      expect(fs.readFileSync(chunkPath, "utf-8")).toContain("SELECT * FROM foo");
+      expect(fs.readFileSync(chunkPath, UTF8_ENCODING)).toContain("SELECT * FROM foo");
     } finally {
       fs.rmSync(vaultPath, { recursive: true, force: true });
     }
@@ -213,18 +234,18 @@ describe("appendToDaily", () => {
 describe("appendToDaily - routing", () => {
   it("routes to flat append when flat file exists", () => {
     const vaultPath = createTempDir("memory-mason-vault-");
-    const subfolder = "ai-knowledge";
+    const subfolder = DEFAULT_SUBFOLDER;
     const today = "2026-04-26";
     const flatPath = buildDailyFilePath(vaultPath, subfolder, today);
     const existingFlat = `${buildDailyHeader(today)}\n**[11:00:00] Edit**\nfirst\n`;
     const appended = "\n**[12:00:00] Write**\nsecond\n";
 
     fs.mkdirSync(path.dirname(flatPath), { recursive: true });
-    fs.writeFileSync(flatPath, existingFlat, "utf-8");
+    fs.writeFileSync(flatPath, existingFlat, UTF8_ENCODING);
 
     try {
       appendToDaily(vaultPath, subfolder, today, appended);
-      expect(fs.readFileSync(flatPath, "utf-8")).toBe(existingFlat + appended);
+      expect(fs.readFileSync(flatPath, UTF8_ENCODING)).toBe(existingFlat + appended);
       expect(fs.existsSync(buildDailyFolderPath(vaultPath, subfolder, today))).toBe(false);
     } finally {
       fs.rmSync(vaultPath, { recursive: true, force: true });
@@ -233,7 +254,7 @@ describe("appendToDaily - routing", () => {
 
   it("routes to chunked when folder exists", () => {
     const vaultPath = createTempDir("memory-mason-vault-");
-    const subfolder = "ai-knowledge";
+    const subfolder = DEFAULT_SUBFOLDER;
     const today = "2026-04-26";
     const existingChunkBody = "\n**[11:00:00] Edit**\nfirst\n";
     const appended = "\n**[12:00:00] Write**\nsecond\n";
@@ -242,7 +263,7 @@ describe("appendToDaily - routing", () => {
 
     try {
       appendToDaily(vaultPath, subfolder, today, appended);
-      expect(fs.readFileSync(seeded.chunkPath, "utf-8")).toBe(seeded.chunkText + appended);
+      expect(fs.readFileSync(seeded.chunkPath, UTF8_ENCODING)).toBe(seeded.chunkText + appended);
     } finally {
       fs.rmSync(vaultPath, { recursive: true, force: true });
     }
@@ -250,7 +271,7 @@ describe("appendToDaily - routing", () => {
 
   it("routes to chunked when neither exists (new default)", () => {
     const vaultPath = createTempDir("memory-mason-vault-");
-    const subfolder = "ai-knowledge";
+    const subfolder = DEFAULT_SUBFOLDER;
     const today = "2026-04-26";
     const content = "\n**[12:00:00] Write**\nhello\n";
     const folderPath = buildDailyFolderPath(vaultPath, subfolder, today);
@@ -262,7 +283,7 @@ describe("appendToDaily - routing", () => {
       expect(fs.existsSync(folderPath)).toBe(true);
       expect(fs.statSync(folderPath).isDirectory()).toBe(true);
       expect(fs.existsSync(chunkPath)).toBe(true);
-      expect(fs.readFileSync(chunkPath, "utf-8")).toBe(buildChunkHeader(today, 1) + content);
+      expect(fs.readFileSync(chunkPath, UTF8_ENCODING)).toBe(buildChunkHeader(today, 1) + content);
     } finally {
       fs.rmSync(vaultPath, { recursive: true, force: true });
     }
@@ -270,7 +291,7 @@ describe("appendToDaily - routing", () => {
 
   it("prefers chunked when folder and flat file both exist", () => {
     const vaultPath = createTempDir("memory-mason-vault-");
-    const subfolder = "ai-knowledge";
+    const subfolder = DEFAULT_SUBFOLDER;
     const today = "2026-04-26";
     const flatPath = buildDailyFilePath(vaultPath, subfolder, today);
     const existingFlat = `${buildDailyHeader(today)}\n**[11:00:00] Edit**\nflat\n`;
@@ -279,13 +300,13 @@ describe("appendToDaily - routing", () => {
 
     const seeded = seedChunkedDay(vaultPath, subfolder, today, existingChunkBody);
     fs.mkdirSync(path.dirname(flatPath), { recursive: true });
-    fs.writeFileSync(flatPath, existingFlat, "utf-8");
+    fs.writeFileSync(flatPath, existingFlat, UTF8_ENCODING);
 
     try {
       appendToDaily(vaultPath, subfolder, today, appended);
 
-      expect(fs.readFileSync(seeded.chunkPath, "utf-8")).toBe(seeded.chunkText + appended);
-      expect(fs.readFileSync(flatPath, "utf-8")).toBe(existingFlat);
+      expect(fs.readFileSync(seeded.chunkPath, UTF8_ENCODING)).toBe(seeded.chunkText + appended);
+      expect(fs.readFileSync(flatPath, UTF8_ENCODING)).toBe(existingFlat);
     } finally {
       fs.rmSync(vaultPath, { recursive: true, force: true });
     }

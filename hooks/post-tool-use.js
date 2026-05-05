@@ -4,6 +4,14 @@
 const { parseJsonInput, detectPlatform } = require("./lib/config");
 const { buildCommandErrorResult } = require("./lib/cli");
 const { CAPTURE_MODE_LITE, NOISY_TOOLS, USER_INPUT_TOOLS } = require("./lib/constants");
+const {
+  PLATFORM_CLAUDE_CODE,
+  PLATFORM_COPILOT_VSCODE,
+  PLATFORM_COPILOT_CLI,
+  PLATFORM_CODEX,
+} = require("./lib/platforms");
+const { TRANSCRIPT_BLOCK_TYPE_TEXT } = require("./lib/transcript-labels");
+const { ENV_KEY_INVOKED_BY } = require("./lib/config-keys");
 const { buildDailyEntry, localNow } = require("./lib/vault");
 const { appendToDaily } = require("./lib/writer");
 const { loadCaptureState, getMmSuppressed } = require("./lib/capture-state");
@@ -34,7 +42,7 @@ function serializeToolResponse(toolResponse) {
           block !== null &&
           typeof block === "object" &&
           !Array.isArray(block) &&
-          block.type === "text" &&
+          block.type === TRANSCRIPT_BLOCK_TYPE_TEXT &&
           typeof block.text === "string" &&
           block.text.trim() !== "",
       )
@@ -86,10 +94,10 @@ function extractCodexPayload(input) {
 
 function extractToolPayload(platform, input) {
   const extractorByPlatform = {
-    "claude-code": extractClaudeOrCopilotVscodePayload,
-    "copilot-vscode": extractClaudeOrCopilotVscodePayload,
-    "copilot-cli": extractCopilotCliPayload,
-    codex: extractCodexPayload,
+    [PLATFORM_CLAUDE_CODE]: extractClaudeOrCopilotVscodePayload,
+    [PLATFORM_COPILOT_VSCODE]: extractClaudeOrCopilotVscodePayload,
+    [PLATFORM_COPILOT_CLI]: extractCopilotCliPayload,
+    [PLATFORM_CODEX]: extractCodexPayload,
   };
   const extractor = extractorByPlatform[platform];
 
@@ -151,7 +159,7 @@ function persistToolUsage(plan, resolvedConfig) {
 function run(rawStdin, runtime = {}) {
   const env = resolveRuntimeEnv(runtime);
 
-  if (toStringOrEmpty(env.MEMORY_MASON_INVOKED_BY) !== "") {
+  if (toStringOrEmpty(env[ENV_KEY_INVOKED_BY]) !== "") {
     return buildSuccessResult();
   }
 

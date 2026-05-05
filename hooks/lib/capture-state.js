@@ -2,7 +2,11 @@
 
 const crypto = require("node:crypto");
 const path = require("node:path");
-const { CAPTURE_HASH_ALGORITHM, CAPTURE_HASH_PREFIX_LENGTH } = require("./constants");
+const {
+  CAPTURE_HASH_ALGORITHM,
+  CAPTURE_HASH_PREFIX_LENGTH,
+  UTF8_ENCODING,
+} = require("./constants");
 const {
   assertNonEmptyString,
   isObjectRecord,
@@ -12,6 +16,7 @@ const {
   assertBoolean,
 } = require("./assert");
 const { loadJson, saveJson } = require("./json-state");
+const { CAPTURE_STATE_FILE_NAME } = require("./vault-paths");
 
 const defaultCaptureState = () => ({
   lastCapture: null,
@@ -21,7 +26,7 @@ const defaultCaptureState = () => ({
 const resolveCaptureStatePath = (vaultPath, subfolder) => {
   const safeVaultPath = assertNonEmptyString("vaultPath", vaultPath);
   const safeSubfolder = assertNonEmptyString("subfolder", subfolder);
-  return path.join(safeVaultPath, safeSubfolder, ".memory-mason-last-capture.json");
+  return path.join(safeVaultPath, safeSubfolder, CAPTURE_STATE_FILE_NAME);
 };
 
 const sanitizeCaptureRecord = (record) => {
@@ -90,7 +95,7 @@ const saveCaptureState = (vaultPath, subfolder, state) => {
 const hashCaptureContent = (content) =>
   crypto
     .createHash(CAPTURE_HASH_ALGORITHM)
-    .update(assertString("content", content), "utf-8")
+    .update(assertString("content", content), UTF8_ENCODING)
     .digest("hex")
     .slice(0, CAPTURE_HASH_PREFIX_LENGTH);
 

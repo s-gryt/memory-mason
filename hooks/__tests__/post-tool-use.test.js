@@ -2,11 +2,35 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
+const { UTF8_ENCODING, USER_INPUT_TOOLS, NOISY_TOOLS } = require("../lib/constants");
+const {
+  ENV_KEY_VAULT_PATH,
+  ENV_KEY_SUBFOLDER,
+  ENV_KEY_CAPTURE_MODE,
+  ENV_KEY_INVOKED_BY,
+  PROJECT_CONFIG_FILE_NAME,
+  DOTENV_FILE_NAME,
+  GLOBAL_MM_DIR_NAME,
+  GLOBAL_CONFIG_FILE_NAME,
+} = require("../lib/config-keys");
 const { buildDailyChunkPath, buildDailyFilePath } = require("../lib/vault");
 const { resolveCaptureStatePath } = require("../lib/capture-state");
 const postToolUse = require("../post-tool-use");
-const { USER_INPUT_TOOLS, NOISY_TOOLS } = require("../lib/constants");
 const { materializeProjectDotEnvConfig } = require("./helpers/project-dot-env");
+const {
+  TEST_VAULT_PREFIX,
+  TEST_HOME_PREFIX,
+  TEST_CWD_PREFIX,
+  TEST_MM_HOME_PREFIX,
+  TEST_MM_VAULT_PREFIX,
+  TEST_MM_CWD_PREFIX,
+  TEST_CAPTURE_MODE_LITE: CAPTURE_MODE_LITE,
+  TEST_CAPTURE_MODE_FULL: CAPTURE_MODE_FULL,
+  TEST_DEFAULT_SUBFOLDER: DEFAULT_SUBFOLDER,
+  TEST_HOOK_ENTRY_POST_TOOL_USE: HOOK_ENTRY_POST_TOOL_USE,
+  TEST_HOOK_EVENT_POST_TOOL_USE_KEBAB: HOOK_EVENT_POST_TOOL_USE_KEBAB,
+  TEST_TRANSCRIPT_BLOCK_TYPE_TEXT: TRANSCRIPT_BLOCK_TYPE_TEXT,
+} = require("./helpers/test-constants");
 const {
   generatedEnvPaths,
   createTempDir,
@@ -17,24 +41,29 @@ const {
   runHookEntrypoint,
 } = require("./helpers/entrypoint-runtime");
 const hooksRoot = path.resolve(__dirname, "..");
+const ENTRYPOINT = "post-tool-use.js";
+const TOOL_WRITE = "Write";
+const EMPTY_CWD_PREFIX = "memory-mason-cwd-empty-";
+const EMPTY_HOME_PREFIX = "memory-mason-home-empty-";
+const TEST_INVALID_TOOL_RESPONSE_NUMBER = 42;
 
 const withProcessCaptureMode = (value, callback) => {
-  const hadCaptureMode = Object.hasOwn(process.env, "MEMORY_MASON_CAPTURE_MODE");
-  const previousCaptureMode = process.env.MEMORY_MASON_CAPTURE_MODE;
+  const hadCaptureMode = Object.hasOwn(process.env, ENV_KEY_CAPTURE_MODE);
+  const previousCaptureMode = process.env[ENV_KEY_CAPTURE_MODE];
 
   if (typeof value === "string") {
-    process.env.MEMORY_MASON_CAPTURE_MODE = value;
+    process.env[ENV_KEY_CAPTURE_MODE] = value;
   } else {
-    delete process.env.MEMORY_MASON_CAPTURE_MODE;
+    delete process.env[ENV_KEY_CAPTURE_MODE];
   }
 
   try {
     return callback();
   } finally {
     if (hadCaptureMode && typeof previousCaptureMode === "string") {
-      process.env.MEMORY_MASON_CAPTURE_MODE = previousCaptureMode;
+      process.env[ENV_KEY_CAPTURE_MODE] = previousCaptureMode;
     } else {
-      delete process.env.MEMORY_MASON_CAPTURE_MODE;
+      delete process.env[ENV_KEY_CAPTURE_MODE];
     }
   }
 };
@@ -44,73 +73,76 @@ afterEach(() => {
 });
 
 describe("entrypoint config readers", () => {
-  const scriptName = "post-tool-use.js";
+  const scriptName = ENTRYPOINT;
   const scriptModule = postToolUse;
 
   it(`reads .env text for ${scriptName}`, () => {
-    const cwd = createTempDir("memory-mason-cwd-");
-    const envText = "MEMORY_MASON_VAULT_PATH=/vault/path\nMEMORY_MASON_SUBFOLDER=notes";
+    const cwd = createTempDir(TEST_CWD_PREFIX);
+    const envText = `${ENV_KEY_VAULT_PATH}=/vault/path\n${ENV_KEY_SUBFOLDER}=notes`;
 
-    writeText(path.join(cwd, ".env"), envText);
+    writeText(path.join(cwd, DOTENV_FILE_NAME), envText);
 
     expect(scriptModule.readDotEnvText(cwd)).toBe(envText);
-    expect(scriptModule.readDotEnvText(createTempDir("memory-mason-cwd-empty-"))).toBe("");
+    expect(scriptModule.readDotEnvText(createTempDir(EMPTY_CWD_PREFIX))).toBe("");
   });
 
   it(`reads global config text for ${scriptName}`, () => {
-    const homeDir = createTempDir("memory-mason-home-");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
     const configText = JSON.stringify({ vaultPath: "/vault", subfolder: "notes" });
 
-    writeText(path.join(homeDir, ".memory-mason", "config.json"), configText);
+    writeText(path.join(homeDir, GLOBAL_MM_DIR_NAME, GLOBAL_CONFIG_FILE_NAME), configText);
 
     expect(scriptModule.readGlobalConfigText(homeDir)).toBe(configText);
-    expect(scriptModule.readGlobalConfigText(createTempDir("memory-mason-home-empty-"))).toBe("");
+    expect(scriptModule.readGlobalConfigText(createTempDir(EMPTY_HOME_PREFIX))).toBe("");
   });
 
   it(`reads global .env text for ${scriptName}`, () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const envText = "MEMORY_MASON_VAULT_PATH=~/vault\nMEMORY_MASON_SUBFOLDER=global-brain";
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const envText = `${ENV_KEY_VAULT_PATH}=~/vault\n${ENV_KEY_SUBFOLDER}=global-brain`;
 
-    writeText(path.join(homeDir, ".memory-mason", ".env"), envText);
+    writeText(path.join(homeDir, GLOBAL_MM_DIR_NAME, DOTENV_FILE_NAME), envText);
 
     expect(scriptModule.readGlobalDotEnvText(homeDir)).toBe(envText);
-    expect(scriptModule.readGlobalDotEnvText(createTempDir("memory-mason-home-empty-"))).toBe("");
+    expect(scriptModule.readGlobalDotEnvText(createTempDir(EMPTY_HOME_PREFIX))).toBe("");
   });
 });
 
 describe("post-tool-use.js", () => {
   it("writes tool output for copilot vscode payloads", () => {
-    withProcessCaptureMode("full", () => {
-      const homeDir = createTempDir("memory-mason-home-");
-      const vaultPath = createTempDir("memory-mason-vault-");
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
 
-      const result = runHookEntrypoint("post-tool-use.js", {
+      const result = runHookEntrypoint(ENTRYPOINT, {
         payload: {
-          hookEventName: "post-tool-use",
+          hookEventName: HOOK_EVENT_POST_TOOL_USE_KEBAB,
           cwd: hooksRoot,
           tool_name: "Edit",
           tool_response: "patched file",
         },
-        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       });
 
       expect(result.status).toBe(0);
       expect(
-        fs.readFileSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1), "utf-8"),
+        fs.readFileSync(
+          buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
+          UTF8_ENCODING,
+        ),
       ).toContain("patched file");
     });
   });
 
   it("writes structured tool output for claude payloads", () => {
-    withProcessCaptureMode("full", () => {
-      const homeDir = createTempDir("memory-mason-home-");
-      const vaultPath = createTempDir("memory-mason-vault-");
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
 
-      const result = runHookEntrypoint("post-tool-use.js", {
+      const result = runHookEntrypoint(ENTRYPOINT, {
         payload: {
-          hook_event_name: "PostToolUse",
+          hook_event_name: HOOK_ENTRY_POST_TOOL_USE,
           cwd: hooksRoot,
-          tool_name: "Write",
+          tool_name: TOOL_WRITE,
           tool_response: {
             stdout: "grep hit 1\ngrep hit 2",
             stderr: "",
@@ -118,74 +150,89 @@ describe("post-tool-use.js", () => {
             isImage: false,
           },
         },
-        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       });
 
       expect(result.status).toBe(0);
       expect(
-        fs.readFileSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1), "utf-8"),
+        fs.readFileSync(
+          buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
+          UTF8_ENCODING,
+        ),
       ).toContain("grep hit 1");
       expect(
-        fs.readFileSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1), "utf-8"),
+        fs.readFileSync(
+          buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
+          UTF8_ENCODING,
+        ),
       ).toContain("stdout");
     });
   });
 
   it("writes text blocks for structured claude tool outputs", () => {
-    withProcessCaptureMode("full", () => {
-      const homeDir = createTempDir("memory-mason-home-");
-      const vaultPath = createTempDir("memory-mason-vault-");
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
 
-      const result = runHookEntrypoint("post-tool-use.js", {
+      const result = runHookEntrypoint(ENTRYPOINT, {
         payload: {
-          hook_event_name: "PostToolUse",
+          hook_event_name: HOOK_ENTRY_POST_TOOL_USE,
           cwd: hooksRoot,
           tool_name: "apply_patch",
           tool_response: [
-            { type: "text", text: "match 1" },
-            { type: "text", text: "match 2" },
+            { type: TRANSCRIPT_BLOCK_TYPE_TEXT, text: "match 1" },
+            { type: TRANSCRIPT_BLOCK_TYPE_TEXT, text: "match 2" },
           ],
         },
-        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       });
 
       expect(result.status).toBe(0);
       expect(
-        fs.readFileSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1), "utf-8"),
+        fs.readFileSync(
+          buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
+          UTF8_ENCODING,
+        ),
       ).toContain("match 1");
       expect(
-        fs.readFileSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1), "utf-8"),
+        fs.readFileSync(
+          buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
+          UTF8_ENCODING,
+        ),
       ).toContain("match 2");
     });
   });
 
   it("writes tool output for copilot cli payloads", () => {
-    withProcessCaptureMode("full", () => {
-      const homeDir = createTempDir("memory-mason-home-");
-      const vaultPath = createTempDir("memory-mason-vault-");
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
 
-      runHookEntrypoint("post-tool-use.js", {
+      runHookEntrypoint(ENTRYPOINT, {
         payload: {
           timestamp: "2026-04-27T10:00:00.000Z",
           cwd: hooksRoot,
           toolName: "apply_patch",
           toolResult: { textResultForLlm: "patch ok" },
         },
-        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       });
 
       expect(
-        fs.readFileSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1), "utf-8"),
+        fs.readFileSync(
+          buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
+          UTF8_ENCODING,
+        ),
       ).toContain("patch ok");
     });
   });
 
   it("writes tool output for codex payloads", () => {
-    withProcessCaptureMode("full", () => {
-      const homeDir = createTempDir("memory-mason-home-");
-      const vaultPath = createTempDir("memory-mason-vault-");
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
 
-      runHookEntrypoint("post-tool-use.js", {
+      runHookEntrypoint(ENTRYPOINT, {
         payload: {
           hook_event_name: "post_tool_use",
           turn_id: "turn-1",
@@ -193,91 +240,96 @@ describe("post-tool-use.js", () => {
           tool_name: "apply_patch",
           tool_result: "codex result",
         },
-        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       });
 
       expect(
-        fs.readFileSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1), "utf-8"),
+        fs.readFileSync(
+          buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
+          UTF8_ENCODING,
+        ),
       ).toContain("codex result");
     });
   });
 
   it("skips tool output in lite mode", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
 
-    const result = runHookEntrypoint("post-tool-use.js", {
+    const result = runHookEntrypoint(ENTRYPOINT, {
       payload: {
-        hook_event_name: "PostToolUse",
+        hook_event_name: HOOK_ENTRY_POST_TOOL_USE,
         cwd: hooksRoot,
-        tool_name: "Write",
+        tool_name: TOOL_WRITE,
         tool_response: "should not be captured in lite",
       },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
     expect(result.status).toBe(0);
-    expect(fs.existsSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1))).toBe(false);
+    expect(fs.existsSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1))).toBe(
+      false,
+    );
   });
 
   it("keeps AskUserQuestion tool output in lite mode", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
 
-    const result = runHookEntrypoint("post-tool-use.js", {
+    const result = runHookEntrypoint(ENTRYPOINT, {
       payload: {
-        hook_event_name: "PostToolUse",
+        hook_event_name: HOOK_ENTRY_POST_TOOL_USE,
         cwd: hooksRoot,
         tool_name: "AskUserQuestion",
         tool_response: "user said: do the thing",
       },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
     expect(result.status).toBe(0);
     expect(
-      fs.readFileSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1), "utf-8"),
+      fs.readFileSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1), UTF8_ENCODING),
     ).toContain("user said: do the thing");
   });
 
   it("skips noisy tools in full mode", () => {
-    withProcessCaptureMode("full", () => {
-      const homeDir = createTempDir("memory-mason-home-");
-      const vaultPath = createTempDir("memory-mason-vault-");
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
 
-      const result = runHookEntrypoint("post-tool-use.js", {
+      const result = runHookEntrypoint(ENTRYPOINT, {
         payload: {
-          hookEventName: "post-tool-use",
+          hookEventName: HOOK_EVENT_POST_TOOL_USE_KEBAB,
           cwd: hooksRoot,
           tool_name: "Read",
           tool_response: "ignored",
         },
-        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       });
 
       expect(result.status).toBe(0);
-      expect(fs.existsSync(buildDailyFilePath(vaultPath, "ai-knowledge", today()))).toBe(false);
+      expect(fs.existsSync(buildDailyFilePath(vaultPath, DEFAULT_SUBFOLDER, today()))).toBe(false);
     });
   });
 
   it("captures sequential thinking tool output in full mode", () => {
-    withProcessCaptureMode("full", () => {
-      const homeDir = createTempDir("memory-mason-home-");
-      const vaultPath = createTempDir("memory-mason-vault-");
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
 
-      const result = runHookEntrypoint("post-tool-use.js", {
+      const result = runHookEntrypoint(ENTRYPOINT, {
         payload: {
-          hookEventName: "post-tool-use",
+          hookEventName: HOOK_EVENT_POST_TOOL_USE_KEBAB,
           cwd: hooksRoot,
           tool_name: "mcp_sequentialthi_sequentialthinking",
           tool_response: "internal reasoning step",
         },
-        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       });
 
       const dailyContent = fs.readFileSync(
-        buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1),
-        "utf-8",
+        buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
+        UTF8_ENCODING,
       );
 
       expect(result.status).toBe(0);
@@ -286,9 +338,9 @@ describe("post-tool-use.js", () => {
   });
 
   it("reports invalid payloads to stderr", () => {
-    const result = runHookEntrypoint("post-tool-use.js", {
+    const result = runHookEntrypoint(ENTRYPOINT, {
       payload: { cwd: hooksRoot },
-      env: buildEnv(createTempDir("memory-mason-home-")),
+      env: buildEnv(createTempDir(TEST_HOME_PREFIX)),
     });
 
     expect(result.status).toBe(0);
@@ -298,9 +350,9 @@ describe("post-tool-use.js", () => {
 
 describe("run - mm suppression", () => {
   it("skips tool write when mmSuppressed is true", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
-    const statePath = resolveCaptureStatePath(vaultPath, "ai-knowledge");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const statePath = resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER);
 
     writeText(
       statePath,
@@ -314,25 +366,27 @@ describe("run - mm suppression", () => {
       ),
     );
 
-    const result = runHookEntrypoint("post-tool-use.js", {
+    const result = runHookEntrypoint(ENTRYPOINT, {
       payload: {
-        hook_event_name: "PostToolUse",
+        hook_event_name: HOOK_ENTRY_POST_TOOL_USE,
         cwd: hooksRoot,
-        tool_name: "Write",
+        tool_name: TOOL_WRITE,
         tool_response: "should be skipped",
       },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
     expect(result.status).toBe(0);
-    expect(fs.existsSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1))).toBe(false);
+    expect(fs.existsSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1))).toBe(
+      false,
+    );
   });
 
   it("writes tool output when mmSuppressed is false", () => {
-    withProcessCaptureMode("full", () => {
-      const homeDir = createTempDir("memory-mason-home-");
-      const vaultPath = createTempDir("memory-mason-vault-");
-      const statePath = resolveCaptureStatePath(vaultPath, "ai-knowledge");
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+      const statePath = resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER);
 
       writeText(
         statePath,
@@ -346,19 +400,19 @@ describe("run - mm suppression", () => {
         ),
       );
 
-      const result = runHookEntrypoint("post-tool-use.js", {
+      const result = runHookEntrypoint(ENTRYPOINT, {
         payload: {
-          hook_event_name: "PostToolUse",
+          hook_event_name: HOOK_ENTRY_POST_TOOL_USE,
           cwd: hooksRoot,
-          tool_name: "Write",
+          tool_name: TOOL_WRITE,
           tool_response: "tool output when not suppressed",
         },
-        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       });
 
       const dailyContent = fs.readFileSync(
-        buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1),
-        "utf-8",
+        buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
+        UTF8_ENCODING,
       );
 
       expect(result.status).toBe(0);
@@ -367,23 +421,23 @@ describe("run - mm suppression", () => {
   });
 
   it("writes tool output when capture state file does not exist", () => {
-    withProcessCaptureMode("full", () => {
-      const homeDir = createTempDir("memory-mason-home-");
-      const vaultPath = createTempDir("memory-mason-vault-");
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
 
-      const result = runHookEntrypoint("post-tool-use.js", {
+      const result = runHookEntrypoint(ENTRYPOINT, {
         payload: {
-          hook_event_name: "PostToolUse",
+          hook_event_name: HOOK_ENTRY_POST_TOOL_USE,
           cwd: hooksRoot,
-          tool_name: "Write",
+          tool_name: TOOL_WRITE,
           tool_response: "tool output with missing state",
         },
-        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       });
 
       const dailyContent = fs.readFileSync(
-        buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1),
-        "utf-8",
+        buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
+        UTF8_ENCODING,
       );
 
       expect(result.status).toBe(0);
@@ -394,16 +448,16 @@ describe("run - mm suppression", () => {
 
 describe("run - sync flag", () => {
   it("returns status 0 without writing to vault when sync is false", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
-    const cwd = createTempDir("memory-mason-cwd-");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const cwd = createTempDir(TEST_CWD_PREFIX);
 
     writeText(
-      path.join(cwd, "memory-mason.json"),
+      path.join(cwd, PROJECT_CONFIG_FILE_NAME),
       JSON.stringify(
         {
           vaultPath,
-          subfolder: "ai-knowledge",
+          subfolder: DEFAULT_SUBFOLDER,
           sync: false,
         },
         null,
@@ -411,11 +465,11 @@ describe("run - sync flag", () => {
       ),
     );
 
-    const result = runHookEntrypoint("post-tool-use.js", {
+    const result = runHookEntrypoint(ENTRYPOINT, {
       payload: {
-        hook_event_name: "PostToolUse",
+        hook_event_name: HOOK_ENTRY_POST_TOOL_USE,
         cwd,
-        tool_name: "Write",
+        tool_name: TOOL_WRITE,
         tool_response: "should be skipped when sync is false",
       },
       cwd,
@@ -423,33 +477,35 @@ describe("run - sync flag", () => {
     });
 
     expect(result).toEqual({ status: 0, stdout: "", stderr: "" });
-    expect(fs.existsSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1))).toBe(false);
+    expect(fs.existsSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1))).toBe(
+      false,
+    );
   });
 
   it("proceeds normally when sync is true", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
-    const cwd = createTempDir("memory-mason-cwd-");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const cwd = createTempDir(TEST_CWD_PREFIX);
 
     writeText(
-      path.join(cwd, "memory-mason.json"),
+      path.join(cwd, PROJECT_CONFIG_FILE_NAME),
       JSON.stringify(
         {
           vaultPath,
-          subfolder: "ai-knowledge",
+          subfolder: DEFAULT_SUBFOLDER,
           sync: true,
-          captureMode: "full",
+          captureMode: CAPTURE_MODE_FULL,
         },
         null,
         2,
       ),
     );
 
-    const result = runHookEntrypoint("post-tool-use.js", {
+    const result = runHookEntrypoint(ENTRYPOINT, {
       payload: {
-        hook_event_name: "PostToolUse",
+        hook_event_name: HOOK_ENTRY_POST_TOOL_USE,
         cwd,
-        tool_name: "Write",
+        tool_name: TOOL_WRITE,
         tool_response: "tool output when sync is enabled",
       },
       cwd,
@@ -457,8 +513,8 @@ describe("run - sync flag", () => {
     });
 
     const dailyContent = fs.readFileSync(
-      buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1),
-      "utf-8",
+      buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
+      UTF8_ENCODING,
     );
 
     expect(result.status).toBe(0);
@@ -468,7 +524,7 @@ describe("run - sync flag", () => {
 
 describe("post-tool-use.js readStdin", () => {
   it("returns valid JSON string from mocked fd 0", () => {
-    const payload = JSON.stringify({ tool_name: "Write", tool_response: "ok" });
+    const payload = JSON.stringify({ tool_name: TOOL_WRITE, tool_response: "ok" });
     const buf = Buffer.from(payload);
     let rc = 0;
     expect(
@@ -494,7 +550,7 @@ describe("post-tool-use.js serializeToolResponse", () => {
   it("returns empty string for null/undefined/numeric/boolean", () => {
     expect(postToolUse.serializeToolResponse(null)).toBe("");
     expect(postToolUse.serializeToolResponse(undefined)).toBe("");
-    expect(postToolUse.serializeToolResponse(42)).toBe("");
+    expect(postToolUse.serializeToolResponse(TEST_INVALID_TOOL_RESPONSE_NUMBER)).toBe("");
     expect(postToolUse.serializeToolResponse(true)).toBe("");
   });
 
@@ -510,8 +566,8 @@ describe("post-tool-use.js serializeToolResponse", () => {
   it("joins text blocks for array with valid text blocks", () => {
     expect(
       postToolUse.serializeToolResponse([
-        { type: "text", text: "a" },
-        { type: "text", text: "b" },
+        { type: TRANSCRIPT_BLOCK_TYPE_TEXT, text: "a" },
+        { type: TRANSCRIPT_BLOCK_TYPE_TEXT, text: "b" },
       ]),
     ).toBe("a\nb");
   });
@@ -523,8 +579,8 @@ describe("post-tool-use.js serializeToolResponse", () => {
 
   it("falls back to JSON for array with empty text blocks", () => {
     const arr = [
-      { type: "text", text: "   " },
-      { type: "text", text: "" },
+      { type: TRANSCRIPT_BLOCK_TYPE_TEXT, text: "   " },
+      { type: TRANSCRIPT_BLOCK_TYPE_TEXT, text: "" },
     ];
     expect(postToolUse.serializeToolResponse(arr)).toBe(JSON.stringify(arr, null, 2));
   });
@@ -534,8 +590,8 @@ describe("post-tool-use.js serializeToolResponse", () => {
       null,
       "str",
       { type: "image", text: "no" },
-      { type: "text", text: null },
-      { type: "text", text: "yes" },
+      { type: TRANSCRIPT_BLOCK_TYPE_TEXT, text: null },
+      { type: TRANSCRIPT_BLOCK_TYPE_TEXT, text: "yes" },
     ];
     expect(postToolUse.serializeToolResponse(arr)).toBe("yes");
   });
@@ -559,27 +615,35 @@ describe("constants", () => {
 
 describe("shouldSkipToolPayload", () => {
   it("skips empty tool name in lite", () => {
-    expect(postToolUse.shouldSkipToolPayload({ toolName: "", resultText: "" }, "lite")).toBe(true);
+    expect(
+      postToolUse.shouldSkipToolPayload({ toolName: "", resultText: "" }, CAPTURE_MODE_LITE),
+    ).toBe(true);
   });
 
   it("skips Write in lite", () => {
-    expect(postToolUse.shouldSkipToolPayload({ toolName: "Write", resultText: "ok" }, "lite")).toBe(
-      true,
-    );
+    expect(
+      postToolUse.shouldSkipToolPayload(
+        { toolName: TOOL_WRITE, resultText: "ok" },
+        CAPTURE_MODE_LITE,
+      ),
+    ).toBe(true);
   });
 
   it("keeps AskUserQuestion in lite", () => {
     expect(
       postToolUse.shouldSkipToolPayload(
         { toolName: "AskUserQuestion", resultText: "user answer" },
-        "lite",
+        CAPTURE_MODE_LITE,
       ),
     ).toBe(false);
   });
 
   it("skips apply_patch in lite", () => {
     expect(
-      postToolUse.shouldSkipToolPayload({ toolName: "apply_patch", resultText: "ok" }, "lite"),
+      postToolUse.shouldSkipToolPayload(
+        { toolName: "apply_patch", resultText: "ok" },
+        CAPTURE_MODE_LITE,
+      ),
     ).toBe(true);
   });
 
@@ -587,46 +651,52 @@ describe("shouldSkipToolPayload", () => {
     expect(
       postToolUse.shouldSkipToolPayload(
         { toolName: "replace_string_in_file", resultText: "ok" },
-        "lite",
+        CAPTURE_MODE_LITE,
       ),
     ).toBe(true);
   });
 
   it("skips editFiles in lite", () => {
     expect(
-      postToolUse.shouldSkipToolPayload({ toolName: "editFiles", resultText: "ok" }, "lite"),
+      postToolUse.shouldSkipToolPayload(
+        { toolName: "editFiles", resultText: "ok" },
+        CAPTURE_MODE_LITE,
+      ),
     ).toBe(true);
   });
 
   it("skips Bash in lite", () => {
-    expect(postToolUse.shouldSkipToolPayload({ toolName: "Bash", resultText: "ok" }, "lite")).toBe(
-      true,
-    );
+    expect(
+      postToolUse.shouldSkipToolPayload({ toolName: "Bash", resultText: "ok" }, CAPTURE_MODE_LITE),
+    ).toBe(true);
   });
 
   it("skips read_file in lite", () => {
     expect(
-      postToolUse.shouldSkipToolPayload({ toolName: "read_file", resultText: "ok" }, "lite"),
+      postToolUse.shouldSkipToolPayload(
+        { toolName: "read_file", resultText: "ok" },
+        CAPTURE_MODE_LITE,
+      ),
     ).toBe(true);
   });
 
   it("persists Bash in full", () => {
-    expect(postToolUse.shouldSkipToolPayload({ toolName: "Bash", resultText: "ok" }, "full")).toBe(
-      false,
-    );
+    expect(
+      postToolUse.shouldSkipToolPayload({ toolName: "Bash", resultText: "ok" }, CAPTURE_MODE_FULL),
+    ).toBe(false);
   });
 
   it("still skips Read in full", () => {
-    expect(postToolUse.shouldSkipToolPayload({ toolName: "Read", resultText: "ok" }, "full")).toBe(
-      true,
-    );
+    expect(
+      postToolUse.shouldSkipToolPayload({ toolName: "Read", resultText: "ok" }, CAPTURE_MODE_FULL),
+    ).toBe(true);
   });
 
   it("captures sequential thinking in full", () => {
     expect(
       postToolUse.shouldSkipToolPayload(
         { toolName: "mcp_sequentialthi_sequentialthinking", resultText: "ok" },
-        "full",
+        CAPTURE_MODE_FULL,
       ),
     ).toBe(false);
   });
@@ -636,27 +706,27 @@ describe("post-tool-use.js runtime fallback branches", () => {
   it("resolveRuntimeEnv falls back when env is null", () => {
     const result = postToolUse.run(
       JSON.stringify({
-        hook_event_name: "PostToolUse",
-        cwd: createTempDir("mm-cwd-"),
-        tool_name: "Write",
+        hook_event_name: HOOK_ENTRY_POST_TOOL_USE,
+        cwd: createTempDir(TEST_MM_CWD_PREFIX),
+        tool_name: TOOL_WRITE,
         tool_response: "x",
       }),
-      { env: null, cwd: createTempDir("mm-cwd-"), homedir: createTempDir("mm-h-") },
+      { env: null, cwd: createTempDir(TEST_MM_CWD_PREFIX), homedir: createTempDir("mm-h-") },
     );
     expect(result.status).toBe(0);
   });
 
   it("resolveFallbackCwd falls back when cwd is not a string", () => {
-    const homeDir = createTempDir("mm-home-");
+    const homeDir = createTempDir(TEST_MM_HOME_PREFIX);
     const result = postToolUse.run(
       JSON.stringify({
-        hook_event_name: "PostToolUse",
+        hook_event_name: HOOK_ENTRY_POST_TOOL_USE,
         cwd: homeDir,
-        tool_name: "Write",
+        tool_name: TOOL_WRITE,
         tool_response: "x",
       }),
       {
-        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: createTempDir("mm-v-") }),
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: createTempDir("mm-v-") }),
         cwd: 123,
         homedir: homeDir,
       },
@@ -665,16 +735,16 @@ describe("post-tool-use.js runtime fallback branches", () => {
   });
 
   it("resolveRuntimeHomedir falls back when homedir is not a string", () => {
-    const homeDir = createTempDir("mm-home-");
+    const homeDir = createTempDir(TEST_MM_HOME_PREFIX);
     const result = postToolUse.run(
       JSON.stringify({
-        hook_event_name: "PostToolUse",
+        hook_event_name: HOOK_ENTRY_POST_TOOL_USE,
         cwd: homeDir,
-        tool_name: "Write",
+        tool_name: TOOL_WRITE,
         tool_response: "x",
       }),
       {
-        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: createTempDir("mm-v-") }),
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: createTempDir("mm-v-") }),
         cwd: homeDir,
         homedir: 42,
       },
@@ -693,15 +763,19 @@ describe("post-tool-use.js extractToolPayload unsupported platform", () => {
 
 describe("post-tool-use.js MEMORY_MASON_INVOKED_BY skip", () => {
   it("returns empty when MEMORY_MASON_INVOKED_BY is set", () => {
-    const homeDir = createTempDir("mm-home-");
+    const homeDir = createTempDir(TEST_MM_HOME_PREFIX);
     const result = postToolUse.run(
       JSON.stringify({
-        hook_event_name: "PostToolUse",
-        cwd: createTempDir("mm-cwd-"),
-        tool_name: "Write",
+        hook_event_name: HOOK_ENTRY_POST_TOOL_USE,
+        cwd: createTempDir(TEST_MM_CWD_PREFIX),
+        tool_name: TOOL_WRITE,
         tool_response: "x",
       }),
-      { env: { MEMORY_MASON_INVOKED_BY: "mmc" }, cwd: createTempDir("mm-cwd-"), homedir: homeDir },
+      {
+        env: { [ENV_KEY_INVOKED_BY]: "mmc" },
+        cwd: createTempDir(TEST_MM_CWD_PREFIX),
+        homedir: homeDir,
+      },
     );
     expect(result).toEqual({ status: 0, stdout: "", stderr: "" });
   });
@@ -709,17 +783,22 @@ describe("post-tool-use.js MEMORY_MASON_INVOKED_BY skip", () => {
 
 describe("post-tool-use.js readConfigText with existing file", () => {
   it("uses memory-mason.json when no env vault path is set", () => {
-    const homeDir = createTempDir("mm-home-");
-    const vaultPath = createTempDir("mm-vault-");
-    const cwd = createTempDir("mm-cwd-");
+    const homeDir = createTempDir(TEST_MM_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_MM_VAULT_PREFIX);
+    const cwd = createTempDir(TEST_MM_CWD_PREFIX);
 
     writeText(
-      path.join(cwd, "memory-mason.json"),
-      JSON.stringify({ vaultPath, subfolder: "ai-knowledge", captureMode: "full" }),
+      path.join(cwd, PROJECT_CONFIG_FILE_NAME),
+      JSON.stringify({ vaultPath, subfolder: DEFAULT_SUBFOLDER, captureMode: CAPTURE_MODE_FULL }),
     );
 
-    const result = runHookEntrypoint("post-tool-use.js", {
-      payload: { hook_event_name: "PostToolUse", cwd, tool_name: "Write", tool_response: "output" },
+    const result = runHookEntrypoint(ENTRYPOINT, {
+      payload: {
+        hook_event_name: HOOK_ENTRY_POST_TOOL_USE,
+        cwd,
+        tool_name: TOOL_WRITE,
+        tool_response: "output",
+      },
       cwd,
       env: buildEnv(homeDir),
     });
@@ -727,23 +806,23 @@ describe("post-tool-use.js readConfigText with existing file", () => {
     expect(result.status).toBe(0);
     expect(result.stderr).toBe("");
     expect(
-      fs.readFileSync(buildDailyChunkPath(vaultPath, "ai-knowledge", today(), 1), "utf-8"),
+      fs.readFileSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1), UTF8_ENCODING),
     ).toContain("output");
   });
 });
 
 describe("post-tool-use.js copilot-cli payload branches", () => {
   it("falls back to empty object when toolResult is null", () => {
-    const homeDir = createTempDir("mm-home-");
-    const vaultPath = createTempDir("mm-vault-");
+    const homeDir = createTempDir(TEST_MM_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_MM_VAULT_PREFIX);
     const result = postToolUse.run(
       JSON.stringify({
         timestamp: "2025-01-01T00:00:00.000Z",
-        toolName: "Write",
+        toolName: TOOL_WRITE,
         toolResult: null,
       }),
       {
-        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
         cwd: homeDir,
         homedir: homeDir,
       },
@@ -754,12 +833,16 @@ describe("post-tool-use.js copilot-cli payload branches", () => {
 
 describe("post-tool-use.js input cwd fallback branch", () => {
   it("uses fallbackCwd when input has no cwd", () => {
-    const homeDir = createTempDir("mm-home-");
-    const vaultPath = createTempDir("mm-vault-");
+    const homeDir = createTempDir(TEST_MM_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_MM_VAULT_PREFIX);
     const result = postToolUse.run(
-      JSON.stringify({ hook_event_name: "PostToolUse", tool_name: "Write", tool_response: "x" }),
+      JSON.stringify({
+        hook_event_name: HOOK_ENTRY_POST_TOOL_USE,
+        tool_name: TOOL_WRITE,
+        tool_response: "x",
+      }),
       {
-        env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
         cwd: homeDir,
         homedir: homeDir,
       },
@@ -770,14 +853,14 @@ describe("post-tool-use.js input cwd fallback branch", () => {
 
 describe("post-tool-use.js main", () => {
   it("calls exit 0 after writing tool output", () => {
-    withProcessCaptureMode("full", () => {
-      const homeDir = createTempDir("mm-home-");
-      const vaultPath = createTempDir("mm-vault-");
-      const env = buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath });
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_MM_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_MM_VAULT_PREFIX);
+      const env = buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath });
       const payload = JSON.stringify({
-        hook_event_name: "PostToolUse",
+        hook_event_name: HOOK_ENTRY_POST_TOOL_USE,
         cwd: homeDir,
-        tool_name: "Write",
+        tool_name: TOOL_WRITE,
         tool_response: "main out",
       });
       const buf = Buffer.from(payload);
@@ -814,11 +897,11 @@ describe("post-tool-use.js main", () => {
   });
 
   it("writes stderr on config failure", () => {
-    const homeDir = createTempDir("mm-home-");
+    const homeDir = createTempDir(TEST_MM_HOME_PREFIX);
     const payload = JSON.stringify({
-      hook_event_name: "PostToolUse",
+      hook_event_name: HOOK_ENTRY_POST_TOOL_USE,
       cwd: createTempDir("mm-nocfg-"),
-      tool_name: "Write",
+      tool_name: TOOL_WRITE,
       tool_response: "x",
     });
     const buf = Buffer.from(payload);
@@ -854,10 +937,10 @@ describe("post-tool-use.js main", () => {
   });
 
   it("falls back to process stdout/stderr when io functions are missing", () => {
-    const homeDir = createTempDir("mm-home-");
-    const vaultPath = createTempDir("mm-vault-");
+    const homeDir = createTempDir(TEST_MM_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_MM_VAULT_PREFIX);
     const payload = JSON.stringify({
-      hook_event_name: "PostToolUse",
+      hook_event_name: HOOK_ENTRY_POST_TOOL_USE,
       cwd: homeDir,
       tool_name: "Read",
       tool_response: "",
@@ -877,7 +960,7 @@ describe("post-tool-use.js main", () => {
         },
       },
       cwd: homeDir,
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       homedir: homeDir,
     });
     expect(result.status).toBe(0);

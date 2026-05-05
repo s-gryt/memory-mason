@@ -1,18 +1,59 @@
 "use strict";
 
 const path = require("node:path");
+const {
+  DEFAULT_DAILY_CHUNK_CAP_BYTES,
+  MAX_DAILY_CHUNK_COUNT,
+  CHUNK_ID_WIDTH,
+  UTF8_ENCODING,
+} = require("../lib/constants");
+const {
+  VAULT_RAW_DIR_NAME,
+  ROOT_INDEX_FILE_NAME,
+  DAILY_META_FILE_NAME,
+} = require("../lib/vault-paths");
 const vaultModule = require("../lib/vault");
+const {
+  TEST_DEFAULT_DATE,
+  TEST_DEFAULT_DATE_ISO,
+  TEST_DEFAULT_SUBFOLDER: DEFAULT_SUBFOLDER,
+} = require("./helpers/test-constants");
 
-const padChunkId = (chunkNum) => String(chunkNum).padStart(3, "0");
+const TWO = 2;
+const THREE = 3;
+const FOUR = 4;
+const FIVE = 5;
+const SIX = 6;
+const SEVEN = 7;
+const TEN = 10;
+const TWELVE = 12;
+const TWENTY = 20;
+const FORTY = 40;
+const NINETY_NINE = 99;
+const ONE_HUNDRED_TWENTY_THREE = 123;
+const ONE_THOUSAND = 1000;
+const NEGATIVE_ONE = -1;
+
+const FIRST_CHUNK_ID = "001";
+const FIRST_CHUNK_FILE = `${FIRST_CHUNK_ID}.md`;
+const SECOND_CHUNK_ID = "002";
+const SECOND_CHUNK_FILE = `${SECOND_CHUNK_ID}.md`;
+const SEVENTH_CHUNK_ID = "007";
+const SEVENTH_CHUNK_FILE = `${SEVENTH_CHUNK_ID}.md`;
+
+const CHUNK_COUNT_EXCEEDS_LIMIT_MESSAGE = `chunk count exceeds ${MAX_DAILY_CHUNK_COUNT}`;
+const CHUNK_NUM_RANGE_MESSAGE = `chunkNum must be an integer from 1 to ${MAX_DAILY_CHUNK_COUNT}`;
+
+const padChunkId = (chunkNum) => String(chunkNum).padStart(CHUNK_ID_WIDTH, "0");
 
 const buildDailyFolderPathMock = (vaultPath, subfolder, today) =>
-  path.join(vaultPath, subfolder, "_raw", today);
+  path.join(vaultPath, subfolder, VAULT_RAW_DIR_NAME, today);
 
 const buildDailyChunkPathMock = (vaultPath, subfolder, today, chunkNum) =>
   path.join(buildDailyFolderPathMock(vaultPath, subfolder, today), `${padChunkId(chunkNum)}.md`);
 
 const buildDailyIndexPathMock = (vaultPath, subfolder, today) =>
-  path.join(buildDailyFolderPathMock(vaultPath, subfolder, today), "index.md");
+  path.join(buildDailyFolderPathMock(vaultPath, subfolder, today), ROOT_INDEX_FILE_NAME);
 
 const buildChunkHeaderMock = (today, chunkNum) =>
   `# Daily Log: ${today} (chunk ${padChunkId(chunkNum)})\n\n`;
@@ -61,7 +102,7 @@ const {
   appendToChunked,
 } = require("../lib/chunk-writer");
 
-const makeChunk = (chunkNum, sizeBytes, createdAt = "2026-04-30T00:00:00.000Z") => {
+const makeChunk = (chunkNum, sizeBytes, createdAt = TEST_DEFAULT_DATE_ISO) => {
   const id = padChunkId(chunkNum);
   return {
     id,
@@ -131,13 +172,13 @@ const makeFsApi = (initialFiles = {}) => {
 
 const makeChunkPaths = () => {
   const vaultPath = path.join("vault-root");
-  const subfolder = "ai-knowledge";
-  const today = "2026-04-30";
+  const subfolder = DEFAULT_SUBFOLDER;
+  const today = TEST_DEFAULT_DATE;
   const folderPath = buildDailyFolderPathMock(vaultPath, subfolder, today);
   const indexPath = buildDailyIndexPathMock(vaultPath, subfolder, today);
-  const metaPath = path.join(folderPath, "meta.json");
+  const metaPath = path.join(folderPath, DAILY_META_FILE_NAME);
   const firstChunkPath = buildDailyChunkPathMock(vaultPath, subfolder, today, 1);
-  const secondChunkPath = buildDailyChunkPathMock(vaultPath, subfolder, today, 2);
+  const secondChunkPath = buildDailyChunkPathMock(vaultPath, subfolder, today, TWO);
 
   return {
     vaultPath,
@@ -155,7 +196,7 @@ const runFirstWrite = (content = "first") => {
   const paths = makeChunkPaths();
   const fsApi = makeFsApi({});
   appendToChunked(paths.vaultPath, paths.subfolder, paths.today, content, {
-    capBytes: 512000,
+    capBytes: DEFAULT_DAILY_CHUNK_CAP_BYTES,
     fsApi,
   });
   return {
@@ -172,14 +213,14 @@ const runSecondWriteWithoutRotation = () => {
   const secondContent = "second";
 
   appendToChunked(paths.vaultPath, paths.subfolder, paths.today, firstContent, {
-    capBytes: 512000,
+    capBytes: DEFAULT_DAILY_CHUNK_CAP_BYTES,
     fsApi,
   });
   const beforeMeta = JSON.parse(fsApi._files[paths.metaPath]);
   const createdAtBefore = beforeMeta.chunks[0].createdAt;
 
   appendToChunked(paths.vaultPath, paths.subfolder, paths.today, secondContent, {
-    capBytes: 512000,
+    capBytes: DEFAULT_DAILY_CHUNK_CAP_BYTES,
     fsApi,
   });
 
@@ -199,7 +240,7 @@ const runRotationWrite = () => {
   const secondContent = "y";
 
   appendToChunked(paths.vaultPath, paths.subfolder, paths.today, firstContent, {
-    capBytes: 512000,
+    capBytes: DEFAULT_DAILY_CHUNK_CAP_BYTES,
     fsApi,
   });
   const firstMeta = JSON.parse(fsApi._files[paths.metaPath]);
@@ -224,12 +265,12 @@ const setupCapBoundaryWrite = () => {
   const fsApi = makeFsApi({});
 
   appendToChunked(paths.vaultPath, paths.subfolder, paths.today, "x", {
-    capBytes: 512000,
+    capBytes: DEFAULT_DAILY_CHUNK_CAP_BYTES,
     fsApi,
   });
 
   const firstMeta = JSON.parse(fsApi._files[paths.metaPath]);
-  const capBytes = firstMeta.chunks[0].sizeBytes + Buffer.byteLength("y", "utf-8");
+  const capBytes = firstMeta.chunks[0].sizeBytes + Buffer.byteLength("y", UTF8_ENCODING);
 
   return {
     ...paths,
@@ -251,16 +292,16 @@ afterAll(() => {
 
 describe("loadMeta", () => {
   it("returns default when meta.json missing", () => {
-    const folderPath = path.join("vault", "_raw", "2026-04-30");
+    const folderPath = path.join("vault", VAULT_RAW_DIR_NAME, TEST_DEFAULT_DATE);
     const fsApi = makeFsApi({});
     expect(loadMeta(folderPath, fsApi)).toEqual({ chunks: [] });
   });
 
   it("parses valid meta.json", () => {
-    const folderPath = path.join("vault", "_raw", "2026-04-30");
-    const metaPath = path.join(folderPath, "meta.json");
+    const folderPath = path.join("vault", VAULT_RAW_DIR_NAME, TEST_DEFAULT_DATE);
+    const metaPath = path.join(folderPath, DAILY_META_FILE_NAME);
     const meta = {
-      chunks: [makeChunk(1, 20), makeChunk(2, 40)],
+      chunks: [makeChunk(1, TWENTY), makeChunk(TWO, FORTY)],
     };
     const fsApi = makeFsApi({
       [folderPath]: null,
@@ -274,8 +315,8 @@ describe("loadMeta", () => {
   });
 
   it("returns default on SyntaxError", () => {
-    const folderPath = path.join("vault", "_raw", "2026-04-30");
-    const metaPath = path.join(folderPath, "meta.json");
+    const folderPath = path.join("vault", VAULT_RAW_DIR_NAME, TEST_DEFAULT_DATE);
+    const metaPath = path.join(folderPath, DAILY_META_FILE_NAME);
     const fsApi = makeFsApi({
       [folderPath]: null,
       [metaPath]: "{not valid json",
@@ -285,8 +326,8 @@ describe("loadMeta", () => {
   });
 
   it("throws on structurally invalid meta.json", () => {
-    const folderPath = path.join("vault", "_raw", "2026-04-30");
-    const metaPath = path.join(folderPath, "meta.json");
+    const folderPath = path.join("vault", VAULT_RAW_DIR_NAME, TEST_DEFAULT_DATE);
+    const metaPath = path.join(folderPath, DAILY_META_FILE_NAME);
     const fsApi = makeFsApi({
       [folderPath]: null,
       [metaPath]: JSON.stringify({ invalid: true }),
@@ -298,12 +339,12 @@ describe("loadMeta", () => {
   });
 
   it("throws when chunk ids are non-contiguous", () => {
-    const folderPath = path.join("vault", "_raw", "2026-04-30");
-    const metaPath = path.join(folderPath, "meta.json");
+    const folderPath = path.join("vault", VAULT_RAW_DIR_NAME, TEST_DEFAULT_DATE);
+    const metaPath = path.join(folderPath, DAILY_META_FILE_NAME);
     const fsApi = makeFsApi({
       [folderPath]: null,
       [metaPath]: JSON.stringify({
-        chunks: [makeChunk(1, 1), makeChunk(3, 1)],
+        chunks: [makeChunk(1, 1), makeChunk(THREE, 1)],
       }),
     });
 
@@ -313,8 +354,8 @@ describe("loadMeta", () => {
   });
 
   it("throws when parsed meta root is an array", () => {
-    const folderPath = path.join("vault", "_raw", "2026-04-30");
-    const metaPath = path.join(folderPath, "meta.json");
+    const folderPath = path.join("vault", VAULT_RAW_DIR_NAME, TEST_DEFAULT_DATE);
+    const metaPath = path.join(folderPath, DAILY_META_FILE_NAME);
     const fsApi = makeFsApi({
       [folderPath]: null,
       [metaPath]: "[]",
@@ -326,17 +367,17 @@ describe("loadMeta", () => {
   });
 
   it("throws when chunk id format is invalid", () => {
-    const folderPath = path.join("vault", "_raw", "2026-04-30");
-    const metaPath = path.join(folderPath, "meta.json");
+    const folderPath = path.join("vault", VAULT_RAW_DIR_NAME, TEST_DEFAULT_DATE);
+    const metaPath = path.join(folderPath, DAILY_META_FILE_NAME);
     const fsApi = makeFsApi({
       [folderPath]: null,
       [metaPath]: JSON.stringify({
         chunks: [
           {
             id: "1",
-            file: "001.md",
+            file: FIRST_CHUNK_FILE,
             sizeBytes: 1,
-            createdAt: "2026-04-30T00:00:00.000Z",
+            createdAt: TEST_DEFAULT_DATE_ISO,
           },
         ],
       }),
@@ -346,17 +387,17 @@ describe("loadMeta", () => {
   });
 
   it("throws when chunk file format is invalid", () => {
-    const folderPath = path.join("vault", "_raw", "2026-04-30");
-    const metaPath = path.join(folderPath, "meta.json");
+    const folderPath = path.join("vault", VAULT_RAW_DIR_NAME, TEST_DEFAULT_DATE);
+    const metaPath = path.join(folderPath, DAILY_META_FILE_NAME);
     const fsApi = makeFsApi({
       [folderPath]: null,
       [metaPath]: JSON.stringify({
         chunks: [
           {
-            id: "001",
+            id: FIRST_CHUNK_ID,
             file: "chunk.md",
             sizeBytes: 1,
-            createdAt: "2026-04-30T00:00:00.000Z",
+            createdAt: TEST_DEFAULT_DATE_ISO,
           },
         ],
       }),
@@ -366,17 +407,17 @@ describe("loadMeta", () => {
   });
 
   it("throws when chunk file does not match chunk id", () => {
-    const folderPath = path.join("vault", "_raw", "2026-04-30");
-    const metaPath = path.join(folderPath, "meta.json");
+    const folderPath = path.join("vault", VAULT_RAW_DIR_NAME, TEST_DEFAULT_DATE);
+    const metaPath = path.join(folderPath, DAILY_META_FILE_NAME);
     const fsApi = makeFsApi({
       [folderPath]: null,
       [metaPath]: JSON.stringify({
         chunks: [
           {
-            id: "001",
-            file: "002.md",
+            id: FIRST_CHUNK_ID,
+            file: SECOND_CHUNK_FILE,
             sizeBytes: 1,
-            createdAt: "2026-04-30T00:00:00.000Z",
+            createdAt: TEST_DEFAULT_DATE_ISO,
           },
         ],
       }),
@@ -386,17 +427,17 @@ describe("loadMeta", () => {
   });
 
   it("throws when chunk sizeBytes is invalid", () => {
-    const folderPath = path.join("vault", "_raw", "2026-04-30");
-    const metaPath = path.join(folderPath, "meta.json");
+    const folderPath = path.join("vault", VAULT_RAW_DIR_NAME, TEST_DEFAULT_DATE);
+    const metaPath = path.join(folderPath, DAILY_META_FILE_NAME);
     const fsApi = makeFsApi({
       [folderPath]: null,
       [metaPath]: JSON.stringify({
         chunks: [
           {
-            id: "001",
-            file: "001.md",
+            id: FIRST_CHUNK_ID,
+            file: FIRST_CHUNK_FILE,
             sizeBytes: -1,
-            createdAt: "2026-04-30T00:00:00.000Z",
+            createdAt: TEST_DEFAULT_DATE_ISO,
           },
         ],
       }),
@@ -408,15 +449,15 @@ describe("loadMeta", () => {
   });
 
   it("throws when chunk createdAt is invalid", () => {
-    const folderPath = path.join("vault", "_raw", "2026-04-30");
-    const metaPath = path.join(folderPath, "meta.json");
+    const folderPath = path.join("vault", VAULT_RAW_DIR_NAME, TEST_DEFAULT_DATE);
+    const metaPath = path.join(folderPath, DAILY_META_FILE_NAME);
     const fsApi = makeFsApi({
       [folderPath]: null,
       [metaPath]: JSON.stringify({
         chunks: [
           {
-            id: "001",
-            file: "001.md",
+            id: FIRST_CHUNK_ID,
+            file: FIRST_CHUNK_FILE,
             sizeBytes: 1,
             createdAt: "not-iso",
           },
@@ -430,8 +471,8 @@ describe("loadMeta", () => {
   });
 
   it("throws when chunk entry is not an object", () => {
-    const folderPath = path.join("vault", "_raw", "2026-04-30");
-    const metaPath = path.join(folderPath, "meta.json");
+    const folderPath = path.join("vault", VAULT_RAW_DIR_NAME, TEST_DEFAULT_DATE);
+    const metaPath = path.join(folderPath, DAILY_META_FILE_NAME);
     const fsApi = makeFsApi({
       [folderPath]: null,
       [metaPath]: JSON.stringify({
@@ -450,12 +491,14 @@ describe("loadMeta", () => {
       throw error;
     };
 
-    expect(() => loadMeta(path.join("vault", "_raw", "2026-04-30"), fsApi)).toThrow("EACCES");
+    expect(() =>
+      loadMeta(path.join("vault", VAULT_RAW_DIR_NAME, TEST_DEFAULT_DATE), fsApi),
+    ).toThrow("EACCES");
   });
 
   it("rethrows non-SyntaxError JSON parse failures", () => {
-    const folderPath = path.join("vault", "_raw", "2026-04-30");
-    const metaPath = path.join(folderPath, "meta.json");
+    const folderPath = path.join("vault", VAULT_RAW_DIR_NAME, TEST_DEFAULT_DATE);
+    const metaPath = path.join(folderPath, DAILY_META_FILE_NAME);
     const fsApi = makeFsApi({
       [folderPath]: null,
       [metaPath]: JSON.stringify({ chunks: [] }),
@@ -475,21 +518,21 @@ describe("loadMeta", () => {
 
 describe("saveMeta", () => {
   it("writes 2-space indented JSON", () => {
-    const folderPath = path.join("vault", "_raw", "2026-04-30");
-    const metaPath = path.join(folderPath, "meta.json");
-    const meta = { chunks: [makeChunk(1, 12)] };
+    const folderPath = path.join("vault", VAULT_RAW_DIR_NAME, TEST_DEFAULT_DATE);
+    const metaPath = path.join(folderPath, DAILY_META_FILE_NAME);
+    const meta = { chunks: [makeChunk(1, TWELVE)] };
     const fsApi = makeFsApi({});
 
     saveMeta(folderPath, meta, fsApi);
 
-    expect(fsApi._files[metaPath]).toBe(JSON.stringify(meta, null, 2));
+    expect(fsApi._files[metaPath]).toBe(JSON.stringify(meta, null, TWO));
   });
 
   it("creates directory if missing", () => {
-    const folderPath = path.join("vault", "_raw", "2026-04-30");
+    const folderPath = path.join("vault", VAULT_RAW_DIR_NAME, TEST_DEFAULT_DATE);
     const fsApi = makeFsApi({});
 
-    saveMeta(folderPath, { chunks: [makeChunk(1, 5)] }, fsApi);
+    saveMeta(folderPath, { chunks: [makeChunk(1, FIVE)] }, fsApi);
 
     expect(fsApi._mkdirCalls).toContain(folderPath);
     expect(fsApi._files[folderPath]).toBe(null);
@@ -499,7 +542,11 @@ describe("saveMeta", () => {
     const fsApi = makeFsApi({});
 
     expect(() =>
-      saveMeta(path.join("vault", "_raw", "2026-04-30"), { chunks: "invalid" }, fsApi),
+      saveMeta(
+        path.join("vault", VAULT_RAW_DIR_NAME, TEST_DEFAULT_DATE),
+        { chunks: "invalid" },
+        fsApi,
+      ),
     ).toThrow("meta.json must contain an object with chunks array");
   });
 });
@@ -510,8 +557,8 @@ describe("getCurrentChunk", () => {
   });
 
   it("returns last element for populated array", () => {
-    expect(getCurrentChunk({ chunks: [makeChunk(1, 5), makeChunk(2, 6)] })).toEqual(
-      makeChunk(2, 6),
+    expect(getCurrentChunk({ chunks: [makeChunk(1, FIVE), makeChunk(TWO, SIX)] })).toEqual(
+      makeChunk(TWO, SIX),
     );
   });
 
@@ -524,23 +571,23 @@ describe("getCurrentChunk", () => {
 
 describe("needsNewChunk", () => {
   it("returns true when currentChunk is null", () => {
-    expect(needsNewChunk(null, 1, 2)).toBe(true);
+    expect(needsNewChunk(null, 1, TWO)).toBe(true);
   });
 
   it("returns true when would exceed cap", () => {
-    expect(needsNewChunk({ sizeBytes: 5 }, 6, 10)).toBe(true);
+    expect(needsNewChunk({ sizeBytes: FIVE }, SIX, TEN)).toBe(true);
   });
 
   it("returns false when exactly at cap", () => {
-    expect(needsNewChunk({ sizeBytes: 5 }, 5, 10)).toBe(false);
+    expect(needsNewChunk({ sizeBytes: FIVE }, FIVE, TEN)).toBe(false);
   });
 
   it("returns false when below cap", () => {
-    expect(needsNewChunk({ sizeBytes: 5 }, 4, 10)).toBe(false);
+    expect(needsNewChunk({ sizeBytes: FIVE }, FOUR, TEN)).toBe(false);
   });
 
   it("throws on invalid contentByteLength", () => {
-    expect(() => needsNewChunk({ sizeBytes: 1 }, -1, 10)).toThrow(
+    expect(() => needsNewChunk({ sizeBytes: 1 }, NEGATIVE_ONE, TEN)).toThrow(
       "contentByteLength must be a non-negative integer",
     );
   });
@@ -558,25 +605,27 @@ describe("nextChunkNum", () => {
   });
 
   it("returns N+1 for meta with N chunks", () => {
-    expect(nextChunkNum({ chunks: [makeChunk(1, 1), makeChunk(2, 1)] })).toBe(3);
+    expect(nextChunkNum({ chunks: [makeChunk(1, 1), makeChunk(TWO, 1)] })).toBe(THREE);
   });
 
-  it("throws when chunk count would exceed 999", () => {
-    const chunks = Array.from({ length: 999 }, (_, index) => makeChunk(index + 1, 1));
-    expect(() => nextChunkNum({ chunks })).toThrow("chunk count exceeds 999");
+  it("throws when chunk count would exceed MAX_DAILY_CHUNK_COUNT", () => {
+    const chunks = Array.from({ length: MAX_DAILY_CHUNK_COUNT }, (_, index) =>
+      makeChunk(index + 1, 1),
+    );
+    expect(() => nextChunkNum({ chunks })).toThrow(CHUNK_COUNT_EXCEEDS_LIMIT_MESSAGE);
   });
 });
 
 describe("buildChunkEntry", () => {
   it("has padded id and file", () => {
-    const entry = buildChunkEntry(7, 99);
-    expect(entry.id).toBe("007");
-    expect(entry.file).toBe("007.md");
+    const entry = buildChunkEntry(SEVEN, NINETY_NINE);
+    expect(entry.id).toBe(SEVENTH_CHUNK_ID);
+    expect(entry.file).toBe(SEVENTH_CHUNK_FILE);
   });
 
   it("records sizeBytes", () => {
-    const entry = buildChunkEntry(1, 123);
-    expect(entry.sizeBytes).toBe(123);
+    const entry = buildChunkEntry(1, ONE_HUNDRED_TWENTY_THREE);
+    expect(entry.sizeBytes).toBe(ONE_HUNDRED_TWENTY_THREE);
   });
 
   it("has ISO createdAt", () => {
@@ -592,7 +641,7 @@ describe("buildChunkEntry", () => {
   });
 
   it("throws on chunkNum 1000", () => {
-    expect(() => buildChunkEntry(1000, 1)).toThrow("chunkNum must be an integer from 1 to 999");
+    expect(() => buildChunkEntry(ONE_THOUSAND, 1)).toThrow(CHUNK_NUM_RANGE_MESSAGE);
   });
 
   it("throws on invalid sizeBytes", () => {
@@ -615,8 +664,8 @@ describe("appendToChunked - first write", () => {
     const { fsApi, metaPath } = runFirstWrite("alpha");
     const meta = JSON.parse(fsApi._files[metaPath]);
     expect(meta.chunks).toHaveLength(1);
-    expect(meta.chunks[0].id).toBe("001");
-    expect(meta.chunks[0].file).toBe("001.md");
+    expect(meta.chunks[0].id).toBe(FIRST_CHUNK_ID);
+    expect(meta.chunks[0].file).toBe(FIRST_CHUNK_FILE);
   });
 
   it("creates index.md", () => {
@@ -628,7 +677,7 @@ describe("appendToChunked - first write", () => {
     const { fsApi, firstChunkPath, metaPath } = runFirstWrite("alpha");
     const chunkText = fsApi._files[firstChunkPath];
     const meta = JSON.parse(fsApi._files[metaPath]);
-    expect(meta.chunks[0].sizeBytes).toBe(Buffer.byteLength(chunkText, "utf-8"));
+    expect(meta.chunks[0].sizeBytes).toBe(Buffer.byteLength(chunkText, UTF8_ENCODING));
   });
 });
 
@@ -644,7 +693,9 @@ describe("appendToChunked - second write same chunk", () => {
   it("updates meta sizeBytes", () => {
     const { fsApi, firstChunkPath, metaPath } = runSecondWriteWithoutRotation();
     const meta = JSON.parse(fsApi._files[metaPath]);
-    expect(meta.chunks[0].sizeBytes).toBe(Buffer.byteLength(fsApi._files[firstChunkPath], "utf-8"));
+    expect(meta.chunks[0].sizeBytes).toBe(
+      Buffer.byteLength(fsApi._files[firstChunkPath], UTF8_ENCODING),
+    );
   });
 
   it("does not create 002.md", () => {
@@ -662,19 +713,19 @@ describe("appendToChunked - second write same chunk", () => {
 describe("appendToChunked - rotation triggered", () => {
   it("creates 002.md with chunk header", () => {
     const { fsApi, secondChunkPath, today, secondContent } = runRotationWrite();
-    expect(fsApi._files[secondChunkPath]).toBe(buildChunkHeaderMock(today, 2) + secondContent);
+    expect(fsApi._files[secondChunkPath]).toBe(buildChunkHeaderMock(today, TWO) + secondContent);
   });
 
   it("meta has two chunk entries", () => {
     const { fsApi, metaPath } = runRotationWrite();
     const meta = JSON.parse(fsApi._files[metaPath]);
-    expect(meta.chunks).toHaveLength(2);
-    expect(meta.chunks[1].id).toBe("002");
+    expect(meta.chunks).toHaveLength(TWO);
+    expect(meta.chunks[1].id).toBe(SECOND_CHUNK_ID);
   });
 
   it("index.md updated with both chunks", () => {
     const { fsApi, indexPath, today } = runRotationWrite();
-    expect(fsApi._files[indexPath]).toBe(buildChunkIndexContentMock(today, 2));
+    expect(fsApi._files[indexPath]).toBe(buildChunkIndexContentMock(today, TWO));
   });
 
   it("throws if next chunk file already exists", () => {
@@ -682,13 +733,13 @@ describe("appendToChunked - rotation triggered", () => {
     const fsApi = makeFsApi({});
 
     appendToChunked(paths.vaultPath, paths.subfolder, paths.today, "x", {
-      capBytes: 512000,
+      capBytes: DEFAULT_DAILY_CHUNK_CAP_BYTES,
       fsApi,
     });
 
     const firstMeta = JSON.parse(fsApi._files[paths.metaPath]);
     const capBytes = firstMeta.chunks[0].sizeBytes;
-    fsApi.writeFileSync(paths.secondChunkPath, "pre-existing", "utf-8");
+    fsApi.writeFileSync(paths.secondChunkPath, "pre-existing", UTF8_ENCODING);
 
     expect(() =>
       appendToChunked(paths.vaultPath, paths.subfolder, paths.today, "y", { capBytes, fsApi }),
@@ -757,11 +808,14 @@ describe("appendToChunked - corruption guards", () => {
     const paths = makeChunkPaths();
     const fsApi = makeFsApi({
       [paths.folderPath]: null,
-      [paths.metaPath]: JSON.stringify({ chunks: [makeChunk(1, 10)] }),
+      [paths.metaPath]: JSON.stringify({ chunks: [makeChunk(1, TEN)] }),
     });
 
     expect(() =>
-      appendToChunked(paths.vaultPath, paths.subfolder, paths.today, "x", { capBytes: 999, fsApi }),
+      appendToChunked(paths.vaultPath, paths.subfolder, paths.today, "x", {
+        capBytes: MAX_DAILY_CHUNK_COUNT,
+        fsApi,
+      }),
     ).toThrow(`current chunk file is missing: ${paths.firstChunkPath}`);
   });
 
@@ -769,12 +823,15 @@ describe("appendToChunked - corruption guards", () => {
     const paths = makeChunkPaths();
     const fsApi = makeFsApi({
       [paths.folderPath]: null,
-      [paths.metaPath]: JSON.stringify({ chunks: [makeChunk(1, 10)] }),
+      [paths.metaPath]: JSON.stringify({ chunks: [makeChunk(1, TEN)] }),
       [paths.firstChunkPath]: null,
     });
 
     expect(() =>
-      appendToChunked(paths.vaultPath, paths.subfolder, paths.today, "x", { capBytes: 999, fsApi }),
+      appendToChunked(paths.vaultPath, paths.subfolder, paths.today, "x", {
+        capBytes: MAX_DAILY_CHUNK_COUNT,
+        fsApi,
+      }),
     ).toThrow(`current chunk path is not a file: ${paths.firstChunkPath}`);
   });
 });
@@ -782,42 +839,44 @@ describe("appendToChunked - corruption guards", () => {
 describe("appendToChunked - validation", () => {
   it("throws on empty vaultPath", () => {
     const fsApi = makeFsApi({});
-    expect(() => appendToChunked("", "ai-knowledge", "2026-04-30", "x", { fsApi })).toThrow(
+    expect(() => appendToChunked("", DEFAULT_SUBFOLDER, TEST_DEFAULT_DATE, "x", { fsApi })).toThrow(
       "vaultPath must be a non-empty string",
     );
   });
 
   it("throws on empty subfolder", () => {
     const fsApi = makeFsApi({});
-    expect(() => appendToChunked("vault", "", "2026-04-30", "x", { fsApi })).toThrow(
+    expect(() => appendToChunked("vault", "", TEST_DEFAULT_DATE, "x", { fsApi })).toThrow(
       "subfolder must be a non-empty string",
     );
   });
 
   it("throws on empty today", () => {
     const fsApi = makeFsApi({});
-    expect(() => appendToChunked("vault", "ai-knowledge", "", "x", { fsApi })).toThrow(
+    expect(() => appendToChunked("vault", DEFAULT_SUBFOLDER, "", "x", { fsApi })).toThrow(
       "today must be a non-empty string",
     );
   });
 
   it("throws on non-string content", () => {
     const fsApi = makeFsApi({});
-    expect(() => appendToChunked("vault", "ai-knowledge", "2026-04-30", 123, { fsApi })).toThrow(
-      "content must be a string",
-    );
+    expect(() =>
+      appendToChunked("vault", DEFAULT_SUBFOLDER, TEST_DEFAULT_DATE, ONE_HUNDRED_TWENTY_THREE, {
+        fsApi,
+      }),
+    ).toThrow("content must be a string");
   });
 
   it("throws on invalid capBytes", () => {
     const fsApi = makeFsApi({});
     expect(() =>
-      appendToChunked("vault", "ai-knowledge", "2026-04-30", "x", { capBytes: 0, fsApi }),
+      appendToChunked("vault", DEFAULT_SUBFOLDER, TEST_DEFAULT_DATE, "x", { capBytes: 0, fsApi }),
     ).toThrow("capBytes must be a positive integer");
   });
 
   it("throws when fsApi does not provide required methods", () => {
     expect(() =>
-      appendToChunked("vault", "ai-knowledge", "2026-04-30", "x", { fsApi: {} }),
+      appendToChunked("vault", DEFAULT_SUBFOLDER, TEST_DEFAULT_DATE, "x", { fsApi: {} }),
     ).toThrow("fsApi must provide required sync methods");
   });
 
@@ -847,7 +906,7 @@ describe("appendToChunked - validation", () => {
     ];
 
     try {
-      appendToChunked(paths.vaultPath, paths.subfolder, paths.today, "x", 123);
+      appendToChunked(paths.vaultPath, paths.subfolder, paths.today, "x", ONE_HUNDRED_TWENTY_THREE);
       expect(delegatedFsApi._files[paths.firstChunkPath]).toBe(
         `${buildChunkHeaderMock(paths.today, 1)}x`,
       );

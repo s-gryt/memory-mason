@@ -2,10 +2,17 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
+const { UTF8_ENCODING } = require("../lib/constants");
+const { VAULT_META_DIR_NAME, VAULT_STATE_FILE_NAME } = require("../lib/vault-paths");
+const {
+  TEST_DEFAULT_VAULT_PATH,
+  TEST_DEFAULT_SUBFOLDER: DEFAULT_SUBFOLDER,
+} = require("./helpers/test-constants");
 const { createTempVaultFixture } = require("./helpers/fs-mock");
 const { defaultState, resolveStatePath, loadState, saveState } = require("../lib/state");
 
 const { createTempVaultPath, cleanupTempVaultPaths } = createTempVaultFixture("state-test-");
+const JSON_INDENT_SPACES = 2;
 
 afterEach(() => {
   cleanupTempVaultPaths();
@@ -32,14 +39,14 @@ describe("defaultState", () => {
 describe("loadState", () => {
   it("returns default state when file does not exist", () => {
     const vaultPath = createTempVaultPath();
-    const subfolder = "ai-knowledge";
+    const subfolder = DEFAULT_SUBFOLDER;
 
     expect(loadState(vaultPath, subfolder)).toEqual(defaultState());
   });
 
   it("returns parsed state when file contains valid JSON", () => {
     const vaultPath = createTempVaultPath();
-    const subfolder = "ai-knowledge";
+    const subfolder = DEFAULT_SUBFOLDER;
     const statePath = resolveStatePath(vaultPath, subfolder);
     const expected = {
       ingested: {
@@ -53,36 +60,36 @@ describe("loadState", () => {
     };
 
     fs.mkdirSync(path.dirname(statePath), { recursive: true });
-    fs.writeFileSync(statePath, JSON.stringify(expected, null, 2), "utf-8");
+    fs.writeFileSync(statePath, JSON.stringify(expected, null, JSON_INDENT_SPACES), UTF8_ENCODING);
 
     expect(loadState(vaultPath, subfolder)).toEqual(expected);
   });
 
   it("returns default state when file contains invalid JSON", () => {
     const vaultPath = createTempVaultPath();
-    const subfolder = "ai-knowledge";
+    const subfolder = DEFAULT_SUBFOLDER;
     const statePath = resolveStatePath(vaultPath, subfolder);
 
     fs.mkdirSync(path.dirname(statePath), { recursive: true });
-    fs.writeFileSync(statePath, "{invalid-json", "utf-8");
+    fs.writeFileSync(statePath, "{invalid-json", UTF8_ENCODING);
 
     expect(loadState(vaultPath, subfolder)).toEqual(defaultState());
   });
 
   it("returns default state when state JSON is an array", () => {
     const vaultPath = createTempVaultPath();
-    const subfolder = "ai-knowledge";
+    const subfolder = DEFAULT_SUBFOLDER;
     const statePath = resolveStatePath(vaultPath, subfolder);
 
     fs.mkdirSync(path.dirname(statePath), { recursive: true });
-    fs.writeFileSync(statePath, "[]", "utf-8");
+    fs.writeFileSync(statePath, "[]", UTF8_ENCODING);
 
     expect(loadState(vaultPath, subfolder)).toEqual(defaultState());
   });
 
   it("normalizes invalid ingested value to empty object", () => {
     const vaultPath = createTempVaultPath();
-    const subfolder = "ai-knowledge";
+    const subfolder = DEFAULT_SUBFOLDER;
     const statePath = resolveStatePath(vaultPath, subfolder);
 
     fs.mkdirSync(path.dirname(statePath), { recursive: true });
@@ -93,7 +100,7 @@ describe("loadState", () => {
         last_compile: "2026-04-26T14:30:00.000Z",
         last_lint: null,
       }),
-      "utf-8",
+      UTF8_ENCODING,
     );
 
     expect(loadState(vaultPath, subfolder)).toEqual({
@@ -105,12 +112,12 @@ describe("loadState", () => {
 
   it("rethrows non-SyntaxError parsing failures", () => {
     const vaultPath = createTempVaultPath();
-    const subfolder = "ai-knowledge";
+    const subfolder = DEFAULT_SUBFOLDER;
     const statePath = resolveStatePath(vaultPath, subfolder);
     const originalParse = JSON.parse;
 
     fs.mkdirSync(path.dirname(statePath), { recursive: true });
-    fs.writeFileSync(statePath, '{"ingested":{}}', "utf-8");
+    fs.writeFileSync(statePath, '{"ingested":{}}', UTF8_ENCODING);
     JSON.parse = () => {
       throw new TypeError("state parse failed");
     };
@@ -126,7 +133,7 @@ describe("loadState", () => {
 describe("saveState", () => {
   it("creates state.json at correct path with formatted JSON", () => {
     const vaultPath = createTempVaultPath();
-    const subfolder = "ai-knowledge";
+    const subfolder = DEFAULT_SUBFOLDER;
     const statePath = resolveStatePath(vaultPath, subfolder);
     const state = {
       ingested: {
@@ -142,7 +149,9 @@ describe("saveState", () => {
     saveState(vaultPath, subfolder, state);
 
     expect(fs.existsSync(statePath)).toBe(true);
-    expect(fs.readFileSync(statePath, "utf-8")).toBe(JSON.stringify(state, null, 2));
+    expect(fs.readFileSync(statePath, UTF8_ENCODING)).toBe(
+      JSON.stringify(state, null, JSON_INDENT_SPACES),
+    );
   });
 
   it("creates intermediate directories when they do not exist", () => {
@@ -160,14 +169,21 @@ describe("saveState", () => {
   });
 
   it("throws when state is not an object", () => {
-    expect(() => saveState("/vault", "ai-knowledge", null)).toThrow("state must be an object");
+    expect(() => saveState(TEST_DEFAULT_VAULT_PATH, DEFAULT_SUBFOLDER, null)).toThrow(
+      "state must be an object",
+    );
   });
 });
 
 describe("resolveStatePath", () => {
   it("returns correct state path using path.join", () => {
-    expect(resolveStatePath("/vault", "ai-knowledge")).toBe(
-      path.join("/vault", "ai-knowledge", "_meta", "state.json"),
+    expect(resolveStatePath(TEST_DEFAULT_VAULT_PATH, DEFAULT_SUBFOLDER)).toBe(
+      path.join(
+        TEST_DEFAULT_VAULT_PATH,
+        DEFAULT_SUBFOLDER,
+        VAULT_META_DIR_NAME,
+        VAULT_STATE_FILE_NAME,
+      ),
     );
   });
 });

@@ -3,6 +3,34 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const {
+  SESSION_START_RECENT_LOG_LINES,
+  HOT_CACHE_CONTEXT_MAX_CHARS,
+  INDEX_CONTEXT_MAX_CHARS,
+  UTF8_ENCODING,
+} = require("../lib/constants");
+const { ROOT_INDEX_FILE_NAME, DAILY_META_FILE_NAME } = require("../lib/vault-paths");
+const {
+  ENV_KEY_VAULT_PATH,
+  ENV_KEY_SUBFOLDER,
+  PROJECT_CONFIG_FILE_NAME,
+  DOTENV_FILE_NAME,
+  GLOBAL_MM_DIR_NAME,
+  GLOBAL_CONFIG_FILE_NAME,
+} = require("../lib/config-keys");
+const {
+  TEST_HOME_PREFIX,
+  TEST_VAULT_PREFIX,
+  TEST_CWD_PREFIX,
+  TEST_DEFAULT_DATE,
+  TEST_DEFAULT_VAULT_PATH,
+  TEST_DEFAULT_SUBFOLDER: DEFAULT_SUBFOLDER,
+  TEST_HOOK_ENTRY_SESSION_START: HOOK_ENTRY_SESSION_START,
+  TEST_KNOWLEDGE_BASE_INDEX_HEADING: KNOWLEDGE_BASE_INDEX_HEADING,
+  TEST_SESSION_CONTEXT_HEADING: SESSION_CONTEXT_HEADING,
+  TEST_PLACEHOLDER_NO_ARTICLES: PLACEHOLDER_NO_ARTICLES,
+  TEST_PLACEHOLDER_NO_RECENT_DAILY_LOG: PLACEHOLDER_NO_RECENT_DAILY_LOG,
+} = require("./helpers/test-constants");
+const {
   buildDailyFilePath,
   buildRootIndexPath,
   buildSessionContextPath,
@@ -18,6 +46,15 @@ const {
   runHookEntrypoint,
 } = require("./helpers/entrypoint-runtime");
 const hooksRoot = path.resolve(__dirname, "..");
+
+const TWO = 2;
+const ELEVEN = 11;
+const FORTY = 40;
+const HOT_CONTEXT_SENTINEL_LENGTH = HOT_CACHE_CONTEXT_MAX_CHARS + SESSION_START_RECENT_LOG_LINES;
+const ENTRYPOINT_FILE = "session-start.js";
+const FIRST_CHUNK_FILE = "001.md";
+const SECOND_CHUNK_FILE = "002.md";
+const THIRD_CHUNK_FILE = "003.md";
 
 const createFsApiMock = (nodes) => {
   const hasNode = (targetPath) => Object.hasOwn(nodes, targetPath);
@@ -57,7 +94,7 @@ const createFsApiMock = (nodes) => {
 
 const _buildTranscript = (turnCount, firstUserContent = "user turn") =>
   Array.from({ length: turnCount }, (_, index) => {
-    const isUser = index % 2 === 0;
+    const isUser = index % TWO === 0;
     const role = isUser ? "user" : "assistant";
     const content = isUser && index === 0 ? firstUserContent : `${role} turn ${index}`;
     return JSON.stringify({ message: { role, content } });
@@ -112,7 +149,7 @@ const _buildVsCodeTranscript = (turns) => {
       JSON.stringify({
         ...entry,
         id: `entry-${index}`,
-        timestamp: `2025-01-01T00:00:${String(index).padStart(2, "0")}.000Z`,
+        timestamp: `2025-01-01T00:00:${String(index).padStart(TWO, "0")}.000Z`,
         parentId: index === 0 ? null : `entry-${index - 1}`,
       }),
     )
@@ -122,7 +159,7 @@ const _buildVsCodeTranscript = (turns) => {
 const yesterday = () => {
   const d = new Date();
   d.setDate(d.getDate() - 1);
-  const pad = (n) => String(n).padStart(2, "0");
+  const pad = (n) => String(n).padStart(TWO, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 };
 
@@ -132,60 +169,60 @@ afterEach(() => {
 
 describe("entrypoint config readers", () => {
   it("reads .env text for session-start.js", () => {
-    const cwd = createTempDir("memory-mason-cwd-");
-    const envText = "MEMORY_MASON_VAULT_PATH=/vault/path\nMEMORY_MASON_SUBFOLDER=notes";
+    const cwd = createTempDir(TEST_CWD_PREFIX);
+    const envText = `${ENV_KEY_VAULT_PATH}=/vault/path\n${ENV_KEY_SUBFOLDER}=notes`;
 
-    writeText(path.join(cwd, ".env"), envText);
+    writeText(path.join(cwd, DOTENV_FILE_NAME), envText);
 
     expect(sessionStart.readDotEnvText(cwd)).toBe(envText);
-    expect(sessionStart.readDotEnvText(createTempDir("memory-mason-cwd-empty-"))).toBe("");
+    expect(sessionStart.readDotEnvText(createTempDir(`${TEST_CWD_PREFIX}empty-`))).toBe("");
   });
 
   it("reads global config text for session-start.js", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const configText = JSON.stringify({ vaultPath: "/vault", subfolder: "notes" });
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const configText = JSON.stringify({ vaultPath: TEST_DEFAULT_VAULT_PATH, subfolder: "notes" });
 
-    writeText(path.join(homeDir, ".memory-mason", "config.json"), configText);
+    writeText(path.join(homeDir, GLOBAL_MM_DIR_NAME, GLOBAL_CONFIG_FILE_NAME), configText);
 
     expect(sessionStart.readGlobalConfigText(homeDir)).toBe(configText);
-    expect(sessionStart.readGlobalConfigText(createTempDir("memory-mason-home-empty-"))).toBe("");
+    expect(sessionStart.readGlobalConfigText(createTempDir(`${TEST_HOME_PREFIX}empty-`))).toBe("");
   });
 
   it("reads global .env text for session-start.js", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const envText = "MEMORY_MASON_VAULT_PATH=~/vault\nMEMORY_MASON_SUBFOLDER=global-brain";
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const envText = `${ENV_KEY_VAULT_PATH}=~/vault\n${ENV_KEY_SUBFOLDER}=global-brain`;
 
-    writeText(path.join(homeDir, ".memory-mason", ".env"), envText);
+    writeText(path.join(homeDir, GLOBAL_MM_DIR_NAME, DOTENV_FILE_NAME), envText);
 
     expect(sessionStart.readGlobalDotEnvText(homeDir)).toBe(envText);
-    expect(sessionStart.readGlobalDotEnvText(createTempDir("memory-mason-home-empty-"))).toBe("");
+    expect(sessionStart.readGlobalDotEnvText(createTempDir(`${TEST_HOME_PREFIX}empty-`))).toBe("");
   });
 });
 
 describe("readDailyLogText", () => {
   it("throws when vaultPath is empty string", () => {
     const fsApi = createFsApiMock({});
-    expect(() => sessionStart.readDailyLogText("", "ai-knowledge", "2026-04-30", fsApi)).toThrow(
-      "vaultPath must be a non-empty string",
-    );
+    expect(() =>
+      sessionStart.readDailyLogText("", DEFAULT_SUBFOLDER, TEST_DEFAULT_DATE, fsApi),
+    ).toThrow("vaultPath must be a non-empty string");
   });
 
   it("throws when vaultPath is not a string", () => {
     const fsApi = createFsApiMock({});
-    expect(() => sessionStart.readDailyLogText(null, "ai-knowledge", "2026-04-30", fsApi)).toThrow(
-      "vaultPath must be a non-empty string",
-    );
+    expect(() =>
+      sessionStart.readDailyLogText(null, DEFAULT_SUBFOLDER, TEST_DEFAULT_DATE, fsApi),
+    ).toThrow("vaultPath must be a non-empty string");
   });
 
   it("reads last chunk when folder exists with chunks", () => {
-    const vaultPath = "/vault";
-    const subfolder = "ai-knowledge";
-    const dateIso = "2026-04-30";
+    const vaultPath = TEST_DEFAULT_VAULT_PATH;
+    const subfolder = DEFAULT_SUBFOLDER;
+    const dateIso = TEST_DEFAULT_DATE;
     const folderPath = buildDailyFolderPath(vaultPath, subfolder, dateIso);
-    const chunkPath = path.join(folderPath, "001.md");
+    const chunkPath = path.join(folderPath, FIRST_CHUNK_FILE);
 
     const fsApi = createFsApiMock({
-      [folderPath]: { kind: "dir", entries: ["001.md", "meta.json"] },
+      [folderPath]: { kind: "dir", entries: [FIRST_CHUNK_FILE, DAILY_META_FILE_NAME] },
       [chunkPath]: { kind: "file", content: "chunk one" },
     });
 
@@ -193,9 +230,9 @@ describe("readDailyLogText", () => {
   });
 
   it("reads flat file when flat exists, no folder", () => {
-    const vaultPath = "/vault";
-    const subfolder = "ai-knowledge";
-    const dateIso = "2026-04-30";
+    const vaultPath = TEST_DEFAULT_VAULT_PATH;
+    const subfolder = DEFAULT_SUBFOLDER;
+    const dateIso = TEST_DEFAULT_DATE;
     const flatPath = buildDailyFilePath(vaultPath, subfolder, dateIso);
 
     const fsApi = createFsApiMock({
@@ -209,20 +246,30 @@ describe("readDailyLogText", () => {
 
   it("returns empty string when neither exists", () => {
     const fsApi = createFsApiMock({});
-    expect(sessionStart.readDailyLogText("/vault", "ai-knowledge", "2026-04-30", fsApi)).toBe("");
+    expect(
+      sessionStart.readDailyLogText(
+        TEST_DEFAULT_VAULT_PATH,
+        DEFAULT_SUBFOLDER,
+        TEST_DEFAULT_DATE,
+        fsApi,
+      ),
+    ).toBe("");
   });
 
   it("reads highest numbered chunk when multiple exist", () => {
-    const vaultPath = "/vault";
-    const subfolder = "ai-knowledge";
-    const dateIso = "2026-04-30";
+    const vaultPath = TEST_DEFAULT_VAULT_PATH;
+    const subfolder = DEFAULT_SUBFOLDER;
+    const dateIso = TEST_DEFAULT_DATE;
     const folderPath = buildDailyFolderPath(vaultPath, subfolder, dateIso);
-    const chunk1Path = path.join(folderPath, "001.md");
-    const chunk2Path = path.join(folderPath, "002.md");
-    const chunk3Path = path.join(folderPath, "003.md");
+    const chunk1Path = path.join(folderPath, FIRST_CHUNK_FILE);
+    const chunk2Path = path.join(folderPath, SECOND_CHUNK_FILE);
+    const chunk3Path = path.join(folderPath, THIRD_CHUNK_FILE);
 
     const fsApi = createFsApiMock({
-      [folderPath]: { kind: "dir", entries: ["002.md", "meta.json", "003.md", "001.md"] },
+      [folderPath]: {
+        kind: "dir",
+        entries: [SECOND_CHUNK_FILE, DAILY_META_FILE_NAME, THIRD_CHUNK_FILE, FIRST_CHUNK_FILE],
+      },
       [chunk1Path]: { kind: "file", content: "chunk one" },
       [chunk2Path]: { kind: "file", content: "chunk two" },
       [chunk3Path]: { kind: "file", content: "chunk three latest" },
@@ -234,15 +281,15 @@ describe("readDailyLogText", () => {
   });
 
   it("prefers folder chunk over flat file when both exist", () => {
-    const vaultPath = "/vault";
-    const subfolder = "ai-knowledge";
-    const dateIso = "2026-04-30";
+    const vaultPath = TEST_DEFAULT_VAULT_PATH;
+    const subfolder = DEFAULT_SUBFOLDER;
+    const dateIso = TEST_DEFAULT_DATE;
     const folderPath = buildDailyFolderPath(vaultPath, subfolder, dateIso);
     const flatPath = buildDailyFilePath(vaultPath, subfolder, dateIso);
-    const chunkPath = path.join(folderPath, "001.md");
+    const chunkPath = path.join(folderPath, FIRST_CHUNK_FILE);
 
     const fsApi = createFsApiMock({
-      [folderPath]: { kind: "dir", entries: ["001.md"] },
+      [folderPath]: { kind: "dir", entries: [FIRST_CHUNK_FILE] },
       [chunkPath]: { kind: "file", content: "chunk data" },
       [flatPath]: { kind: "file", content: "flat data" },
     });
@@ -251,15 +298,15 @@ describe("readDailyLogText", () => {
   });
 
   it("returns empty string when folder exists with no chunk files", () => {
-    const vaultPath = "/vault";
-    const subfolder = "ai-knowledge";
-    const dateIso = "2026-04-30";
+    const vaultPath = TEST_DEFAULT_VAULT_PATH;
+    const subfolder = DEFAULT_SUBFOLDER;
+    const dateIso = TEST_DEFAULT_DATE;
     const folderPath = buildDailyFolderPath(vaultPath, subfolder, dateIso);
 
     const fsApi = createFsApiMock({
-      [folderPath]: { kind: "dir", entries: ["meta.json", "index.md"] },
-      [path.join(folderPath, "meta.json")]: { kind: "file", content: "{}" },
-      [path.join(folderPath, "index.md")]: { kind: "file", content: "# Index" },
+      [folderPath]: { kind: "dir", entries: [DAILY_META_FILE_NAME, ROOT_INDEX_FILE_NAME] },
+      [path.join(folderPath, DAILY_META_FILE_NAME)]: { kind: "file", content: "{}" },
+      [path.join(folderPath, ROOT_INDEX_FILE_NAME)]: { kind: "file", content: "# Index" },
     });
 
     expect(sessionStart.readDailyLogText(vaultPath, subfolder, dateIso, fsApi)).toBe("");
@@ -268,22 +315,26 @@ describe("readDailyLogText", () => {
 
 describe("readRecentDailyLog - chunked structure", () => {
   it("returns last 30 lines from latest chunk", () => {
-    const vaultPath = "/vault";
-    const subfolder = "ai-knowledge";
+    const vaultPath = TEST_DEFAULT_VAULT_PATH;
+    const subfolder = DEFAULT_SUBFOLDER;
     const dateIso = today();
     const folderPath = buildDailyFolderPath(vaultPath, subfolder, dateIso);
-    const chunk1Path = path.join(folderPath, "001.md");
-    const chunk2Path = path.join(folderPath, "002.md");
+    const chunk1Path = path.join(folderPath, FIRST_CHUNK_FILE);
+    const chunk2Path = path.join(folderPath, SECOND_CHUNK_FILE);
     const chunk2Content = Array.from(
-      { length: 40 },
+      { length: FORTY },
       (_, index) => `line-${String(index + 1)}`,
     ).join("\n");
-    const expected = Array.from({ length: 30 }, (_, index) => `line-${String(index + 11)}`).join(
-      "\n",
-    );
+    const expected = Array.from(
+      { length: SESSION_START_RECENT_LOG_LINES },
+      (_, index) => `line-${String(index + ELEVEN)}`,
+    ).join("\n");
 
     const fsApi = createFsApiMock({
-      [folderPath]: { kind: "dir", entries: ["001.md", "002.md", "meta.json"] },
+      [folderPath]: {
+        kind: "dir",
+        entries: [FIRST_CHUNK_FILE, SECOND_CHUNK_FILE, DAILY_META_FILE_NAME],
+      },
       [chunk1Path]: { kind: "file", content: "line-old" },
       [chunk2Path]: { kind: "file", content: chunk2Content },
     });
@@ -294,17 +345,17 @@ describe("readRecentDailyLog - chunked structure", () => {
 
 describe("session-start.js", () => {
   it("reads memory-mason.json and returns KB context with today log", () => {
-    const cwd = createTempDir("memory-mason-cwd-");
-    const vaultPath = createTempDir("memory-mason-vault-");
-    const configPath = path.join(cwd, "memory-mason.json");
-    const indexPath = buildRootIndexPath(vaultPath, "ai-knowledge");
-    const dailyPath = buildDailyFilePath(vaultPath, "ai-knowledge", today());
+    const cwd = createTempDir(TEST_CWD_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const configPath = path.join(cwd, PROJECT_CONFIG_FILE_NAME);
+    const indexPath = buildRootIndexPath(vaultPath, DEFAULT_SUBFOLDER);
+    const dailyPath = buildDailyFilePath(vaultPath, DEFAULT_SUBFOLDER, today());
 
-    writeText(configPath, JSON.stringify({ vaultPath, subfolder: "ai-knowledge" }));
+    writeText(configPath, JSON.stringify({ vaultPath, subfolder: DEFAULT_SUBFOLDER }));
     writeText(indexPath, "# Index\n\n[[Topic]]");
     writeText(dailyPath, "# Daily Log\n\nrecent line");
 
-    const result = runHookEntrypoint("session-start.js", {
+    const result = runHookEntrypoint(ENTRYPOINT_FILE, {
       payload: { cwd },
       cwd,
       env: buildEnv(cwd),
@@ -313,21 +364,21 @@ describe("session-start.js", () => {
 
     expect(result.status).toBe(0);
     expect(result.stderr).toBe("");
-    expect(parsed.hookSpecificOutput.hookEventName).toBe("SessionStart");
+    expect(parsed.hookSpecificOutput.hookEventName).toBe(HOOK_ENTRY_SESSION_START);
     expect(parsed.hookSpecificOutput.additionalContext).toContain("[[Topic]]");
     expect(parsed.hookSpecificOutput.additionalContext).toContain("recent line");
   });
 
   it("falls back to yesterday log when today log missing", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
-    const dailyPath = buildDailyFilePath(vaultPath, "ai-knowledge", yesterday());
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const dailyPath = buildDailyFilePath(vaultPath, DEFAULT_SUBFOLDER, yesterday());
 
     writeText(dailyPath, "# Daily Log\n\nyesterday line");
 
-    const result = runHookEntrypoint("session-start.js", {
+    const result = runHookEntrypoint(ENTRYPOINT_FILE, {
       payload: { cwd: hooksRoot },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
     const parsed = JSON.parse(result.stdout);
 
@@ -336,35 +387,33 @@ describe("session-start.js", () => {
   });
 
   it("uses empty placeholders when KB files are missing", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
 
-    const result = runHookEntrypoint("session-start.js", {
+    const result = runHookEntrypoint(ENTRYPOINT_FILE, {
       payload: { cwd: hooksRoot },
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
     const parsed = JSON.parse(result.stdout);
 
     expect(result.status).toBe(0);
-    expect(parsed.hookSpecificOutput.additionalContext).toContain(
-      "(empty - no articles compiled yet)",
-    );
-    expect(parsed.hookSpecificOutput.additionalContext).toContain("(no recent daily log)");
+    expect(parsed.hookSpecificOutput.additionalContext).toContain(PLACEHOLDER_NO_ARTICLES);
+    expect(parsed.hookSpecificOutput.additionalContext).toContain(PLACEHOLDER_NO_RECENT_DAILY_LOG);
   });
 
   it("uses session context when present and non-empty, applies 5000 char limit", () => {
-    const cwd = createTempDir("memory-mason-cwd-");
-    const vaultPath = createTempDir("memory-mason-vault-");
-    const subfolder = "ai-knowledge";
-    const configPath = path.join(cwd, "memory-mason.json");
+    const cwd = createTempDir(TEST_CWD_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const subfolder = DEFAULT_SUBFOLDER;
+    const configPath = path.join(cwd, PROJECT_CONFIG_FILE_NAME);
     const sessionContextPath = buildSessionContextPath(vaultPath, subfolder);
     const indexPath = buildRootIndexPath(vaultPath, subfolder);
 
     writeText(configPath, JSON.stringify({ vaultPath, subfolder }));
-    writeText(sessionContextPath, `HOT_SENTINEL ${"x".repeat(5100)}`);
+    writeText(sessionContextPath, `HOT_SENTINEL ${"x".repeat(HOT_CONTEXT_SENTINEL_LENGTH)}`);
     writeText(indexPath, "INDEX_SENTINEL");
 
-    const result = runHookEntrypoint("session-start.js", {
+    const result = runHookEntrypoint(ENTRYPOINT_FILE, {
       payload: { cwd },
       cwd,
       env: buildEnv(cwd),
@@ -374,24 +423,26 @@ describe("session-start.js", () => {
     expect(result.status).toBe(0);
     expect(parsed.hookSpecificOutput.additionalContext).toContain("HOT_SENTINEL");
     expect(parsed.hookSpecificOutput.additionalContext).not.toContain("INDEX_SENTINEL");
-    expect(parsed.hookSpecificOutput.additionalContext).toContain("## Session Context");
-    expect(parsed.hookSpecificOutput.additionalContext).not.toContain("## Knowledge Base Index");
+    expect(parsed.hookSpecificOutput.additionalContext).toContain(`## ${SESSION_CONTEXT_HEADING}`);
+    expect(parsed.hookSpecificOutput.additionalContext).not.toContain(
+      `## ${KNOWLEDGE_BASE_INDEX_HEADING}`,
+    );
     expect(parsed.hookSpecificOutput.additionalContext).toContain("...(truncated)");
   });
 
   it("falls back to index.md when session context is empty", () => {
-    const cwd = createTempDir("memory-mason-cwd-");
-    const vaultPath = createTempDir("memory-mason-vault-");
-    const subfolder = "ai-knowledge";
-    const configPath = path.join(cwd, "memory-mason.json");
+    const cwd = createTempDir(TEST_CWD_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const subfolder = DEFAULT_SUBFOLDER;
+    const configPath = path.join(cwd, PROJECT_CONFIG_FILE_NAME);
     const sessionContextPath = buildSessionContextPath(vaultPath, subfolder);
     const indexPath = buildRootIndexPath(vaultPath, subfolder);
 
     writeText(configPath, JSON.stringify({ vaultPath, subfolder }));
     writeText(sessionContextPath, "");
-    writeText(indexPath, `INDEX_SENTINEL ${"x".repeat(200)}`);
+    writeText(indexPath, `INDEX_SENTINEL ${"x".repeat(INDEX_CONTEXT_MAX_CHARS)}`);
 
-    const result = runHookEntrypoint("session-start.js", {
+    const result = runHookEntrypoint(ENTRYPOINT_FILE, {
       payload: { cwd },
       cwd,
       env: buildEnv(cwd),
@@ -404,16 +455,16 @@ describe("session-start.js", () => {
   });
 
   it("falls back to index.md when session context is missing", () => {
-    const cwd = createTempDir("memory-mason-cwd-");
-    const vaultPath = createTempDir("memory-mason-vault-");
-    const subfolder = "ai-knowledge";
-    const configPath = path.join(cwd, "memory-mason.json");
+    const cwd = createTempDir(TEST_CWD_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const subfolder = DEFAULT_SUBFOLDER;
+    const configPath = path.join(cwd, PROJECT_CONFIG_FILE_NAME);
     const indexPath = buildRootIndexPath(vaultPath, subfolder);
 
     writeText(configPath, JSON.stringify({ vaultPath, subfolder }));
-    writeText(indexPath, `INDEX_SENTINEL ${"x".repeat(200)}`);
+    writeText(indexPath, `INDEX_SENTINEL ${"x".repeat(INDEX_CONTEXT_MAX_CHARS)}`);
 
-    const result = runHookEntrypoint("session-start.js", {
+    const result = runHookEntrypoint(ENTRYPOINT_FILE, {
       payload: { cwd },
       cwd,
       env: buildEnv(cwd),
@@ -425,18 +476,18 @@ describe("session-start.js", () => {
   });
 
   it("includes both session context and recent daily log when both present", () => {
-    const cwd = createTempDir("memory-mason-cwd-");
-    const vaultPath = createTempDir("memory-mason-vault-");
-    const subfolder = "ai-knowledge";
-    const configPath = path.join(cwd, "memory-mason.json");
+    const cwd = createTempDir(TEST_CWD_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const subfolder = DEFAULT_SUBFOLDER;
+    const configPath = path.join(cwd, PROJECT_CONFIG_FILE_NAME);
     const sessionContextPath = buildSessionContextPath(vaultPath, subfolder);
     const dailyPath = buildDailyFilePath(vaultPath, subfolder, today());
 
     writeText(configPath, JSON.stringify({ vaultPath, subfolder }));
-    writeText(sessionContextPath, `HOT_SENTINEL ${"y".repeat(40)}`);
+    writeText(sessionContextPath, `HOT_SENTINEL ${"y".repeat(FORTY)}`);
     writeText(dailyPath, "# Daily Log\n\nDAILY_SENTINEL");
 
-    const result = runHookEntrypoint("session-start.js", {
+    const result = runHookEntrypoint(ENTRYPOINT_FILE, {
       payload: { cwd },
       cwd,
       env: buildEnv(cwd),
@@ -449,18 +500,18 @@ describe("session-start.js", () => {
   });
 
   it("uses global config fallback when project config and env var are absent", () => {
-    const cwd = createTempDir("memory-mason-cwd-");
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
+    const cwd = createTempDir(TEST_CWD_PREFIX);
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
     const dailyPath = buildDailyFilePath(vaultPath, "global-brain", today());
 
     writeText(
-      path.join(homeDir, ".memory-mason", "config.json"),
+      path.join(homeDir, GLOBAL_MM_DIR_NAME, GLOBAL_CONFIG_FILE_NAME),
       JSON.stringify({ vaultPath, subfolder: "global-brain" }),
     );
     writeText(dailyPath, "# Daily Log\n\nfrom global config");
 
-    const result = runHookEntrypoint("session-start.js", {
+    const result = runHookEntrypoint(ENTRYPOINT_FILE, {
       payload: { cwd },
       cwd,
       env: buildEnv(homeDir),
@@ -472,18 +523,18 @@ describe("session-start.js", () => {
   });
 
   it("uses .env fallback when project config and env var are absent", () => {
-    const cwd = createTempDir("memory-mason-cwd-");
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
+    const cwd = createTempDir(TEST_CWD_PREFIX);
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
     const dailyPath = buildDailyFilePath(vaultPath, "dotenv-brain", today());
 
     writeText(
-      path.join(cwd, ".env"),
-      `MEMORY_MASON_VAULT_PATH=${vaultPath}\nMEMORY_MASON_SUBFOLDER=dotenv-brain`,
+      path.join(cwd, DOTENV_FILE_NAME),
+      `${ENV_KEY_VAULT_PATH}=${vaultPath}\n${ENV_KEY_SUBFOLDER}=dotenv-brain`,
     );
     writeText(dailyPath, "# Daily Log\n\nfrom dotenv config");
 
-    const result = runHookEntrypoint("session-start.js", {
+    const result = runHookEntrypoint(ENTRYPOINT_FILE, {
       payload: { cwd },
       cwd,
       env: buildEnv(homeDir),
@@ -495,12 +546,12 @@ describe("session-start.js", () => {
   });
 
   it("reports invalid stdin to stderr", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
 
-    const result = runHookEntrypoint("session-start.js", {
+    const result = runHookEntrypoint(ENTRYPOINT_FILE, {
       stdinText: "{not-json",
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
     expect(result.status).toBe(0);
@@ -514,12 +565,12 @@ describe("run - sync flag", () => {
   });
 
   it("returns status 0 with empty additionalContext when sync is false", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
 
     vi.spyOn(sessionStart, "resolveRuntimeConfig").mockReturnValue({
       vaultPath,
-      subfolder: "ai-knowledge",
+      subfolder: DEFAULT_SUBFOLDER,
       sync: false,
     });
 
@@ -528,8 +579,8 @@ describe("run - sync flag", () => {
     const readdirSyncSpy = vi.spyOn(fs, "readdirSync");
     const readFileSyncSpy = vi.spyOn(fs, "readFileSync");
 
-    const result = runHookEntrypoint("session-start.js", {
-      payload: { cwd: hooksRoot, hookEventName: "SessionStart" },
+    const result = runHookEntrypoint(ENTRYPOINT_FILE, {
+      payload: { cwd: hooksRoot, hookEventName: HOOK_ENTRY_SESSION_START },
       env: buildEnv(homeDir),
     });
     const parsed = JSON.parse(result.stdout);
@@ -548,9 +599,9 @@ describe("run - sync flag", () => {
   });
 
   it("proceeds normally when sync is true", () => {
-    const homeDir = createTempDir("memory-mason-home-");
-    const vaultPath = createTempDir("memory-mason-vault-");
-    const subfolder = "ai-knowledge";
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const subfolder = DEFAULT_SUBFOLDER;
     const indexPath = buildRootIndexPath(vaultPath, subfolder);
     const dailyPath = buildDailyFilePath(vaultPath, subfolder, today());
 
@@ -565,8 +616,8 @@ describe("run - sync flag", () => {
 
     const readFileSyncSpy = vi.spyOn(fs, "readFileSync");
 
-    const result = runHookEntrypoint("session-start.js", {
-      payload: { cwd: hooksRoot, hookEventName: "SessionStart" },
+    const result = runHookEntrypoint(ENTRYPOINT_FILE, {
+      payload: { cwd: hooksRoot, hookEventName: HOOK_ENTRY_SESSION_START },
       env: buildEnv(homeDir),
     });
     const parsed = JSON.parse(result.stdout);
@@ -584,8 +635,8 @@ describe("run - sync flag", () => {
 
 describe("session-start.js readStdin", () => {
   it("returns valid JSON string from mocked fd 0", () => {
-    const payload = JSON.stringify({ cwd: "/tmp", hookEventName: "SessionStart" });
-    const payloadBuffer = Buffer.from(payload, "utf-8");
+    const payload = JSON.stringify({ cwd: "/tmp", hookEventName: HOOK_ENTRY_SESSION_START });
+    const payloadBuffer = Buffer.from(payload, UTF8_ENCODING);
     let callCount = 0;
     const mockFs = {
       readSync(_fd, chunk) {
@@ -629,12 +680,12 @@ describe("session-start.js readStdin", () => {
 
 describe("session-start.js main", () => {
   it("writes stdout and calls exit with status 0 on success", () => {
-    const homeDir = createTempDir("mm-home-");
-    const vaultPath = createTempDir("mm-vault-");
-    const cwd = createTempDir("mm-cwd-");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const cwd = createTempDir(TEST_CWD_PREFIX);
     writeText(
-      path.join(cwd, "memory-mason.json"),
-      JSON.stringify({ vaultPath, subfolder: "ai-knowledge" }),
+      path.join(cwd, PROJECT_CONFIG_FILE_NAME),
+      JSON.stringify({ vaultPath, subfolder: DEFAULT_SUBFOLDER }),
     );
     const payload = JSON.stringify({ cwd });
     const buf = Buffer.from(payload);
@@ -670,7 +721,7 @@ describe("session-start.js main", () => {
   });
 
   it("writes stderr when config is missing and still exits 0", () => {
-    const homeDir = createTempDir("mm-home-");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
     const payload = JSON.stringify({ cwd: createTempDir("mm-nocfg-") });
     const buf = Buffer.from(payload);
     let rc = 0;
@@ -695,19 +746,19 @@ describe("session-start.js main", () => {
           return 0;
         },
       },
-      cwd: createTempDir("mm-fb-"),
+      cwd: createTempDir(`${TEST_CWD_PREFIX}fb-`),
       env: buildEnv(homeDir),
       homedir: homeDir,
     });
     expect(exitCode).toBe(0);
     expect(errors.join("")).toContain(
-      "Memory Mason config not found. Checked project .env, project memory-mason.json, ~/.memory-mason/.env, and ~/.memory-mason/config.json.",
+      `Memory Mason config not found. Checked project ${DOTENV_FILE_NAME}, project ${PROJECT_CONFIG_FILE_NAME}, ~/${GLOBAL_MM_DIR_NAME}/${DOTENV_FILE_NAME}, and ~/${GLOBAL_MM_DIR_NAME}/${GLOBAL_CONFIG_FILE_NAME}.`,
     );
   });
 
   it("uses io fallback functions when stdout/stderr not provided", () => {
-    const homeDir = createTempDir("mm-home-");
-    const vaultPath = createTempDir("mm-vault-");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
     const payload = JSON.stringify({ cwd: homeDir });
     const buf = Buffer.from(payload);
     let rc = 0;
@@ -729,7 +780,7 @@ describe("session-start.js main", () => {
         },
       },
       cwd: homeDir,
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       homedir: homeDir,
     });
     expect(result.status).toBe(0);
@@ -739,7 +790,7 @@ describe("session-start.js main", () => {
 
 describe("session-start.js runtime fallback branches", () => {
   it("falls back to process defaults when runtime properties are invalid", () => {
-    const result = sessionStart.run(JSON.stringify({ cwd: createTempDir("mm-cwd-") }), {
+    const result = sessionStart.run(JSON.stringify({ cwd: createTempDir(TEST_CWD_PREFIX) }), {
       env: null,
       cwd: 123,
       homedir: 42,
@@ -748,11 +799,11 @@ describe("session-start.js runtime fallback branches", () => {
   });
 
   it("uses fallbackCwd when input has no cwd", () => {
-    const homeDir = createTempDir("mm-home-");
-    const vaultPath = createTempDir("mm-vault-");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
     const result = sessionStart.run(JSON.stringify({}), {
-      env: buildEnv(homeDir, { MEMORY_MASON_VAULT_PATH: vaultPath }),
-      cwd: createTempDir("mm-fb-cwd-"),
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
+      cwd: createTempDir(`${TEST_CWD_PREFIX}fb-cwd-`),
       homedir: homeDir,
     });
     expect(result.status).toBe(0);
