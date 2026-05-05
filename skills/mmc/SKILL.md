@@ -141,11 +141,31 @@ Concept update rules:
 - Recompute `status` and `confidence` after merging sources.
 - Preserve the article's established scope. Do not rewrite it into a different concept just because the new source uses slightly different words.
 
+Contradiction detection during updates:
+- Before merging new claims into an existing concept, compare the new raw evidence against the existing `## Key Points`.
+- If the new evidence directly contradicts an existing key point (a decision reversed, a tool replaced, an approach abandoned), do not silently overwrite the original point.
+- Add a callout below the contradicted key point:
+
+> \[!contradiction\] Session \_raw/2026-05-05/001.md states Y, but existing evidence from \_raw/2026-05-01/002.md says X.
+
+- Keep both the original key point and the new one so the user can resolve the conflict.
+- Concepts with unresolved `[!contradiction]` callouts must not be promoted to `evergreen`.
+- If the contradiction is clearly a supersession (newer decision explicitly replaces older), update the key point and add a note callout instead: `> [!note] Superseded: previously X (see _raw/2026-05-01/002.md), now Y.`
+
+Gap flagging for thin concepts:
+- When creating a new concept page where `confidence: low` and the `## Key Points` section has fewer than 3 items, append a callout at the end of the `## Details` section:
+
+> \[!gap\] Sparse capture — this concept was only briefly mentioned. Awaiting future sessions for enrichment.
+
+- Do not add gap callouts to concepts with `confidence: medium` or `high`.
+- Remove existing gap callouts when a concept is updated with sufficient evidence (3+ key points or confidence promoted to medium or higher).
+
 ### 2. TRANSFORM
 
 - Scan the full concept set after EXTRACT, not just pages touched in this run.
 - Use normalized tags from the concept corpus as the primary grouping mechanism.
 - Generate or update atlas MOCs and synthesis pages only from evidence already present in concept pages and raw sources.
+- When creating or updating any concept, scan existing concepts for shared tags. Add `[[concepts/related-slug]]` entries in the `## Related` section for concepts that share 2 or more tags. Target 3-5 outbound wikilinks per concept page.
 
 MOC generation rule:
 - If 5 or more concept pages share the same normalized tag, create or update {vault}/{subfolder}/atlas/{tag-slug}.md.
@@ -229,7 +249,8 @@ updated: 2026-05-04
 ```
 
 Maturity promotion during TRANSFORM:
-- After a synthesis page is created or updated, mark every concept it cites as `evergreen`.
+- After a synthesis page is created or updated, mark each cited concept as `evergreen` only if it has no unresolved `[!contradiction]` callouts.
+- If a cited concept still has unresolved contradictions, do not promote it beyond its source-based status (`seedling` or `growing`) until the contradiction is resolved.
 - Re-save those concept pages with updated frontmatter and `updated` dates if their status changed.
 
 Home MOC rule:
