@@ -6,9 +6,9 @@ const path = require("node:path");
 const { parseJsonInput } = require("./lib/config");
 const { buildCommandErrorResult } = require("./lib/cli");
 const {
-  buildKnowledgeIndexPath,
+  buildRootIndexPath,
   buildDailyFolderPath,
-  buildHotCachePath,
+  buildSessionContextPath,
   buildDailyFilePath,
   takeLastLines,
   buildAdditionalContext,
@@ -93,20 +93,23 @@ function readRecentDailyLog(vaultPath, subfolder, fsApi = fs) {
 }
 
 function resolvePrimaryContext(resolvedConfig) {
-  const hotPath = buildHotCachePath(resolvedConfig.vaultPath, resolvedConfig.subfolder);
-  const hotText = readFileOrEmpty(hotPath);
+  const sessionContextPath = buildSessionContextPath(
+    resolvedConfig.vaultPath,
+    resolvedConfig.subfolder,
+  );
+  const sessionContextText = readFileOrEmpty(sessionContextPath);
 
-  if (hotText.trim() !== "") {
+  if (sessionContextText.trim() !== "") {
     return {
-      primaryText: hotText,
+      primaryText: sessionContextText,
       maxChars: HOT_CACHE_CONTEXT_MAX_CHARS,
-      primarySectionHeading: "Hot Cache",
-      primaryPlaceholderText: "(empty - no hot cache yet)",
+      primarySectionHeading: "Session Context",
+      primaryPlaceholderText: "(empty - no session context yet)",
     };
   }
 
-  const indexPath = buildKnowledgeIndexPath(resolvedConfig.vaultPath, resolvedConfig.subfolder);
-  const indexText = readFileOrEmpty(indexPath);
+  const rootIndexPath = buildRootIndexPath(resolvedConfig.vaultPath, resolvedConfig.subfolder);
+  const indexText = readFileOrEmpty(rootIndexPath);
 
   return {
     primaryText: indexText,

@@ -16,7 +16,7 @@
 
 ## What It Does
 
-Memory Mason hooks into your AI coding agent and silently captures every conversation into daily Obsidian logs. When you're ready, run `/mmc` to compile raw logs into structured knowledge articles — concepts, connections, and Q&A — all interlinked with `[[wikilinks]]`. Then use `/mmq` to retrieve answers from your compiled knowledge base without leaving the conversation.
+Memory Mason hooks into your AI coding agent and silently captures every conversation into daily Obsidian logs. When you're ready, run `/mmc` to compile raw logs into structured knowledge articles — concepts, synthesis pages, and MOCs — all interlinked with `[[wikilinks]]`. Then use `/mmq` to retrieve answers from your compiled knowledge base without leaving the conversation.
 
 No API key needed. No cloud sync. Everything stays local in your Obsidian vault.
 
@@ -24,7 +24,7 @@ No API key needed. No cloud sync. Everything stays local in your Obsidian vault.
 
 ```text
 [AI Conversation] ──> [Hook Runtime] ──> [Obsidian Vault]
-   (any agent)          (automatic)        daily/YYYY-MM-DD/
+   (any agent)          (automatic)        _raw/YYYY-MM-DD/
 ```
 
 Hooks capture prompts, tool results, and session transcripts into daily log files. This happens silently in the background — no manual steps required.
@@ -39,27 +39,27 @@ Daily logs are stored in per-day folders and auto-split into files of up to 500K
 ### How knowledge is built
 
 ```text
-daily/YYYY-MM-DD/ ──> /mmc compile ──> knowledge/
-                                        ├── concepts/
-                                        ├── connections/
-                                        └── qa/
+_raw/YYYY-MM-DD/ ──> /mmc compile ──> concepts/
+                                       atlas/
+                                       synthesis/
+                                       index.md
 ```
 
-Run `/mmc` to compile daily logs into structured articles. The host LLM reads your raw logs and produces encyclopedia-style concept pages, cross-concept connection pages, and Q&A entries — all linked with `[[wikilinks]]` for Obsidian graph navigation.
+Run `/mmc` to compile daily logs into structured articles. The host LLM reads your raw logs and produces atomic concept pages, MOC navigation pages in `atlas/`, and cross-session synthesis pages — all linked with `[[wikilinks]]` for Obsidian graph navigation.
 
 ### How knowledge is retrieved
 
 ```text
-/mmq "How does auth work?" ──> hot cache ──> knowledge/ ──> answer with [[citations]]
+/mmq "How does auth work?" ──> _meta/context.md ──> concepts/ + atlas/ + synthesis/ ──> answer with [[citations]]
 ```
 
-Run `/mmq` with a question. Memory Mason checks its hot cache for recent context first, then reads compiled articles, synthesizes an answer, and cites sources with `[[wikilinks]]` back to the original concepts. Your knowledge base grows with every session and becomes more useful over time.
+Run `/mmq` with a question. Memory Mason checks session context for recent focus first, then reads compiled articles, synthesizes an answer, and cites sources with `[[wikilinks]]` back to the original concepts. Your knowledge base grows with every session and becomes more useful over time.
 
 ## Commands
 
 | Command | What it does |
 |:--------|:-------------|
-| `/mmc` | Compile daily logs into structured knowledge articles, update hot cache and source manifest |
+| `/mmc` | Compile raw captures into concepts, MOCs, and synthesis pages; update session context and source manifest |
 | `/mmq` | Answer questions from your knowledge base with source citations |
 | `/mml` | Run knowledge base health checks (broken links, stale content, manifest integrity, and more) |
 | `/mms` | Show knowledge base status, health summary, and compilation coverage |

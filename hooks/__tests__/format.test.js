@@ -10,7 +10,10 @@ const {
   buildDailyHeader,
   takeLastLines,
   buildDailyFilePath,
+  buildRootIndexPath,
+  buildSessionContextPath,
   buildKnowledgeIndexPath,
+  buildHotCachePath,
   buildDailyFolderPath,
   buildDailyChunkPath,
   buildDailyIndexPath,
@@ -171,10 +174,15 @@ describe("buildAdditionalContext", () => {
   });
 
   it("uses custom primary section heading and placeholder when provided", () => {
-    const result = buildAdditionalContext("", "log", "Hot Cache", "(empty - no hot cache yet)");
+    const result = buildAdditionalContext(
+      "",
+      "log",
+      "Session Context",
+      "(empty - no session context yet)",
+    );
 
-    expect(result.includes("## Hot Cache")).toBe(true);
-    expect(result.includes("(empty - no hot cache yet)")).toBe(true);
+    expect(result.includes("## Session Context")).toBe(true);
+    expect(result.includes("(empty - no session context yet)")).toBe(true);
     expect(result.includes("## Knowledge Base Index")).toBe(false);
   });
 
@@ -222,7 +230,7 @@ describe("takeLastLines", () => {
 describe("buildDailyFilePath", () => {
   it("builds correct path", () => {
     expect(buildDailyFilePath("/vault", "ai-knowledge", "2026-04-26")).toBe(
-      path.join("/vault", "ai-knowledge", "daily", "2026-04-26.md"),
+      path.join("/vault", "ai-knowledge", "_raw", "2026-04-26.md"),
     );
   });
 
@@ -233,16 +241,42 @@ describe("buildDailyFilePath", () => {
   });
 });
 
-describe("buildKnowledgeIndexPath", () => {
+describe("buildRootIndexPath", () => {
   it("builds correct path", () => {
-    expect(buildKnowledgeIndexPath("/vault", "ai-knowledge")).toBe(
-      path.join("/vault", "ai-knowledge", "knowledge", "index.md"),
+    expect(buildRootIndexPath("/vault", "ai-knowledge")).toBe(
+      path.join("/vault", "ai-knowledge", "index.md"),
     );
   });
 
   it("throws on empty subfolder", () => {
-    expect(() => buildKnowledgeIndexPath("/vault", "")).toThrow(
+    expect(() => buildRootIndexPath("/vault", "")).toThrow("subfolder must be a non-empty string");
+  });
+});
+
+describe("buildSessionContextPath", () => {
+  it("builds correct path", () => {
+    expect(buildSessionContextPath("/vault", "ai-knowledge")).toBe(
+      path.join("/vault", "ai-knowledge", "_meta", "context.md"),
+    );
+  });
+
+  it("throws on empty subfolder", () => {
+    expect(() => buildSessionContextPath("/vault", "")).toThrow(
       "subfolder must be a non-empty string",
+    );
+  });
+});
+
+describe("backward-compatible path aliases", () => {
+  it("keeps buildKnowledgeIndexPath as alias of buildRootIndexPath", () => {
+    expect(buildKnowledgeIndexPath("/vault", "ai-knowledge")).toBe(
+      buildRootIndexPath("/vault", "ai-knowledge"),
+    );
+  });
+
+  it("keeps buildHotCachePath as alias of buildSessionContextPath", () => {
+    expect(buildHotCachePath("/vault", "ai-knowledge")).toBe(
+      buildSessionContextPath("/vault", "ai-knowledge"),
     );
   });
 });
@@ -250,7 +284,7 @@ describe("buildKnowledgeIndexPath", () => {
 describe("buildDailyFolderPath", () => {
   it("returns correct path", () => {
     expect(buildDailyFolderPath("/vault", "ai-knowledge", "2026-04-30")).toBe(
-      path.join("/vault", "ai-knowledge", "daily", "2026-04-30"),
+      path.join("/vault", "ai-knowledge", "_raw", "2026-04-30"),
     );
   });
 
@@ -276,13 +310,13 @@ describe("buildDailyFolderPath", () => {
 describe("buildDailyChunkPath", () => {
   it("pads chunk 1 as 001.md", () => {
     expect(buildDailyChunkPath("/vault", "ai-knowledge", "2026-04-30", 1)).toBe(
-      path.join("/vault", "ai-knowledge", "daily", "2026-04-30", "001.md"),
+      path.join("/vault", "ai-knowledge", "_raw", "2026-04-30", "001.md"),
     );
   });
 
   it("pads chunk 12 as 012.md", () => {
     expect(buildDailyChunkPath("/vault", "ai-knowledge", "2026-04-30", 12)).toBe(
-      path.join("/vault", "ai-knowledge", "daily", "2026-04-30", "012.md"),
+      path.join("/vault", "ai-knowledge", "_raw", "2026-04-30", "012.md"),
     );
   });
 
@@ -314,7 +348,7 @@ describe("buildDailyChunkPath", () => {
 describe("buildDailyIndexPath", () => {
   it("returns correct index.md path", () => {
     expect(buildDailyIndexPath("/vault", "ai-knowledge", "2026-04-30")).toBe(
-      path.join("/vault", "ai-knowledge", "daily", "2026-04-30", "index.md"),
+      path.join("/vault", "ai-knowledge", "_raw", "2026-04-30", "index.md"),
     );
   });
 
@@ -328,7 +362,7 @@ describe("buildDailyIndexPath", () => {
 describe("buildDailyMetaPath", () => {
   it("returns correct meta.json path", () => {
     expect(buildDailyMetaPath("/vault", "ai-knowledge", "2026-04-30")).toBe(
-      path.join("/vault", "ai-knowledge", "daily", "2026-04-30", "meta.json"),
+      path.join("/vault", "ai-knowledge", "_raw", "2026-04-30", "meta.json"),
     );
   });
 
@@ -366,21 +400,21 @@ describe("buildChunkHeader", () => {
 describe("buildChunkIndexContent", () => {
   it("single chunk produces one wikilink", () => {
     expect(buildChunkIndexContent("2026-04-30", 1)).toBe(
-      "# Daily Log: 2026-04-30\n\n## Parts\n\n- [[daily/2026-04-30/001|Part 1]]\n",
+      "# Daily Log: 2026-04-30\n\n## Parts\n\n- [[_raw/2026-04-30/001|Part 1]]\n",
     );
   });
 
   it("three chunks produces three wikilinks", () => {
     expect(buildChunkIndexContent("2026-04-30", 3)).toBe(
-      "# Daily Log: 2026-04-30\n\n## Parts\n\n- [[daily/2026-04-30/001|Part 1]]\n- [[daily/2026-04-30/002|Part 2]]\n- [[daily/2026-04-30/003|Part 3]]\n",
+      "# Daily Log: 2026-04-30\n\n## Parts\n\n- [[_raw/2026-04-30/001|Part 1]]\n- [[_raw/2026-04-30/002|Part 2]]\n- [[_raw/2026-04-30/003|Part 3]]\n",
     );
   });
 
   it("wikilinks use correct Obsidian format", () => {
     const result = buildChunkIndexContent("2026-04-30", 2);
 
-    expect(result.includes("- [[daily/2026-04-30/001|Part 1]]")).toBe(true);
-    expect(result.includes("- [[daily/2026-04-30/002|Part 2]]")).toBe(true);
+    expect(result.includes("- [[_raw/2026-04-30/001|Part 1]]")).toBe(true);
+    expect(result.includes("- [[_raw/2026-04-30/002|Part 2]]")).toBe(true);
   });
 
   it("throws on chunkCount 0", () => {

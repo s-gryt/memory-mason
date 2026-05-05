@@ -167,7 +167,7 @@ describe("saveState", () => {
 describe("resolveStatePath", () => {
   it("returns correct state path using path.join", () => {
     expect(resolveStatePath("/vault", "ai-knowledge")).toBe(
-      path.join("/vault", "ai-knowledge", "state.json"),
+      path.join("/vault", "ai-knowledge", "_meta", "state.json"),
     );
   });
 });

@@ -13,7 +13,7 @@ const defaultState = () => ({
 const resolveStatePath = (vaultPath, subfolder) => {
   const safeVaultPath = assertNonEmptyString("vaultPath", vaultPath);
   const safeSubfolder = assertNonEmptyString("subfolder", subfolder);
-  return path.join(safeVaultPath, safeSubfolder, "state.json");
+  return path.join(safeVaultPath, safeSubfolder, "_meta", "state.json");
 };
 
 const mergeWithDefaults = (state) => {

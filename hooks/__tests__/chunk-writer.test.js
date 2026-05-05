@@ -6,7 +6,7 @@ const vaultModule = require("../lib/vault");
 const padChunkId = (chunkNum) => String(chunkNum).padStart(3, "0");
 
 const buildDailyFolderPathMock = (vaultPath, subfolder, today) =>
-  path.join(vaultPath, subfolder, "daily", today);
+  path.join(vaultPath, subfolder, "_raw", today);
 
 const buildDailyChunkPathMock = (vaultPath, subfolder, today, chunkNum) =>
   path.join(buildDailyFolderPathMock(vaultPath, subfolder, today), `${padChunkId(chunkNum)}.md`);
@@ -251,13 +251,13 @@ afterAll(() => {
 
 describe("loadMeta", () => {
   it("returns default when meta.json missing", () => {
-    const folderPath = path.join("vault", "daily", "2026-04-30");
+    const folderPath = path.join("vault", "_raw", "2026-04-30");
     const fsApi = makeFsApi({});
     expect(loadMeta(folderPath, fsApi)).toEqual({ chunks: [] });
   });
 
   it("parses valid meta.json", () => {
-    const folderPath = path.join("vault", "daily", "2026-04-30");
+    const folderPath = path.join("vault", "_raw", "2026-04-30");
     const metaPath = path.join(folderPath, "meta.json");
     const meta = {
       chunks: [makeChunk(1, 20), makeChunk(2, 40)],
@@ -274,7 +274,7 @@ describe("loadMeta", () => {
   });
 
   it("returns default on SyntaxError", () => {
-    const folderPath = path.join("vault", "daily", "2026-04-30");
+    const folderPath = path.join("vault", "_raw", "2026-04-30");
     const metaPath = path.join(folderPath, "meta.json");
     const fsApi = makeFsApi({
       [folderPath]: null,
@@ -285,7 +285,7 @@ describe("loadMeta", () => {
   });
 
   it("throws on structurally invalid meta.json", () => {
-    const folderPath = path.join("vault", "daily", "2026-04-30");
+    const folderPath = path.join("vault", "_raw", "2026-04-30");
     const metaPath = path.join(folderPath, "meta.json");
     const fsApi = makeFsApi({
       [folderPath]: null,
@@ -298,7 +298,7 @@ describe("loadMeta", () => {
   });
 
   it("throws when chunk ids are non-contiguous", () => {
-    const folderPath = path.join("vault", "daily", "2026-04-30");
+    const folderPath = path.join("vault", "_raw", "2026-04-30");
     const metaPath = path.join(folderPath, "meta.json");
     const fsApi = makeFsApi({
       [folderPath]: null,
@@ -313,7 +313,7 @@ describe("loadMeta", () => {
   });
 
   it("throws when parsed meta root is an array", () => {
-    const folderPath = path.join("vault", "daily", "2026-04-30");
+    const folderPath = path.join("vault", "_raw", "2026-04-30");
     const metaPath = path.join(folderPath, "meta.json");
     const fsApi = makeFsApi({
       [folderPath]: null,
@@ -326,7 +326,7 @@ describe("loadMeta", () => {
   });
 
   it("throws when chunk id format is invalid", () => {
-    const folderPath = path.join("vault", "daily", "2026-04-30");
+    const folderPath = path.join("vault", "_raw", "2026-04-30");
     const metaPath = path.join(folderPath, "meta.json");
     const fsApi = makeFsApi({
       [folderPath]: null,
@@ -346,7 +346,7 @@ describe("loadMeta", () => {
   });
 
   it("throws when chunk file format is invalid", () => {
-    const folderPath = path.join("vault", "daily", "2026-04-30");
+    const folderPath = path.join("vault", "_raw", "2026-04-30");
     const metaPath = path.join(folderPath, "meta.json");
     const fsApi = makeFsApi({
       [folderPath]: null,
@@ -366,7 +366,7 @@ describe("loadMeta", () => {
   });
 
   it("throws when chunk file does not match chunk id", () => {
-    const folderPath = path.join("vault", "daily", "2026-04-30");
+    const folderPath = path.join("vault", "_raw", "2026-04-30");
     const metaPath = path.join(folderPath, "meta.json");
     const fsApi = makeFsApi({
       [folderPath]: null,
@@ -386,7 +386,7 @@ describe("loadMeta", () => {
   });
 
   it("throws when chunk sizeBytes is invalid", () => {
-    const folderPath = path.join("vault", "daily", "2026-04-30");
+    const folderPath = path.join("vault", "_raw", "2026-04-30");
     const metaPath = path.join(folderPath, "meta.json");
     const fsApi = makeFsApi({
       [folderPath]: null,
@@ -408,7 +408,7 @@ describe("loadMeta", () => {
   });
 
   it("throws when chunk createdAt is invalid", () => {
-    const folderPath = path.join("vault", "daily", "2026-04-30");
+    const folderPath = path.join("vault", "_raw", "2026-04-30");
     const metaPath = path.join(folderPath, "meta.json");
     const fsApi = makeFsApi({
       [folderPath]: null,
@@ -430,7 +430,7 @@ describe("loadMeta", () => {
   });
 
   it("throws when chunk entry is not an object", () => {
-    const folderPath = path.join("vault", "daily", "2026-04-30");
+    const folderPath = path.join("vault", "_raw", "2026-04-30");
     const metaPath = path.join(folderPath, "meta.json");
     const fsApi = makeFsApi({
       [folderPath]: null,
@@ -450,11 +450,11 @@ describe("loadMeta", () => {
       throw error;
     };
 
-    expect(() => loadMeta(path.join("vault", "daily", "2026-04-30"), fsApi)).toThrow("EACCES");
+    expect(() => loadMeta(path.join("vault", "_raw", "2026-04-30"), fsApi)).toThrow("EACCES");
   });
 
   it("rethrows non-SyntaxError JSON parse failures", () => {
-    const folderPath = path.join("vault", "daily", "2026-04-30");
+    const folderPath = path.join("vault", "_raw", "2026-04-30");
     const metaPath = path.join(folderPath, "meta.json");
     const fsApi = makeFsApi({
       [folderPath]: null,
@@ -475,7 +475,7 @@ describe("loadMeta", () => {
 
 describe("saveMeta", () => {
   it("writes 2-space indented JSON", () => {
-    const folderPath = path.join("vault", "daily", "2026-04-30");
+    const folderPath = path.join("vault", "_raw", "2026-04-30");
     const metaPath = path.join(folderPath, "meta.json");
     const meta = { chunks: [makeChunk(1, 12)] };
     const fsApi = makeFsApi({});
@@ -486,7 +486,7 @@ describe("saveMeta", () => {
   });
 
   it("creates directory if missing", () => {
-    const folderPath = path.join("vault", "daily", "2026-04-30");
+    const folderPath = path.join("vault", "_raw", "2026-04-30");
     const fsApi = makeFsApi({});
 
     saveMeta(folderPath, { chunks: [makeChunk(1, 5)] }, fsApi);
@@ -499,7 +499,7 @@ describe("saveMeta", () => {
     const fsApi = makeFsApi({});
 
     expect(() =>
-      saveMeta(path.join("vault", "daily", "2026-04-30"), { chunks: "invalid" }, fsApi),
+      saveMeta(path.join("vault", "_raw", "2026-04-30"), { chunks: "invalid" }, fsApi),
     ).toThrow("meta.json must contain an object with chunks array");
   });
 });

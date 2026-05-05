@@ -4,8 +4,8 @@ const fs = require("node:fs");
 const path = require("node:path");
 const {
   buildDailyFilePath,
-  buildKnowledgeIndexPath,
-  buildHotCachePath,
+  buildRootIndexPath,
+  buildSessionContextPath,
   buildDailyFolderPath,
 } = require("../lib/vault");
 const sessionStart = require("../session-start");
@@ -297,7 +297,7 @@ describe("session-start.js", () => {
     const cwd = createTempDir("memory-mason-cwd-");
     const vaultPath = createTempDir("memory-mason-vault-");
     const configPath = path.join(cwd, "memory-mason.json");
-    const indexPath = buildKnowledgeIndexPath(vaultPath, "ai-knowledge");
+    const indexPath = buildRootIndexPath(vaultPath, "ai-knowledge");
     const dailyPath = buildDailyFilePath(vaultPath, "ai-knowledge", today());
 
     writeText(configPath, JSON.stringify({ vaultPath, subfolder: "ai-knowledge" }));
@@ -352,16 +352,16 @@ describe("session-start.js", () => {
     expect(parsed.hookSpecificOutput.additionalContext).toContain("(no recent daily log)");
   });
 
-  it("uses hot.md when present and non-empty, applies 5000 char limit", () => {
+  it("uses session context when present and non-empty, applies 5000 char limit", () => {
     const cwd = createTempDir("memory-mason-cwd-");
     const vaultPath = createTempDir("memory-mason-vault-");
     const subfolder = "ai-knowledge";
     const configPath = path.join(cwd, "memory-mason.json");
-    const hotPath = buildHotCachePath(vaultPath, subfolder);
-    const indexPath = buildKnowledgeIndexPath(vaultPath, subfolder);
+    const sessionContextPath = buildSessionContextPath(vaultPath, subfolder);
+    const indexPath = buildRootIndexPath(vaultPath, subfolder);
 
     writeText(configPath, JSON.stringify({ vaultPath, subfolder }));
-    writeText(hotPath, `HOT_SENTINEL ${"x".repeat(5100)}`);
+    writeText(sessionContextPath, `HOT_SENTINEL ${"x".repeat(5100)}`);
     writeText(indexPath, "INDEX_SENTINEL");
 
     const result = runHookEntrypoint("session-start.js", {
@@ -374,21 +374,21 @@ describe("session-start.js", () => {
     expect(result.status).toBe(0);
     expect(parsed.hookSpecificOutput.additionalContext).toContain("HOT_SENTINEL");
     expect(parsed.hookSpecificOutput.additionalContext).not.toContain("INDEX_SENTINEL");
-    expect(parsed.hookSpecificOutput.additionalContext).toContain("## Hot Cache");
+    expect(parsed.hookSpecificOutput.additionalContext).toContain("## Session Context");
     expect(parsed.hookSpecificOutput.additionalContext).not.toContain("## Knowledge Base Index");
     expect(parsed.hookSpecificOutput.additionalContext).toContain("...(truncated)");
   });
 
-  it("falls back to index.md when hot.md is empty", () => {
+  it("falls back to index.md when session context is empty", () => {
     const cwd = createTempDir("memory-mason-cwd-");
     const vaultPath = createTempDir("memory-mason-vault-");
     const subfolder = "ai-knowledge";
     const configPath = path.join(cwd, "memory-mason.json");
-    const hotPath = buildHotCachePath(vaultPath, subfolder);
-    const indexPath = buildKnowledgeIndexPath(vaultPath, subfolder);
+    const sessionContextPath = buildSessionContextPath(vaultPath, subfolder);
+    const indexPath = buildRootIndexPath(vaultPath, subfolder);
 
     writeText(configPath, JSON.stringify({ vaultPath, subfolder }));
-    writeText(hotPath, "");
+    writeText(sessionContextPath, "");
     writeText(indexPath, `INDEX_SENTINEL ${"x".repeat(200)}`);
 
     const result = runHookEntrypoint("session-start.js", {
@@ -403,12 +403,12 @@ describe("session-start.js", () => {
     expect(parsed.hookSpecificOutput.additionalContext).not.toContain("HOT_SENTINEL");
   });
 
-  it("falls back to index.md when hot.md is missing", () => {
+  it("falls back to index.md when session context is missing", () => {
     const cwd = createTempDir("memory-mason-cwd-");
     const vaultPath = createTempDir("memory-mason-vault-");
     const subfolder = "ai-knowledge";
     const configPath = path.join(cwd, "memory-mason.json");
-    const indexPath = buildKnowledgeIndexPath(vaultPath, subfolder);
+    const indexPath = buildRootIndexPath(vaultPath, subfolder);
 
     writeText(configPath, JSON.stringify({ vaultPath, subfolder }));
     writeText(indexPath, `INDEX_SENTINEL ${"x".repeat(200)}`);
@@ -424,16 +424,16 @@ describe("session-start.js", () => {
     expect(parsed.hookSpecificOutput.additionalContext).toContain("INDEX_SENTINEL");
   });
 
-  it("includes both hot.md content and recent daily log when both present", () => {
+  it("includes both session context and recent daily log when both present", () => {
     const cwd = createTempDir("memory-mason-cwd-");
     const vaultPath = createTempDir("memory-mason-vault-");
     const subfolder = "ai-knowledge";
     const configPath = path.join(cwd, "memory-mason.json");
-    const hotPath = buildHotCachePath(vaultPath, subfolder);
+    const sessionContextPath = buildSessionContextPath(vaultPath, subfolder);
     const dailyPath = buildDailyFilePath(vaultPath, subfolder, today());
 
     writeText(configPath, JSON.stringify({ vaultPath, subfolder }));
-    writeText(hotPath, `HOT_SENTINEL ${"y".repeat(40)}`);
+    writeText(sessionContextPath, `HOT_SENTINEL ${"y".repeat(40)}`);
     writeText(dailyPath, "# Daily Log\n\nDAILY_SENTINEL");
 
     const result = runHookEntrypoint("session-start.js", {
@@ -551,7 +551,7 @@ describe("run - sync flag", () => {
     const homeDir = createTempDir("memory-mason-home-");
     const vaultPath = createTempDir("memory-mason-vault-");
     const subfolder = "ai-knowledge";
-    const indexPath = buildKnowledgeIndexPath(vaultPath, subfolder);
+    const indexPath = buildRootIndexPath(vaultPath, subfolder);
     const dailyPath = buildDailyFilePath(vaultPath, subfolder, today());
 
     writeText(indexPath, "# Index\n\nSYNC_TRUE_INDEX_SENTINEL");

@@ -4,23 +4,26 @@ const path = require("node:path");
 const { MAX_DAILY_CHUNK_COUNT, CHUNK_ID_WIDTH } = require("./constants");
 const { assertNonEmptyString, assertString, assertPositiveInteger } = require("./assert");
 
-const buildKnowledgeIndexPath = (vaultPath, subfolder) => {
+const buildRootIndexPath = (vaultPath, subfolder) => {
   const safeVaultPath = assertNonEmptyString("vaultPath", vaultPath);
   const safeSubfolder = assertNonEmptyString("subfolder", subfolder);
-  return path.join(safeVaultPath, safeSubfolder, "knowledge", "index.md");
+  return path.join(safeVaultPath, safeSubfolder, "index.md");
 };
 
-const buildHotCachePath = (vaultPath, subfolder) => {
+const buildSessionContextPath = (vaultPath, subfolder) => {
   const safeVaultPath = assertNonEmptyString("vaultPath", vaultPath);
   const safeSubfolder = assertNonEmptyString("subfolder", subfolder);
-  return path.join(safeVaultPath, safeSubfolder, "hot.md");
+  return path.join(safeVaultPath, safeSubfolder, "_meta", "context.md");
 };
+
+const buildKnowledgeIndexPath = buildRootIndexPath;
+const buildHotCachePath = buildSessionContextPath;
 
 const buildDailyFilePath = (vaultPath, subfolder, dateIso) => {
   const safeVaultPath = assertNonEmptyString("vaultPath", vaultPath);
   const safeSubfolder = assertNonEmptyString("subfolder", subfolder);
   const safeDateIso = assertNonEmptyString("dateIso", dateIso);
-  return path.join(safeVaultPath, safeSubfolder, "daily", `${safeDateIso}.md`);
+  return path.join(safeVaultPath, safeSubfolder, "_raw", `${safeDateIso}.md`);
 };
 
 const buildDailyHeader = (dateIso) => {
@@ -139,7 +142,7 @@ const buildDailyFolderPath = (vaultPath, subfolder, dateIso) => {
   const safeVaultPath = assertNonEmptyString("vaultPath", vaultPath);
   const safeSubfolder = assertNonEmptyString("subfolder", subfolder);
   const safeDateIso = assertNonEmptyString("dateIso", dateIso);
-  return path.join(safeVaultPath, safeSubfolder, "daily", safeDateIso);
+  return path.join(safeVaultPath, safeSubfolder, "_raw", safeDateIso);
 };
 
 const buildDailyChunkPath = (vaultPath, subfolder, dateIso, chunkNum) => {
@@ -155,7 +158,7 @@ const buildDailyChunkPath = (vaultPath, subfolder, dateIso, chunkNum) => {
   return path.join(
     safeVaultPath,
     safeSubfolder,
-    "daily",
+    "_raw",
     safeDateIso,
     `${String(chunkNum).padStart(CHUNK_ID_WIDTH, "0")}.md`,
   );
@@ -165,14 +168,14 @@ const buildDailyIndexPath = (vaultPath, subfolder, dateIso) => {
   const safeVaultPath = assertNonEmptyString("vaultPath", vaultPath);
   const safeSubfolder = assertNonEmptyString("subfolder", subfolder);
   const safeDateIso = assertNonEmptyString("dateIso", dateIso);
-  return path.join(safeVaultPath, safeSubfolder, "daily", safeDateIso, "index.md");
+  return path.join(safeVaultPath, safeSubfolder, "_raw", safeDateIso, "index.md");
 };
 
 const buildDailyMetaPath = (vaultPath, subfolder, dateIso) => {
   const safeVaultPath = assertNonEmptyString("vaultPath", vaultPath);
   const safeSubfolder = assertNonEmptyString("subfolder", subfolder);
   const safeDateIso = assertNonEmptyString("dateIso", dateIso);
-  return path.join(safeVaultPath, safeSubfolder, "daily", safeDateIso, "meta.json");
+  return path.join(safeVaultPath, safeSubfolder, "_raw", safeDateIso, "meta.json");
 };
 
 const buildChunkHeader = (dateIso, chunkNum) => {
@@ -197,12 +200,14 @@ const buildChunkIndexContent = (dateIso, chunkCount) => {
   const bullets = Array.from({ length: chunkCount }, (_, index) => {
     const chunkNum = index + 1;
     const padded = String(chunkNum).padStart(CHUNK_ID_WIDTH, "0");
-    return `- [[daily/${safeDateIso}/${padded}|Part ${chunkNum}]]`;
+    return `- [[_raw/${safeDateIso}/${padded}|Part ${chunkNum}]]`;
   });
   return `# Daily Log: ${safeDateIso}\n\n## Parts\n\n${bullets.join("\n")}\n`;
 };
 
 module.exports = {
+  buildRootIndexPath,
+  buildSessionContextPath,
   buildKnowledgeIndexPath,
   buildHotCachePath,
   buildDailyFilePath,

@@ -3,11 +3,7 @@
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const {
-  buildDailyChunkPath,
-  buildDailyFilePath,
-  buildKnowledgeIndexPath,
-} = require("../lib/vault");
+const { buildDailyChunkPath, buildDailyFilePath, buildRootIndexPath } = require("../lib/vault");
 const { resolveCaptureStatePath } = require("../lib/capture-state");
 const sessionStart = require("../session-start");
 const userPromptSubmit = require("../user-prompt-submit");
@@ -311,7 +307,7 @@ describe("session-start.js", () => {
     const cwd = createTempDir("memory-mason-cwd-");
     const vaultPath = createTempDir("memory-mason-vault-");
     const configPath = path.join(cwd, "memory-mason.json");
-    const indexPath = buildKnowledgeIndexPath(vaultPath, "ai-knowledge");
+    const indexPath = buildRootIndexPath(vaultPath, "ai-knowledge");
     const dailyPath = buildDailyFilePath(vaultPath, "ai-knowledge", today());
 
     writeText(configPath, JSON.stringify({ vaultPath, subfolder: "ai-knowledge" }));

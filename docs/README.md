@@ -104,10 +104,10 @@ To also remove global config: delete `~/.memory-mason/config.json`. Vault conten
 
 ### Capture
 
-Hooks append session activity into a folder-per-day structure: `{vault}/{subfolder}/daily/YYYY-MM-DD/`. Each daily folder contains chunk files (`001.md`, `002.md`, …) capped at 500KB each, an `index.md` with wikilinks to all chunks, and a `meta.json` chunk registry. Legacy flat `YYYY-MM-DD.md` files from before migration are still readable. No API key required — hooks write directly to the filesystem. Capture happens silently during every AI session.
+Hooks append session activity into a folder-per-day structure: `{vault}/{subfolder}/_raw/YYYY-MM-DD/`. Each daily folder contains chunk files (`001.md`, `002.md`, …) capped at 500KB each, an `index.md` with wikilinks to all chunks, and a `meta.json` chunk registry. No API key required — hooks write directly to the filesystem. Capture happens silently during every AI session.
 
 ```text
-[AI Conversation] ──> [Hook Runtime] ──> daily/YYYY-MM-DD/001.md  (auto-rotates at 500KB)
+[AI Conversation] ──> [Hook Runtime] ──> _raw/YYYY-MM-DD/001.md  (auto-rotates at 500KB)
 ```
 
 Memory Mason's own commands (`/mmc`, `/mmq`, `/mml`, `/mms`, `/mma`, `/mmsetup`) and namespaced
@@ -123,47 +123,50 @@ To exclude entire sessions from capture, set `sync` to `false` in your config fi
 
 ### Compile
 
-Run `/mmc` to compile daily logs into structured knowledge articles. The host LLM reads raw logs and produces concept pages, connection pages, and Q&A entries — all linked with `[[wikilinks]]` for Obsidian graph navigation. Compilation also generates a hot cache (`hot.md`) for fast session startup context and a source manifest (`.manifest.json`) for source-to-page lineage tracking.
+Run `/mmc` to compile daily logs into structured knowledge articles. The host LLM reads raw logs and produces concept pages and Q&A entries in `concepts/`, plus MOC-driven linking through `atlas/` pages and `[[wikilinks]]` for Obsidian graph navigation. Compilation also generates session bootstrap context at `_meta/context.md`, updates `_meta/manifest.json` for source-to-page lineage tracking, and writes compile state at `_meta/state.json`.
 
-For large daily logs (over 50KB), `/mmc` splits the content into chunks and compiles them incrementally with per-chunk checkpoints in `state.json`. Already-compiled chunks are skipped on re-runs.
+For large daily logs (over 50KB), `/mmc` splits the content into chunks and compiles them incrementally with per-chunk checkpoints in `_meta/state.json`. Already-compiled chunks are skipped on re-runs.
 
 ```text
-daily/YYYY-MM-DD/ ──> /mmc ──> knowledge/concepts/
-                                knowledge/connections/
-                                knowledge/qa/
-                                hot.md            (session startup cache)
-                                .manifest.json    (source-to-page lineage)
+_raw/YYYY-MM-DD/ ──> /mmc ──> concepts/
+                             atlas/
+                             synthesis/
+                             index.md
+                             _meta/context.md     (session bootstrap cache)
+                             _meta/manifest.json  (source-to-page lineage)
 ```
 
 ### Retrieve
 
-Run `/mmq` with a question. Memory Mason checks the hot cache first for recent context, then reads compiled articles, synthesizes an answer, and cites sources with `[[wikilinks]]` back to the original concepts. Your knowledge base grows with every session.
+Run `/mmq` with a question. Memory Mason checks `_meta/context.md` first for recent context, then reads compiled articles, synthesizes an answer, and cites sources with `[[wikilinks]]` back to the original concepts. Your knowledge base grows with every session.
 
 ```text
-/mmq "How does X work?" ──> hot cache ──> knowledge/ ──> answer with [[citations]]
+/mmq "How does X work?" ──> _meta/context.md ──> concepts/ + atlas/ + synthesis/ ──> answer with [[citations]]
 ```
 
 ## Vault Layout
 
 ```text
 {vault}/{subfolder}/
-├── daily/
-│   ├── 2026-04-28.md          ← legacy flat file (pre-migration)
-│   └── 2026-04-30/            ← folder-per-day (new writes)
-│       ├── index.md           ← wikilinks to chunks
-│       ├── 001.md             ← chunk 1 (≤500KB)
-│       ├── 002.md             ← chunk 2
-│       └── meta.json          ← chunk registry
-├── knowledge/
-│   ├── index.md
+├── _raw/                    # Daily captures — excluded from Obsidian graph
+│   └── YYYY-MM-DD/
+│       ├── 001.md
+│       ├── 002.md
+│       ├── index.md         # Wikilinks to all chunks for that day
+│       └── meta.json
+├── _meta/                   # Operational files — excluded from graph
+│   ├── state.json
+│   ├── manifest.json
 │   ├── log.md
-│   ├── concepts/
-│   ├── connections/
-│   ├── qa/
-│   └── folds/                 ← /mma archives
-├── hot.md                     ← session startup cache (~500 words, updated each /mmc)
-├── .manifest.json             ← source-to-page lineage (updated each /mmc)
-└── state.json
+│   ├── context.md           # LLM session bootstrap (replaces hot.md)
+│   ├── taxonomy.md
+│   └── folds/               # Archived log folds
+├── atlas/                   # MOCs — graph visible
+│   ├── home.md
+│   └── {topic-slug}.md
+├── concepts/                # Atomic permanent notes — graph visible
+├── synthesis/               # Cross-session insights — graph visible
+└── index.md                 # Content catalog with type column
 ```
 
 ## Hook Coverage
