@@ -1,10 +1,11 @@
 ---
 name: mmq
 description: >
-  Query the knowledge base. Reads hot cache first, then the index, then
-  relevant articles, and synthesizes a clear answer with [[wikilink]]
-  citations. Use when you want to ask about past decisions, patterns,
-  lessons, or technical knowledge captured in previous AI conversations.
+  Query the knowledge base. Reads session context first, then the root index,
+  then relevant atlas, concept, and synthesis pages, and synthesizes a clear
+  answer with [[wikilink]] citations. Use when you want to ask about past
+  decisions, patterns, lessons, or technical knowledge captured in previous
+  AI conversations.
 argument-hint: "[question]"
 allowed-tools: "Read Glob Grep"
 ---
@@ -36,84 +37,54 @@ Subfolder rules:
 Do not claim config is missing until you have attempted all four locations above. If none provide a vault path, state that the knowledge base is not initialized because no supported Memory Mason config source was found.
 
 Use these paths:
-- Hot cache: {vault}/{subfolder}/hot.md
-- Index: {vault}/{subfolder}/knowledge/index.md
-- Concepts: {vault}/{subfolder}/knowledge/concepts/
-- Connections: {vault}/{subfolder}/knowledge/connections/
-- Q&A: {vault}/{subfolder}/knowledge/qa/
-- Build log: {vault}/{subfolder}/knowledge/log.md
+- Session context: {vault}/{subfolder}/_meta/context.md
+- Manifest: {vault}/{subfolder}/_meta/manifest.json
+- Build log: {vault}/{subfolder}/_meta/log.md
+- Index: {vault}/{subfolder}/index.md
+- Atlas: {vault}/{subfolder}/atlas/
+- Concepts: {vault}/{subfolder}/concepts/
+- Synthesis: {vault}/{subfolder}/synthesis/
+- Raw captures: {vault}/{subfolder}/_raw/
 
 ## Steps
 
-1. Read {vault}/{subfolder}/hot.md if it exists.
-- Treat hot.md as a fast cache of recent context, not a replacement for the knowledge base.
-- If hot.md directly answers the question with enough precision, answer immediately.
-- If hot.md is relevant but incomplete, extract likely article names, topics, and follow-up questions from it,
-  then continue.
+1. Read {vault}/{subfolder}/_meta/context.md if it exists.
+- Treat `context.md` as a fast cache of recent context, not a replacement for the knowledge base.
+- If `context.md` directly answers the question with enough precision, answer immediately.
+- If `context.md` is relevant but incomplete, extract likely page names, tags, dates, and follow-up questions from it, then continue.
 
-2. Read {vault}/{subfolder}/knowledge/index.md.
-- This is the primary retrieval mechanism after the hot cache.
+2. Read {vault}/{subfolder}/index.md.
+- This is the primary retrieval mechanism after the session context.
 - If it is missing, state that the knowledge base is not initialized.
 
 3. Read the index table carefully.
-- Identify 3-10 articles most relevant to the user question.
-- Prefer pages explicitly mentioned in hot.md when they are relevant to the question.
+- Identify 3-10 pages most relevant to the user question.
+- Prefer pages explicitly mentioned in `context.md` when they are relevant.
+- Use atlas pages for broad topic questions, synthesis pages for cross-cutting pattern questions, and concept pages for specific definition, workflow, or decision questions.
 
-4. Read selected articles in full.
+4. Read selected pages in full.
 - Pull complete article context before answering.
+- If the answer depends on source provenance or freshness, read {vault}/{subfolder}/_meta/manifest.json to see which `_raw/YYYY-MM-DD/` sources were compiled.
+- If needed, inspect specific `_raw/YYYY-MM-DD/NNN.md` chunks directly instead of assuming the vault is current.
 
 5. Synthesize a clear, thorough answer.
-- Cite supporting sources with [[wikilinks]] (for example: [[concepts/example-article]]).
-- Use [[hot]] only when the answer truly comes from the cache and no better article citation exists.
+- Cite supporting sources with [[wikilinks]] such as [[concepts/example-concept]], [[synthesis/example-tag]], or [[atlas/example-tag]].
+- Use `context.md` only as retrieval assistance. Do not cite `_meta/context.md` as authoritative when a durable page exists.
+- Mention raw chunk paths in prose only when you directly inspected them and no durable page exists yet.
 
 6. Handle missing knowledge honestly.
 - If the knowledge base does not contain relevant information, say so clearly.
-- Suggest running /mmc if there are uncompiled daily logs.
+- Suggest running `/mmc` if relevant information appears to exist in `_raw/` but is not compiled into durable pages yet.
+- Use {vault}/{subfolder}/_meta/log.md only to clarify recency or whether a compile happened. Do not treat the build log as a primary knowledge source.
 
-## Optional: File Back Behavior
+## Filing Behavior
 
-Only perform this section if the user explicitly asks to file the answer.
-
-1. Create a Q&A article at {vault}/{subfolder}/knowledge/qa/{question-slug}.md using:
-
-```markdown
----
-title: "Q: Original Question"
-question: "The exact question asked"
-consulted:
-  - "concepts/article-1"
-filed: YYYY-MM-DD
----
-
-# Q: Original Question
-
-## Answer
-
-[Synthesized answer with [[wikilinks]] to sources]
-
-## Sources Consulted
-
-- [[concepts/article-1]] - Relevant because...
-
-## Follow-Up Questions
-
-- [related question worth exploring]
-```
-
-2. Update {vault}/{subfolder}/knowledge/index.md with a new row for the Q&A article.
-
-3. Append to {vault}/{subfolder}/knowledge/log.md with:
-
-```markdown
-## [ISO-timestamp] query (filed) | question-slug
-- Question: [question text]
-- Consulted: [[list of articles read]]
-- Filed to: [[qa/article-name]]
-```
+- Vault Architecture v2 does not define a dedicated filed Q&A location.
+- Do not create a filed-answer page unless the user explicitly provides a destination path outside this skill.
 
 ## Answering Guidelines
 
 - Prefer precision over broad speculation.
-- Keep the final answer directly tied to cited knowledge articles.
-- Use hot.md to accelerate retrieval, not to skip article reads when the answer requires durable citations.
+- Keep the final answer directly tied to cited durable pages.
+- Use `_meta/context.md` to accelerate retrieval, not to skip article reads when the answer requires durable citations.
 - Use concise, clear language and explicit reasoning.

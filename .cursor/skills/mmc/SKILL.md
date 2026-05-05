@@ -1,18 +1,17 @@
 ---
 name: mmc
 description: >
-  Compile today's daily conversation log into structured knowledge articles
-  in the Obsidian vault. Creates concept pages, connection pages, updates
-  the knowledge index, build log, hot cache, and source manifest. Use when
-  you want to process captured AI conversations into permanent, searchable
-  knowledge.
-argument-hint: "[daily-log-file]"
+  Compile today's or a specified daily capture into the Vault Architecture v2
+  structure. Runs a three-stage EXTRACT -> TRANSFORM -> LOAD pipeline that
+  updates concepts, atlas MOCs, synthesis pages, the root index, build log,
+  manifest, state, session bootstrap context, and auto-archive folds.
+argument-hint: "[YYYY-MM-DD|raw-folder-path]"
 allowed-tools: "Read Write Edit Glob Grep Bash(obsidian *)"
 ---
 
 ## Objective
 
-Compile one daily conversation log into structured knowledge articles in the Obsidian vault.
+Compile one raw daily capture into the Vault Architecture v2 knowledge base.
 
 This command is operational only. Do not write `/mmc`, `/memory-mason:mmc`, or their execution chatter back into the vault.
 
@@ -37,184 +36,280 @@ Subfolder rules:
 Do not claim config is missing until you have attempted all four locations above. If none provide a vault path, fail fast with an explicit error that names every location checked.
 
 Use these paths for all operations:
-- Daily logs: {vault}/{subfolder}/daily/
-- Knowledge root: {vault}/{subfolder}/knowledge/
-- Concepts: {vault}/{subfolder}/knowledge/concepts/
-- Connections: {vault}/{subfolder}/knowledge/connections/
-- Index: {vault}/{subfolder}/knowledge/index.md
-- Build log: {vault}/{subfolder}/knowledge/log.md
-- State file: {vault}/{subfolder}/state.json
-- Hot cache: {vault}/{subfolder}/hot.md
-- Manifest: {vault}/{subfolder}/.manifest.json
+- Raw captures: {vault}/{subfolder}/_raw/
+- Raw day folder: {vault}/{subfolder}/_raw/{YYYY-MM-DD}/
+- Raw day metadata: {vault}/{subfolder}/_raw/{YYYY-MM-DD}/meta.json
+- Meta root: {vault}/{subfolder}/_meta/
+- State file: {vault}/{subfolder}/_meta/state.json
+- Manifest file: {vault}/{subfolder}/_meta/manifest.json
+- Build log: {vault}/{subfolder}/_meta/log.md
+- Fold archive: {vault}/{subfolder}/_meta/folds/
+- Session context: {vault}/{subfolder}/_meta/context.md
+- Taxonomy: {vault}/{subfolder}/_meta/taxonomy.md
+- Atlas: {vault}/{subfolder}/atlas/
+- Atlas home: {vault}/{subfolder}/atlas/home.md
+- Concepts: {vault}/{subfolder}/concepts/
+- Synthesis: {vault}/{subfolder}/synthesis/
+- Index: {vault}/{subfolder}/index.md
 
-## Steps
+## Pipeline
 
-1. Find and chunk the log to compile
-- If an argument was provided, use it as the target log file.
-- If no argument was provided, use today's daily log: {vault}/{subfolder}/daily/{YYYY-MM-DD}.md.
-If the target resolves to a folder {vault}/{subfolder}/daily/{YYYY-MM-DD}/, read chunks in numeric order: `001.md`, `002.md`, etc. Concatenate their contents in order to form the full log text. Process this concatenated text exactly as if it were a single flat file. Use the date string `YYYY-MM-DD` (not `YYYY-MM-DD.md`) as the state.json ingested key for folder-per-day logs.
-- If the file is missing, fail fast with an explicit error.
+### 0. Resolve the target raw capture
 
-Chunking protocol (required for files over 50KB):
-a. Read the file size. If under 50KB, read full content and proceed to Steps 2 and 3 as before.
-b. For large files: parse the file line-by-line while tracking fenced code blocks opened and closed by triple backticks.
-c. Only lines outside fenced code blocks may start a top-level block. This avoids false matches from pasted examples such as
-   `## Session [ISO timestamp] ...` or copied session headers inside tool output.
-d. Top-level blocks are:
-   - real transcript capture headers matching `^## Session \[[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?(?:Z)?\] .+ / .+$`
-   - event headers matching `^\*\*\[[0-9]{2}:[0-9]{2}:[0-9]{2}\] [^*]+\*\*$`
-   - leading preamble content before the first top-level block
-e. Build chunks by grouping consecutive top-level blocks up to roughly 50KB. Do not split a top-level block across chunks.
-f. If a single top-level block itself exceeds 100KB, treat it as its own standalone chunk and process it fully without truncation after Steps 2 and 3 are complete.
-g. After chunk boundaries are established, continue to Steps 2 and 3.
-h. After Steps 2 and 3 are complete, process chunks one at a time:
-   - For each chunk: extract 3-7 concepts (apply Step 4 logic per chunk using the current index and existing articles as context)
-  - Accumulate created/updated article names across blocks
-  - After all blocks: merge/deduplicate concepts (prefer updating existing over creating duplicates)
+- If no argument was provided, target today's local date folder: {vault}/{subfolder}/_raw/{YYYY-MM-DD}/.
+- If the argument matches `YYYY-MM-DD`, use that date folder under `_raw/`.
+- If the argument is a folder path, normalize it and require that it resolves inside {vault}/{subfolder}/_raw/.
+- Derive `sourceKey` as the date folder name `YYYY-MM-DD`.
+- Read chunk files matching `^[0-9]{3}\.md$` in numeric order: `001.md`, `002.md`, and so on.
+- Read `meta.json` if present for operational metadata only. Do not treat `meta.json` as narrative source text.
+- If the target folder does not exist, or no numeric chunk files exist, fail fast with an explicit error that names the path checked.
+- Concatenate chunk contents in numeric order with a single blank line between chunks. Use this exact concatenation for parsing and hashing.
+- Compute a 16-character SHA-256 hex hash for the concatenated source text.
+- If {vault}/{subfolder}/_meta/manifest.json already contains `sourceKey` with the same hash, and the user did not explicitly request recompilation, stop and report `Already compiled (unchanged).`
 
-Per-chunk checkpoint (for incremental /mmc runs):
-- Before processing each chunk, check {vault}/{subfolder}/state.json for a
-  "chunks" map under the daily log filename entry.
-- The chunk key must be deterministic and based on the real chunk boundaries, for example:
-  `session-2026-04-30T14:22:01-lines-10500-63299` or `preamble-lines-1-10499`.
-- If a chunk entry exists with a hash matching the current chunk content hash
-  (first 16 chars of SHA-256), skip that chunk - already compiled.
-- After compiling each chunk, write its hash to state.json immediately:
-  state.ingested["2026-04-30.md"].chunks["session-2026-04-30T14:22:01-lines-10500-63299"] = { hash: "<16-char>", compiled_at: "<ISO>" }
-- The top-level ingested entry hash (Step 8) still represents the full file hash.
+### 1. EXTRACT
 
-Manifest checkpoint (source-to-page lineage, optional but preferred):
-- Read {vault}/{subfolder}/.manifest.json if it exists, or start with `{ "sources": {} }`.
-- After the full log text is assembled, compute a full-source 16-character SHA-256 hash.
-- Use the same source key convention as state.json:
-  - flat file -> `YYYY-MM-DD.md`
-  - folder-per-day -> `YYYY-MM-DD`
-- If the manifest already contains the same source key with the same full-source hash and the user did not
-  explicitly ask to force recompilation, stop and report `Already compiled (unchanged).`
-- Use `state.json` for runtime checkpoints and chunk hashes. Use `.manifest.json` for source-to-page lineage.
+- Read {vault}/{subfolder}/index.md if it exists. If it does not exist, start with an empty catalog state.
+- Read {vault}/{subfolder}/_meta/taxonomy.md if it exists. Use it to normalize tags, aliases, and tag slugs before creating or updating pages.
+- Glob all files in {vault}/{subfolder}/concepts/.
+- Read frontmatter and lead sections of every existing concept page to build a duplicate-detection map by slug, title, aliases, and tags.
+- Fully read any existing concept whose slug, title, aliases, or tags overlap a candidate concept before deciding whether to create or update.
+- Extract only durable knowledge from the raw chunks: decisions, patterns, terminology, workflows, invariants, constraints, and recurring lessons.
+- Prefer updating an existing concept over creating a near-duplicate.
+- Do not hallucinate novelty. If a fact is already present in an existing concept, merge or refine it only when the raw chunks add new evidence, better wording, or changed status.
 
-2. Read the current knowledge index
-- Read {vault}/{subfolder}/knowledge/index.md if it exists.
-- If it does not exist, start with an empty index state.
+For every concept page, use this exact frontmatter schema:
 
-3. Read existing articles for context
-- Glob all files in {vault}/{subfolder}/knowledge/concepts/.
-- Glob all files in {vault}/{subfolder}/knowledge/connections/.
-- Read existing articles to avoid duplicates and find update targets.
-
-4. Extract concepts and compile
-- Identify 3-7 distinct concepts from the daily log that are worth their own article.
-- For each concept:
-- If it already exists in the knowledge base, update the existing article with new information and add the source to frontmatter.
-- If it is new, create a new article.
-- Create connection articles when the log reveals non-obvious relationships between 2+ existing concepts.
-- Prefer updating existing articles over creating near-duplicates.
-
-5. Article format
-- Follow these schemas exactly.
-
-Concept article (knowledge/concepts/{slug}.md):
 ```markdown
 ---
 title: "Concept Name"
-aliases: [alternate-name, abbreviation]
-tags: [domain, topic]
+type: concept
+status: seedling
+confidence: medium
+aliases: []
+tags: []
 sources:
-  - "daily/YYYY-MM-DD.md"
-created: YYYY-MM-DD
-updated: YYYY-MM-DD
+  - "_raw/2026-05-04/001.md"
+created: 2026-05-04
+updated: 2026-05-04
 ---
+```
 
+Concept status rules:
+- New concept pages always start as `seedling`.
+- Promote to `growing` when the concept has 3 or more unique `sources` entries.
+- Promote to `evergreen` when at least one synthesis page links to the concept.
+- `evergreen` overrides `growing`, and `growing` overrides `seedling`.
+- Never promote status without the required evidence.
+
+Confidence rules:
+- `low`: weakly supported, inferred, or only briefly mentioned.
+- `medium`: directly supported by the current raw capture or one durable prior source.
+- `high`: corroborated by multiple sources or expressed as an explicit stable decision.
+
+Concept page body format (frontmatter omitted here because the schema above is authoritative):
+
+```markdown
 # Concept Name
 
 [2-4 sentence core explanation]
 
 ## Key Points
 
-- [Bullet points, each self-contained]
+- [Self-contained point]
+- [Self-contained point]
+- [Self-contained point]
 
 ## Details
 
-[Deeper explanation, encyclopedia-style paragraphs]
+[Encyclopedia-style paragraph]
 
-## Related Concepts
+[Second encyclopedia-style paragraph]
 
-- [[concepts/related-concept]] - How it connects
+## Related
 
-## Sources
-
-- [[daily/YYYY-MM-DD.md]] - What was learned from this log
+- [[concepts/related-concept]] - [How it relates]
+- [[atlas/topic-slug]] - [Parent topic map]
 ```
 
-Connection article (knowledge/connections/{slug}.md):
+- Keep source provenance in frontmatter only. Do not add a separate `## Sources` section to concept pages.
+
+Concept update rules:
+- Preserve the original `created` date.
+- Update `updated` on every material change.
+- Merge and deduplicate `aliases`, `tags`, and `sources`.
+- Recompute `status` and `confidence` after merging sources.
+- Preserve the article's established scope. Do not rewrite it into a different concept just because the new source uses slightly different words.
+
+### 2. TRANSFORM
+
+- Scan the full concept set after EXTRACT, not just pages touched in this run.
+- Use normalized tags from the concept corpus as the primary grouping mechanism.
+- Generate or update atlas MOCs and synthesis pages only from evidence already present in concept pages and raw sources.
+
+MOC generation rule:
+- If 5 or more concept pages share the same normalized tag, create or update {vault}/{subfolder}/atlas/{tag-slug}.md.
+- One tag = one MOC file.
+- Do not create a tag MOC for fewer than 5 concepts.
+
+Atlas page format:
+
 ```markdown
 ---
-title: "Connection: X and Y"
-connects:
-  - "concepts/concept-x"
-  - "concepts/concept-y"
-sources:
-  - "daily/YYYY-MM-DD.md"
-created: YYYY-MM-DD
-updated: YYYY-MM-DD
+title: "Tag Name"
+type: moc
+tag: tag-slug
+created: 2026-05-04
+updated: 2026-05-04
 ---
 
-# Connection: X and Y
+# Tag Name
 
-## The Connection
+## Summary
 
-[What links these concepts]
+[1 short paragraph describing what this tag collects]
 
-## Key Insight
+## Concepts
 
-[The non-obvious relationship discovered]
+- [[concepts/concept-a]] - [One-line summary]
+- [[concepts/concept-b]] - [One-line summary]
+
+## Related Synthesis
+
+- [[synthesis/tag-slug]] - [Only if a synthesis page exists]
+
+## Related Tags
+
+- [[atlas/another-tag]] - [Only when genuinely related]
+```
+
+Synthesis generation rule:
+- Create or update {vault}/{subfolder}/synthesis/{tag-slug}.md only when all of the following are true:
+  - At least 3 concept pages share the same normalized tag.
+  - Those concepts draw from 3 or more different daily dates.
+  - The material supports a non-obvious cross-cutting pattern, such as a repeated tradeoff, failure mode, design heuristic, invariant, or adoption pattern.
+- Do not create synthesis pages for simple topical grouping or restated tag summaries.
+- If no non-obvious pattern is present, skip synthesis creation for that tag.
+
+Synthesis page format:
+
+```markdown
+---
+title: "Synthesis: Tag Name"
+type: synthesis
+tag: tag-slug
+concepts:
+  - "concepts/concept-a"
+  - "concepts/concept-b"
+sources:
+  - "_raw/2026-05-01/001.md"
+  - "_raw/2026-05-03/002.md"
+  - "_raw/2026-05-04/001.md"
+created: 2026-05-04
+updated: 2026-05-04
+---
+
+# Synthesis: Tag Name
+
+## Pattern
+
+[State the non-obvious cross-cutting pattern in 1-2 paragraphs]
 
 ## Evidence
 
-[Specific examples from conversations]
+- [[concepts/concept-a]] - [Evidence]
+- [[concepts/concept-b]] - [Evidence]
+- [[concepts/concept-c]] - [Evidence]
 
-## Related Concepts
+## Implications
 
-- [[concepts/concept-x]]
-- [[concepts/concept-y]]
+- [Reusable lesson]
+- [Constraint or tradeoff]
+- [Follow-up question or operational consequence]
 ```
 
-6. Update the knowledge index
-- Update {vault}/{subfolder}/knowledge/index.md.
-- Add new rows for newly created articles.
-- Update existing rows for updated articles.
-- Use row format: | [[path/slug]] | One-line summary | source-file | YYYY-MM-DD |
-- Ensure the index begins with:
+Maturity promotion during TRANSFORM:
+- After a synthesis page is created or updated, mark every concept it cites as `evergreen`.
+- Re-save those concept pages with updated frontmatter and `updated` dates if their status changed.
+
+Home MOC rule:
+- Always create or update {vault}/{subfolder}/atlas/home.md on every successful `/mmc` run.
+- `atlas/home.md` must include current vault stats and recent activity, even if no tag MOC or synthesis page changed.
+
+Home MOC format:
 
 ```markdown
-# Knowledge Base Index
+---
+title: "Memory Mason Home"
+type: moc
+created: 2026-05-04
+updated: 2026-05-04
+---
 
-| Article | Summary | Compiled From | Updated |
-|---------|---------|---------------|---------|
+# Memory Mason Home
+
+## Vault Stats
+
+- Concepts: [count]
+- Synthesis: [count]
+- MOCs: [count]
+- Last compile: [ISO timestamp]
+
+## Active Tags
+
+- [[atlas/tag-slug]] - [Concept count for the tag]
+
+## Recently Updated
+
+- [[concepts/example-concept]]
+- [[synthesis/example-tag]]
+- [[atlas/example-tag]]
 ```
 
-7. Append to build log
-- Append to {vault}/{subfolder}/knowledge/log.md using this format:
+### 3. LOAD
+
+- Update {vault}/{subfolder}/index.md.
+- The index lives at the vault root, not under a `knowledge/` folder.
+- Maintain one row per page for concepts, synthesis pages, and MOCs.
+- Use lowercase type values exactly: `concept`, `synthesis`, `moc`.
+- Every row must include a one-line summary.
+
+Index format:
 
 ```markdown
-## [ISO-timestamp] compile | daily-log-filename.md
-- Source: daily/YYYY-MM-DD.md
-- Articles created: [[concepts/x]], [[concepts/y]]
-- Articles updated: [[concepts/z]] (if any)
+# Memory Mason Index
+
+| Type | Article | Summary | Updated |
+|------|---------|---------|---------|
+| concept | [[concepts/example-concept]] | One-line summary. | 2026-05-04 |
+| synthesis | [[synthesis/example-tag]] | One-line summary. | 2026-05-04 |
+| moc | [[atlas/example-tag]] | One-line summary. | 2026-05-04 |
 ```
 
-8. Update state.json
-- Read {vault}/{subfolder}/state.json if it exists, or start with default state: {"ingested":{}, "last_compile": null, "last_lint": null}
-- Compute a 16-character SHA-256 hex hash of the daily log file content. Reuse the full-source hash from the
-  manifest checkpoint if you already computed it.
-- For folder-per-day logs: compute the hash over the full concatenated content of all chunks (same as if it were a flat file).
-- Set the ingested entry for the compiled daily log key. For flat files use filename key `"2026-04-26.md"`. For folder-per-day logs use date key `"2026-04-30"` (no extension):
-  {"hash": "<16-char-hash>", "compiled_at": "<ISO-8601 timestamp>"}
-- Set "last_compile" to the current ISO-8601 timestamp.
-- Write the updated state to {vault}/{subfolder}/state.json with 2-space JSON indentation.
+- Read {vault}/{subfolder}/_meta/state.json if it exists. Otherwise start with:
 
-8.4 Update .manifest.json
-- Read {vault}/{subfolder}/.manifest.json if it exists, or start with:
+```json
+{
+  "ingested": {},
+  "last_compile": null,
+  "last_lint": null
+}
+```
+
+- Set `ingested[sourceKey]` to:
+
+```json
+{
+  "hash": "<16-char-hash>",
+  "compiled_at": "<ISO-8601 timestamp>",
+  "chunk_count": 3
+}
+```
+
+- Set `last_compile` to the current ISO-8601 timestamp.
+- Write {vault}/{subfolder}/_meta/state.json with 2-space JSON indentation.
+
+- Read {vault}/{subfolder}/_meta/manifest.json if it exists. Otherwise start with:
 
 ```json
 {
@@ -222,67 +317,100 @@ updated: YYYY-MM-DD
 }
 ```
 
-- Set `sources[sourceKey]` using the same source key chosen for state.json.
-- Record:
-  - `source_path`: `daily/YYYY-MM-DD.md` for flat files or `daily/YYYY-MM-DD/` for folder-per-day logs
-  - `hash`: the 16-character full-source hash
-  - `compiled_at`: current ISO timestamp
-  - `pages_created`: knowledge-relative page paths created by this compile, such as
-    `knowledge/concepts/auth-pattern.md`
-  - `pages_updated`: knowledge-relative page paths updated by this compile
-- If the source already exists in the manifest, merge and deduplicate `pages_created` and `pages_updated`
-  instead of narrowing them.
-- Preserve all other source entries.
-- Write the updated manifest to {vault}/{subfolder}/.manifest.json with 2-space JSON indentation.
+- Set `sources[sourceKey]` to:
 
-8.5 Update hot.md
-- After compiling, write a ~500-word session hot cache to {vault}/{subfolder}/hot.md.
-- Format:
+```json
+{
+  "source_path": "_raw/YYYY-MM-DD/",
+  "hash": "<16-char-hash>",
+  "compiled_at": "<ISO-8601 timestamp>",
+  "chunks": [
+    "_raw/YYYY-MM-DD/001.md",
+    "_raw/YYYY-MM-DD/002.md"
+  ],
+  "pages_created": [
+    "concepts/example-concept.md",
+    "atlas/example-tag.md"
+  ],
+  "pages_updated": [
+    "concepts/another-concept.md",
+    "synthesis/example-tag.md",
+    "index.md"
+  ]
+}
+```
+
+- Merge and deduplicate `pages_created` and `pages_updated` if the source key already exists.
+- Preserve all other manifest entries.
+- Write {vault}/{subfolder}/_meta/manifest.json with 2-space JSON indentation.
+
+- Append one build entry to {vault}/{subfolder}/_meta/log.md using this format:
+
+```markdown
+## [ISO-timestamp] compile | YYYY-MM-DD
+- Source: _raw/YYYY-MM-DD/ ([chunk count] chunks)
+- Concepts created: [count]
+- Concepts updated: [count]
+- Synthesis created: [count]
+- Synthesis updated: [count]
+- MOCs created: [count]
+- MOCs updated: [count]
+- Index rows touched: [count]
+```
+
+- After appending the compile entry, count `_meta/log.md` entries by `## [` headings.
+- If `_meta/log.md` has 32 or more entries, auto-fold the oldest 16 entries (`k=4`) into `{vault}/{subfolder}/_meta/folds/{fold-id}.md`.
+- Reuse `/mma` extractive rules for the fold page: no invented facts, preserve verbatim source entries, and summarize only what those entries record.
+- Replace the folded range in `_meta/log.md` with:
+
+```markdown
+<!-- folded: [[_meta/folds/{fold-id}]] ({COUNT} entries, {EARLIEST-DATE} to {LATEST-DATE}) -->
+```
+
+- Append a fold action entry to `_meta/log.md` after the replacement:
+
+```markdown
+## [ISO-timestamp] fold | {fold-id}
+- Entries folded: {COUNT} ({EARLIEST-DATE} to {LATEST-DATE})
+- Fold page: [[_meta/folds/{fold-id}]]
+```
+
+- Report the fold action in `/mmc` output whenever auto-archive runs.
+
+- Overwrite {vault}/{subfolder}/_meta/context.md on every successful compile.
+- Keep the body under 300 words.
+- `context.md` must summarize only current focus, open decisions, and active threads that are still relevant after this compile.
+- Do not append old context verbatim. Carry forward only unresolved threads that are still grounded in the latest compiled knowledge.
+
+context.md format:
 
 ```markdown
 ---
 type: meta
-title: "Hot Cache"
-updated: {ISO-timestamp}
+title: "Session Context"
+updated: 2026-05-04T12:34:56Z
 ---
 
-## Last Updated
-{date}
+## Current Focus
 
-## Key Recent Facts
-- {3-5 bullets summarizing most important things compiled in this session}
+[Short paragraph]
 
-## Recent Changes
-- Created: {wikilinks to newly created articles, if any}
-- Updated: {wikilinks to updated articles, if any}
+## Open Decisions
+
+- [Decision still unresolved]
 
 ## Active Threads
-- {any open questions or follow-ups visible in the daily log}
+
+- [Thread still active]
 ```
-
-- Keep hot.md under 500 words. Overwrite completely each time (it's a cache, not a log).
-- Use the created/updated article lists from the current compile and, when helpful, the manifest entry you just
-  wrote to keep the cache consistent with durable page lineage.
-
-8.6 Decompose oversized flat daily logs
-- This step applies only when the source was a flat `.md` file (not already a folder-per-day).
-- If the compiled daily log is still over 2MB or 20,000 lines after successful compilation, decompose it inside the vault for Obsidian usability.
-- Create chunk files under {vault}/{subfolder}/daily/chunks/{YYYY-MM-DD}/ using stable names such as `part-001.md`, `part-002.md`, and so on.
-- Move only already-compiled chunks into those files. Preserve their original text verbatim.
-- Rewrite {vault}/{subfolder}/daily/{YYYY-MM-DD}.md as a lightweight index/stub.
-- If the source was already a folder-per-day, skip this step - the data is already chunked.
-
-9. Quality standards
-- Every article must have complete YAML frontmatter with all required fields.
-- Every article must link to at least 2 other articles via [[wikilinks]].
-- Key Points section must include 3-5 bullet points minimum.
-- Details section must include 2+ paragraphs minimum.
-- Related Concepts section must include 2+ entries minimum.
-- Sources section must cite the daily log with specific claims extracted.
 
 ## Writing Guidelines
 
 - Write in encyclopedia style: factual, clear, and self-contained.
-- Use Obsidian wikilinks without .md extensions.
+- Use Obsidian wikilinks without `.md` extensions in article bodies.
 - Keep filenames lowercase with hyphens for slugs.
-- Preserve existing article intent and structure when updating.
+- Use raw chunk paths like `_raw/YYYY-MM-DD/001.md` for source provenance.
+- Preserve existing article intent and scope when updating.
+- Prefer fewer precise pages over noisy page proliferation.
+- Never invent facts that are not grounded in raw chunks or already-existing concept pages.
+- Finish only when EXTRACT, TRANSFORM, and LOAD outputs are internally consistent with each other.

@@ -1,19 +1,28 @@
 ---
 name: mma
 description: >
-  Archive old build log entries from knowledge/log.md into compact summary pages
-  in knowledge/folds/. Prevents log.md from growing unbounded. Extractive only —
+  Archive old build log entries from _meta/log.md into compact summary pages
+  in _meta/folds/. Prevents log.md from growing unbounded. Extractive only —
   no invented facts, additive only — never removes source entries until confirmed.
-  Use when knowledge/log.md exceeds 200 entries or feels unwieldy.
+  Use when _meta/log.md exceeds 200 entries or feels unwieldy.
 argument-hint: "[--dry-run] [--k <batch-exponent>]"
 allowed-tools: "Read Write Edit Glob"
 ---
 
 ## Objective
 
-Fold the oldest 2^k entries from knowledge/log.md into a single summary page, reducing log.md size while preserving all information.
+Fold the oldest 2^k entries from _meta/log.md into a single summary page, reducing log.md size while preserving all information.
 
 This command is operational only. Do not write `/mma`, `/memory-mason:mma`, or their execution chatter back into the vault.
+
+## Auto-Trigger
+
+Routine archival runs automatically when mmc appends a build log entry that brings `_meta/log.md` to 32 or more entries. mmc folds the oldest 16 entries (k=4) into `_meta/folds/` without requiring a manual `/mma` call.
+
+Use `/mma` for:
+- Manual runs outside the compile flow
+- Custom batch sizes (`--k 5` folds 32 entries at once)
+- Dry-run inspection before committing a fold (`--dry-run`)
 
 ## Path Resolution
 
@@ -44,7 +53,7 @@ Always dry-run first. Only write when user confirms or `--commit` is passed.
 
 ## Steps
 
-1. Read {vault}/{subfolder}/knowledge/log.md.
+1. Read {vault}/{subfolder}/_meta/log.md.
    - Count total entries (each starts with `## [`).
    - If under 32 entries, report "Nothing to fold yet (N entries, minimum 32)." and stop.
 
@@ -59,14 +68,14 @@ Always dry-run first. Only write when user confirms or `--commit` is passed.
    - Include exact wikilinks to articles mentioned.
    - Do NOT invent facts not present in the source entries.
 
-4. Fold page format (knowledge/folds/{fold-id}.md):
+4. Fold page format (_meta/folds/{fold-id}.md):
 
 ```markdown
 ---
 title: "Fold: {EARLIEST-DATE} to {LATEST-DATE}"
 fold_id: "{fold-id}"
 entries_folded: {COUNT}
-source: "knowledge/log.md"
+source: "_meta/log.md"
 created: {ISO-date}
 ---
 
@@ -86,17 +95,17 @@ created: {ISO-date}
 {verbatim copy of the folded entries}
 ```
 
-5. Write the fold page to knowledge/folds/{fold-id}.md.
+5. Write the fold page to _meta/folds/{fold-id}.md.
 
 6. Remove the folded entries from log.md.
    - Replace the folded section with a single back-reference line:
-     `<!-- folded: [[folds/{fold-id}]] ({COUNT} entries, {EARLIEST-DATE} to {LATEST-DATE}) -->`
+   `<!-- folded: [[_meta/folds/{fold-id}]] ({COUNT} entries, {EARLIEST-DATE} to {LATEST-DATE}) -->`
 
 7. Append to log.md:
 ```
 ## [{ISO-timestamp}] fold | {fold-id}
 - Entries folded: {COUNT} ({EARLIEST-DATE} to {LATEST-DATE})
-- Fold page: [[folds/{fold-id}]]
+- Fold page: [[_meta/folds/{fold-id}]]
 ```
 
 ## Dry-run Output
@@ -107,7 +116,7 @@ Fold plan:
 - Entries to fold: {COUNT} (oldest 2^{k})
 - Date range: {EARLIEST-DATE} to {LATEST-DATE}
 - Fold ID: {fold-id}
-- Fold page: knowledge/folds/{fold-id}.md
+- Fold page: _meta/folds/{fold-id}.md
 - Remaining in log.md: {total - COUNT} entries
 
 Run /mma --commit to execute.

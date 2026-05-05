@@ -2,9 +2,9 @@
 name: mml
 description: >
   Run health checks on the knowledge base. Finds broken wikilinks, orphan
-  pages, uncompiled daily logs, stale articles, missing backlinks, sparse
-  content, manifest drift, and stale hot cache. Reports issues by severity:
-  error, warning, suggestion.
+  pages, uncompiled raw captures, stale articles, missing backlinks, sparse
+  content, manifest drift, and stale session context. Reports issues by
+  severity: error, warning, suggestion.
 allowed-tools: "Read Glob Grep Bash(obsidian *)"
 ---
 
@@ -35,26 +35,31 @@ Subfolder rules:
 Do not claim config is missing until you have attempted all four locations above. If none provide a vault path, fail fast with an explicit error that names every location checked.
 
 Use these paths:
-- Knowledge root: {vault}/{subfolder}/knowledge/
-- Daily logs: {vault}/{subfolder}/daily/
-- State file: {vault}/{subfolder}/state.json
-- Manifest file: {vault}/{subfolder}/.manifest.json
-- Hot cache: {vault}/{subfolder}/hot.md
+- Atlas: {vault}/{subfolder}/atlas/
+- Concepts: {vault}/{subfolder}/concepts/
+- Synthesis: {vault}/{subfolder}/synthesis/
+- Index: {vault}/{subfolder}/index.md
+- Raw captures: {vault}/{subfolder}/_raw/
+- State file: {vault}/{subfolder}/_meta/state.json
+- Manifest file: {vault}/{subfolder}/_meta/manifest.json
+- Session context: {vault}/{subfolder}/_meta/context.md
+- Build log: {vault}/{subfolder}/_meta/log.md
 
 ## Execution Rules
 
-- Glob all markdown files under {vault}/{subfolder}/knowledge/ recursively.
+- Glob all markdown files under {vault}/{subfolder}/atlas/, {vault}/{subfolder}/concepts/, and {vault}/{subfolder}/synthesis/. Also include {vault}/{subfolder}/index.md if it exists.
+- Do not lint files under `_raw/` or `_meta/` as knowledge articles, except for the explicit checks below against `_meta/manifest.json` and `_meta/context.md`.
 - Parse wikilinks in the form [[path/slug]] from article content.
-- Treat links starting with daily/ as valid source references.
-- Report every issue found. Do not stop after first failure.
+- Treat links starting with `_raw/` as valid source references.
+- Report every issue found. Do not stop after the first failure.
 
 ## Checks
 
 ### Check 1: Broken wikilinks (severity: error)
 
-- For each knowledge article, find all [[wikilinks]].
-- Skip links starting with daily/.
-- Check whether each linked target exists at knowledge/{link}.md.
+- For each knowledge article and the root `index.md`, find all [[wikilinks]].
+- Skip links starting with `_raw/`.
+- Check whether each linked target exists at {vault}/{subfolder}/{link}.md.
 - Report format:
 
 ```text
@@ -63,7 +68,7 @@ ERROR [broken_link] file.md: Broken link: [[target]] - target does not exist
 
 ### Check 2: Orphan pages (severity: warning)
 
-- For each article in knowledge/, count inbound links from other knowledge articles.
+- For each article in `atlas/`, `concepts/`, and `synthesis/`, count inbound links from other articles in those same content directories.
 - Report any article with zero inbound links.
 - Report format:
 
@@ -71,30 +76,31 @@ ERROR [broken_link] file.md: Broken link: [[target]] - target does not exist
 WARN [orphan_page] file.md: No other articles link to [[path/slug]]
 ```
 
-### Check 3: Uncompiled daily logs (severity: warning)
+### Check 3: Uncompiled raw captures (severity: warning)
 
-- Read {vault}/{subfolder}/state.json if it exists.
-- Use the ingested map of filename -> hash.
-- Glob all .md files in {vault}/{subfolder}/daily/ (flat files). Also glob all immediate subdirectories in {vault}/{subfolder}/daily/ (folder-per-day entries). For flat files the key is the filename (e.g. "2026-04-30.md"). For folders the key is the date string (e.g. "2026-04-30"). Check each against state.json ingested map using the appropriate key format.
-- Report any daily log that is not present in ingested.
+- Read {vault}/{subfolder}/_meta/state.json if it exists.
+- Use the `ingested` map of `YYYY-MM-DD -> hash`.
+- Glob all immediate subdirectories in {vault}/{subfolder}/_raw/ that match daily capture folders.
+- For each folder, use the folder name `YYYY-MM-DD` as the source key.
+- Report any raw capture folder that is not present in `ingested`.
 - Report format:
 
 ```text
-WARN [orphan_source] daily/YYYY-MM-DD.md: Not yet compiled
+WARN [orphan_source] _raw/YYYY-MM-DD/: Not yet compiled
 ```
 
 ### Check 4: Stale articles (severity: warning)
 
-- From state.json ingested entries, compare current daily log file hash with stored hash.
-- For folder-per-day logs: compute hash over concatenated chunk content in numeric order. Compare against stored hash for the date key `"YYYY-MM-DD"`.
-- If a file changed since compilation, report it.
+- From `state.json` ingested entries, compare the current raw capture hash with the stored hash.
+- Compute the current hash over the concatenated chunk contents in numeric order.
+- If a raw capture changed since compilation, report it.
 - Report format:
 
 ```text
-WARN [stale_article] daily/file.md: File changed since last compilation
+WARN [stale_article] _raw/YYYY-MM-DD/: File changed since last compilation
 ```
 
-- Include recommendation to run /mmc.
+- Include a recommendation to run `/mmc`.
 
 ### Check 5: Missing backlinks (severity: suggestion)
 
@@ -116,32 +122,30 @@ SUGGESTION [missing_backlink] a.md: [[a/slug]] links to [[b/slug]] but not vice 
 SUGGESTION [sparse_article] file.md: Only N words (minimum recommended: 200)
 ```
 
-### Check 7: Large daily logs (severity: warning)
+### Check 7: Large raw captures (severity: warning / error)
 
-For each entry under `{vault}/{subfolder}/daily/`:
-- Flat `.md` files: read file size directly.
-- Folder-per-day directories: sum sizes of all `NNN.md` chunk files inside.
+For each entry under `{vault}/{subfolder}/_raw/`:
+- Read only numeric chunk files such as `001.md`, `002.md`, and so on.
+- Sum the sizes of those chunk files for the daily capture folder.
+- Ignore `meta.json` for size calculations.
 
-Report flat files over 500KB:
+Report captures over 500KB:
 ```text
-WARN [large_daily_log] daily/YYYY-MM-DD.md: File is {size}KB (over 500KB). Run /mmc to compile.
+WARN [large_daily_folder] _raw/YYYY-MM-DD/: Total {size}KB across {n} chunks. Consider running /mmc.
 ```
-Report flat files over 2MB as error:
+
+Report captures over 2MB as error:
 ```text
-ERROR [oversized_daily_log] daily/YYYY-MM-DD.md: File is {size}MB (over 2MB). /mmc may fail. Run /mmc immediately.
-```
-Report folder-per-day total over 2MB as warning (chunked = Obsidian-safe, but flag for awareness):
-```text
-WARN [large_daily_folder] daily/YYYY-MM-DD/: Total {size}MB across {n} chunks. Consider running /mmc.
+ERROR [oversized_daily_folder] _raw/YYYY-MM-DD/: Total {size}MB across {n} chunks. Run /mmc immediately.
 ```
 
 ### Check 8: Manifest integrity (severity: error / warning / suggestion)
 
-- Read {vault}/{subfolder}/.manifest.json if it exists.
+- Read {vault}/{subfolder}/_meta/manifest.json if it exists.
 - If it is missing, report:
 
 ```text
-SUGGESTION [missing_manifest] .manifest.json: No source-to-page manifest yet. Run /mmc to create lineage metadata.
+SUGGESTION [missing_manifest] _meta/manifest.json: No source-to-page manifest yet. Run /mmc to create lineage metadata.
 ```
 
 - If it exists, it must be valid JSON with a top-level `sources` object.
@@ -150,41 +154,41 @@ SUGGESTION [missing_manifest] .manifest.json: No source-to-page manifest yet. Ru
   - `compiled_at` must be a string
   - `pages_created` and `pages_updated` must be arrays of strings if present
   - every referenced page path must exist
-- If a source key exists in both state.json and .manifest.json and the hashes differ, report:
+- If a source key exists in both `state.json` and `_meta/manifest.json` and the hashes differ, report:
 
 ```text
-WARN [manifest_drift] .manifest.json: Source key {sourceKey} hash differs from state.json
+WARN [manifest_drift] _meta/manifest.json: Source key {sourceKey} hash differs from state.json
 ```
 
 - If a referenced page is missing, report:
 
 ```text
-ERROR [manifest_page_missing] .manifest.json: Listed page {path} does not exist
+ERROR [manifest_page_missing] _meta/manifest.json: Listed page {path} does not exist
 ```
 
-### Check 9: Hot cache freshness (severity: warning / suggestion)
+### Check 9: Session context freshness (severity: warning / suggestion)
 
-- Check whether {vault}/{subfolder}/hot.md exists.
+- Check whether {vault}/{subfolder}/_meta/context.md exists.
 - If it is missing, report:
 
 ```text
-SUGGESTION [missing_hot_cache] hot.md: No hot cache yet. Run /mmc to create one.
+SUGGESTION [missing_context] _meta/context.md: No session context yet. Run /mmc to create one.
 ```
 
 - If it exists, ensure frontmatter includes:
   - `type: meta`
-  - `title: "Hot Cache"`
+  - `title: "Session Context"`
   - `updated:`
 - If a required field is missing, report:
 
 ```text
-WARN [invalid_hot_cache] hot.md: Missing required frontmatter field {field}
+WARN [invalid_context] _meta/context.md: Missing required frontmatter field {field}
 ```
 
-- If `last_compile` exists in state.json and hot.md's `updated` timestamp is older than `last_compile`, report:
+- If `last_compile` exists in `state.json` and `context.md`'s `updated` timestamp is older than `last_compile`, report:
 
 ```text
-WARN [stale_hot_cache] hot.md: Hot cache is older than the most recent compilation
+WARN [stale_context] _meta/context.md: Session context is older than the most recent compilation
 ```
 
 ## Output Format
@@ -196,11 +200,12 @@ Return results exactly in this structure:
 
 ### Errors (must fix)
 - ERROR [broken_link] ...
-- ERROR [oversized_daily_log] ...
+- ERROR [oversized_daily_folder] ...
+- ERROR [manifest_page_missing] ...
 
 ### Warnings (should fix)
 - WARN [orphan_page] ...
-- WARN [large_daily_log] ...
+- WARN [large_daily_folder] ...
 
 ### Suggestions (nice to fix)
 - SUGGESTION [sparse_article] ...

@@ -2,8 +2,9 @@
 name: mms
 description: >
   Show knowledge base statistics: article count by type, last compile time,
-  daily log status, total vault size, hot cache status, manifest status, and
-  a health summary. Quick overview of the Memory Mason knowledge base state.
+  raw capture status, total vault size, session context status, manifest
+  status, and a health summary. Quick overview of the Memory Mason knowledge
+  base state.
 allowed-tools: "Read Glob Bash(obsidian *)"
 ---
 
@@ -34,66 +35,68 @@ Subfolder rules:
 Do not claim config is missing until you have attempted all four locations above. If none provide a vault path, fail fast with an explicit error that names every location checked.
 
 Use these paths:
-- State file: {vault}/{subfolder}/state.json
-- Manifest file: {vault}/{subfolder}/.manifest.json
-- Hot cache: {vault}/{subfolder}/hot.md
-- Concepts: {vault}/{subfolder}/knowledge/concepts/
-- Connections: {vault}/{subfolder}/knowledge/connections/
-- Q&A: {vault}/{subfolder}/knowledge/qa/
-- Daily logs: {vault}/{subfolder}/daily/
-- Index: {vault}/{subfolder}/knowledge/index.md
+- State file: {vault}/{subfolder}/_meta/state.json
+- Manifest file: {vault}/{subfolder}/_meta/manifest.json
+- Session context: {vault}/{subfolder}/_meta/context.md
+- Build log: {vault}/{subfolder}/_meta/log.md
+- Atlas: {vault}/{subfolder}/atlas/
+- Concepts: {vault}/{subfolder}/concepts/
+- Synthesis: {vault}/{subfolder}/synthesis/
+- Raw captures: {vault}/{subfolder}/_raw/
+- Index: {vault}/{subfolder}/index.md
 
 ## Steps
 
-1. Read {vault}/{subfolder}/state.json if it exists.
+1. Read {vault}/{subfolder}/_meta/state.json if it exists.
 
-1.5 Read {vault}/{subfolder}/.manifest.json if it exists.
+1.5 Read {vault}/{subfolder}/_meta/manifest.json if it exists.
 
 2. Count files with glob:
-- {vault}/{subfolder}/knowledge/concepts/*.md -> concept count
-- {vault}/{subfolder}/knowledge/connections/*.md -> connection count
-- {vault}/{subfolder}/knowledge/qa/*.md -> Q&A count
-- Count daily log entries: glob {vault}/{subfolder}/daily/*.md (flat files) + glob {vault}/{subfolder}/daily/*/ (folders). Each flat file = 1 log entry. Each folder = 1 log entry. Report total as combined count.
+- {vault}/{subfolder}/concepts/*.md -> concept count
+- {vault}/{subfolder}/synthesis/*.md -> synthesis count
+- {vault}/{subfolder}/atlas/*.md -> MOC count, including `home.md`
+- Count raw capture entries: glob immediate subdirectories in {vault}/{subfolder}/_raw/. Each date folder = 1 raw capture entry.
 
-**2b. For each daily log entry in `{vault}/{subfolder}/daily/`:**
-- For flat `.md` files: record filename + size in bytes.
-- For folder-per-day directories: sum the sizes of all `NNN.md` chunk files inside. Record `{YYYY-MM-DD}/` + total size.
-- Identify entries over 500KB (524288 bytes) - both flat and folder total sizes count.
+2.5 For each raw capture entry in `{vault}/{subfolder}/_raw/`:
+- Sum the sizes of numeric chunk files such as `001.md`, `002.md`, and so on.
+- Ignore `meta.json` for size calculations.
+- Record `{YYYY-MM-DD}/` plus total size.
+- Identify entries over 500KB (524288 bytes).
 
-3. From state.json, read:
-- total_cost_usd (if present)
-- ingested entries and each compiled_at timestamp
+3. From `state.json`, read:
+- `total_cost_usd` if present
+- `ingested` entries and each `compiled_at` timestamp
 
-3.5 From .manifest.json, read:
+3.5 From `_meta/manifest.json`, read:
 - total tracked source count (`sources` object size)
-- each source entry hash and compiled_at timestamp
+- each source entry hash and `compiled_at` timestamp
 - any source paths that no longer exist on disk
 
-4. Determine the most recent compile timestamp from ingested entries.
-- If state.json has no ingested entries but .manifest.json exists, use the most recent manifest `compiled_at`.
+4. Determine the most recent compile timestamp from `ingested` entries.
+- If `state.json` has no ingested entries but `_meta/manifest.json` exists, use the most recent manifest `compiled_at`.
 
-5. Count uncompiled daily logs.
-- Uncompiled means a daily log exists but is not present in the ingested map.
+5. Count uncompiled raw captures.
+- Uncompiled means a raw capture folder exists in `_raw/` but is not present in the `ingested` map.
 
-5.5 Identify large daily logs.
-- List any daily log over 500KB with its filename and size.
-- If total daily/ directory size exceeds 2MB, flag it.
-- For folder-per-day entries, the total size is the sum of all chunk files. If a folder's total exceeds 2MB, flag it as oversized even though no single file exceeds that threshold.
+5.5 Identify large raw captures.
+- List any raw capture over 500KB with its folder name and size.
+- If total `_raw/` directory size exceeds 2MB, flag it.
+- If a raw capture folder's total exceeds 2MB, flag it as oversized.
 
 5.6 Determine manifest status.
-- Report `present` when .manifest.json exists and parses successfully.
+- Report `present` when `_meta/manifest.json` exists and parses successfully.
 - Report `missing` when it does not exist.
 - Report tracked source count.
 - If manifest source paths are recorded but missing on disk, mark manifest status as `stale references`.
 
-5.7 Determine hot cache status.
-- If {vault}/{subfolder}/hot.md exists, read its frontmatter `updated` timestamp.
-- Compare hot.md `updated` against the most recent compile timestamp.
-- Report `fresh` when hot.md is updated at or after the most recent compile timestamp.
-- Report `stale` when hot.md exists but is older than the most recent compile timestamp.
-- Report `missing` when hot.md does not exist.
+5.7 Determine session context status.
+- If {vault}/{subfolder}/_meta/context.md exists, read its frontmatter `updated` timestamp.
+- Compare `context.md` `updated` against the most recent compile timestamp.
+- Report `fresh` when `context.md` is updated at or after the most recent compile timestamp.
+- Report `stale` when `context.md` exists but is older than the most recent compile timestamp.
+- Report `missing` when `context.md` does not exist.
 
-6. Read the first 5 data rows from {vault}/{subfolder}/knowledge/index.md as preview.
+6. Read the first 5 data rows from {vault}/{subfolder}/index.md as preview.
 - Keep the header and first five article rows.
 
 ## Report Format
@@ -104,29 +107,29 @@ Return status exactly like this:
 ## Knowledge Base Status
 
 **Vault:** {vaultPath}/{subfolder}
-**Articles:** {concept count} concepts, {connection count} connections, {qa count} Q&A
-**Daily logs:** {total} total, {uncompiled} uncompiled
+**Articles:** {concept count} concepts, {synthesis count} synthesis, {moc count} MOCs
+**Raw captures:** {total} total, {uncompiled} uncompiled
 **Last compiled:** {ISO timestamp or "never"}
 **Manifest:** {present/missing} ({tracked source count} sources)
-**Hot cache:** {fresh/stale/missing} ({updated timestamp or "never"})
+**Context:** {fresh/stale/missing} ({updated timestamp or "never"})
 
 ## Recent Index (first 5 entries)
 {index preview}
 
 ## Health
-{healthy / N daily logs need compilation}
+{healthy / N raw captures need compilation}
 - Manifest: {present / missing / stale references}
-- Hot cache: {fresh / stale / missing}
+- Context: {fresh / stale / missing}
 
-## Daily Log Sizes
-{table: filename | size | status}
+## Raw Capture Sizes
+{table: folder | size | status}
 - status: "OK" if under 500KB, "LARGE" if over 500KB, "⚠ VERY LARGE" if over 2MB
 
-**Total daily/:** {total size in MB}
-{If any log is LARGE: "Tip: Run /mmc on large logs to compile them."}
+**Total _raw/:** {total size in MB}
+{If any capture is LARGE: "Tip: Run /mmc on recent captures to keep the vault current."}
 ```
 
 ## Health Rule
 
-- If uncompiled is 0, report healthy.
-- If uncompiled is greater than 0, report N daily logs need compilation.
+- If `uncompiled` is 0, report healthy.
+- If `uncompiled` is greater than 0, report `N raw captures need compilation`.
