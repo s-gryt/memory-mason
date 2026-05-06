@@ -99,6 +99,13 @@ Use these paths:
 6. Read the first 5 data rows from {vault}/{subfolder}/index.md as preview.
 - Keep the header and first five article rows.
 
+7. Compute knowledge graph metrics:
+- For each concept page, count outbound `[[...]]` wikilinks in the body (exclude frontmatter, exclude `_raw/` source references).
+- Compute average outbound wikilinks per concept page.
+- Count concept pages with zero outbound wikilinks (isolated concepts).
+- Count concept pages containing `[!contradiction]` callouts (unresolved contradictions).
+- Count concept pages containing `[!gap]` callouts (knowledge gaps).
+
 ## Report Format
 
 Return status exactly like this:
@@ -112,6 +119,12 @@ Return status exactly like this:
 **Last compiled:** {ISO timestamp or "never"}
 **Manifest:** {present/missing} ({tracked source count} sources)
 **Context:** {fresh/stale/missing} ({updated timestamp or "never"})
+
+## Knowledge Graph
+- Avg wikilinks per concept: {N.N}
+- Isolated concepts (0 links): {count}
+- Unresolved contradictions: {count}
+- Knowledge gaps: {count}
 
 ## Recent Index (first 5 entries)
 {index preview}

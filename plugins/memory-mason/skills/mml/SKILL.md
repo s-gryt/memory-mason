@@ -3,14 +3,15 @@ name: mml
 description: >
   Run health checks on the knowledge base. Finds broken wikilinks, orphan
   pages, uncompiled raw captures, stale articles, missing backlinks, sparse
-  content, manifest drift, and stale session context. Reports issues by
-  severity: error, warning, suggestion.
+  content, manifest drift, stale session context, unresolved contradictions,
+  wikilink density issues, and knowledge gaps. Reports issues by severity:
+  error, warning, suggestion.
 allowed-tools: "Read Glob Grep Bash(obsidian *)"
 ---
 
 ## Objective
 
-Run nine health checks on the knowledge base and report all findings by severity.
+Run twelve health checks on the knowledge base and report all findings by severity.
 
 This command is operational only. Do not write `/mml`, `/memory-mason:mml`, or their execution chatter back into the vault.
 
@@ -191,6 +192,38 @@ WARN [invalid_context] _meta/context.md: Missing required frontmatter field {fie
 WARN [stale_context] _meta/context.md: Session context is older than the most recent compilation
 ```
 
+### Check 10: Unresolved contradictions (severity: warning)
+
+- For each article in `concepts/`, search for `[!contradiction]` callout blocks.
+- Each unresolved contradiction prevents the concept from reaching `evergreen` status.
+- Report format:
+
+```text
+WARN [unresolved_contradiction] concepts/file.md: Contains N unresolved [!contradiction] callout(s)
+```
+
+### Check 11: Wikilink density (severity: suggestion)
+
+- For each article in `concepts/`, count outbound `[[...]]` wikilinks in the body (excluding frontmatter and `_raw/` source references).
+- Report any concept page with zero outbound wikilinks.
+- Report any atlas MOC page with fewer than 3 concept links.
+- Report format:
+
+```text
+SUGGESTION [isolated_concept] concepts/file.md: No outbound wikilinks — consider adding related concept links
+SUGGESTION [thin_moc] atlas/file.md: Only N concept links (minimum recommended: 3)
+```
+
+### Check 12: Knowledge gaps (severity: suggestion)
+
+- For each article in `concepts/`, search for `[!gap]` callout blocks.
+- Report the total count of concepts with knowledge gaps.
+- Report format:
+
+```text
+SUGGESTION [knowledge_gap] concepts/file.md: Contains [!gap] callout — awaiting enrichment from future sessions
+```
+
 ## Output Format
 
 Return results exactly in this structure:
@@ -206,9 +239,13 @@ Return results exactly in this structure:
 ### Warnings (should fix)
 - WARN [orphan_page] ...
 - WARN [large_daily_folder] ...
+- WARN [unresolved_contradiction] ...
 
 ### Suggestions (nice to fix)
 - SUGGESTION [sparse_article] ...
+- SUGGESTION [isolated_concept] ...
+- SUGGESTION [thin_moc] ...
+- SUGGESTION [knowledge_gap] ...
 
 ### Summary
 - Errors: N
