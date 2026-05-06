@@ -4,14 +4,15 @@ description: >
   Run health checks on the knowledge base. Finds broken wikilinks, orphan
   pages, uncompiled raw captures, stale articles, missing backlinks, sparse
   content, manifest drift, stale session context, unresolved contradictions,
-  wikilink density issues, and knowledge gaps. Reports issues by severity:
-  error, warning, suggestion.
+  wikilink density issues, short-form link issues, wrong source prefixes,
+  and knowledge gaps. Reports issues by severity: error, warning,
+  suggestion.
 allowed-tools: "Read Glob Grep Bash(obsidian *)"
 ---
 
 ## Objective
 
-Run twelve health checks on the knowledge base and report all findings by severity.
+Run fourteen health checks on the knowledge base and report all findings by severity.
 
 This command is operational only. Do not write `/mml`, `/memory-mason:mml`, or their execution chatter back into the vault.
 
@@ -50,8 +51,9 @@ Use these paths:
 
 - Glob all markdown files under {vault}/{subfolder}/atlas/, {vault}/{subfolder}/concepts/, and {vault}/{subfolder}/synthesis/. Also include {vault}/{subfolder}/index.md if it exists.
 - Do not lint files under `_raw/` or `_meta/` as knowledge articles, except for the explicit checks below against `_meta/manifest.json` and `_meta/context.md`.
-- Parse wikilinks in the form [[path/slug]] from article content.
+- Parse wikilinks in the form `[[target]]` from article content.
 - Treat links starting with `_raw/` as valid source references.
+- Treat bare slug links such as `[[foo]]` as format violations handled by Check 13.
 - Report every issue found. Do not stop after the first failure.
 
 ## Checks
@@ -60,6 +62,7 @@ Use these paths:
 
 - For each knowledge article and the root `index.md`, find all [[wikilinks]].
 - Skip links starting with `_raw/`.
+- Skip bare slug links that contain no `/`. Check 13 handles them.
 - Check whether each linked target exists at {vault}/{subfolder}/{link}.md.
 - Report format:
 
@@ -224,6 +227,33 @@ SUGGESTION [thin_moc] atlas/file.md: Only N concept links (minimum recommended: 
 SUGGESTION [knowledge_gap] concepts/file.md: Contains [!gap] callout — awaiting enrichment from future sessions
 ```
 
+### Check 13: Wikilink format convention (severity: error)
+
+- For each bare slug wikilink `[[slug]]` in knowledge articles and the root `index.md`, search for matching files at:
+  - {vault}/{subfolder}/concepts/{slug}.md
+  - {vault}/{subfolder}/synthesis/{slug}.md
+  - {vault}/{subfolder}/atlas/{slug}.md
+- If exactly one matching file exists, report the explicit target path that must be used.
+- If more than one matching file exists, report the link as ambiguous and list every matching directory-prefixed candidate.
+- If no matching file exists, report the bare slug as invalid and require an explicit directory-prefixed target.
+- Report formats:
+
+```text
+ERROR [short_form_link] file.md: [[foo]] should be [[concepts/foo]] — use full directory-prefixed paths
+ERROR [ambiguous_short_form_link] file.md: [[foo]] matches [[concepts/foo]], [[atlas/foo]] — use an explicit directory-prefixed target
+ERROR [short_form_link] file.md: [[foo]] is a bare slug link and cannot be resolved — use an explicit directory-prefixed target
+```
+
+### Check 14: Source reference prefix (severity: error)
+
+- Scan article bodies and the root `index.md` for wikilinks that start with `[[{subfolder}/_raw/`.
+- Report any source reference that prepends the subfolder name. Source links must stay relative to the subfolder root.
+- Report format:
+
+```text
+ERROR [wrong_source_prefix] file.md: [[memory-mason/_raw/...]] should be [[_raw/...]] — remove the subfolder prefix
+```
+
 ## Output Format
 
 Return results exactly in this structure:
@@ -233,6 +263,9 @@ Return results exactly in this structure:
 
 ### Errors (must fix)
 - ERROR [broken_link] ...
+- ERROR [short_form_link] ...
+- ERROR [ambiguous_short_form_link] ...
+- ERROR [wrong_source_prefix] ...
 - ERROR [oversized_daily_folder] ...
 - ERROR [manifest_page_missing] ...
 
