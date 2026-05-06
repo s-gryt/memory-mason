@@ -435,3 +435,20 @@ updated: 2026-05-04T12:34:56Z
 - Prefer fewer precise pages over noisy page proliferation.
 - Never invent facts that are not grounded in raw chunks or already-existing concept pages.
 - Finish only when EXTRACT, TRANSFORM, and LOAD outputs are internally consistent with each other.
+
+## Wikilink Convention
+
+Every `[[wikilink]]` in article bodies must use the full directory-prefixed path relative to the subfolder root. Never use bare slug links.
+
+| Target type | Correct | Wrong |
+| --- | --- | --- |
+| Concept | `[[concepts/hook-system-architecture]]` | `[[hook-system-architecture]]` |
+| Synthesis | `[[synthesis/hook-architecture-and-wiring]]` | `[[hook-architecture-and-wiring]]` |
+| Atlas MOC | `[[atlas/hooks]]` | `[[hooks]]` |
+| Raw source (body) | `[[_raw/2026-05-04/001]]` | `[[memory-mason/_raw/2026-05-04/001]]` |
+
+- YAML `sources:` arrays use plain string paths like `"_raw/2026-05-04/001.md"`, not wikilink brackets.
+- Never prepend the subfolder name (for example `memory-mason/`) to any wikilink. Paths are already relative to the subfolder root.
+- The same slug can exist in multiple content directories. Always write the explicit directory so links remain unambiguous.
+- The `## Related` section in concept pages must link to `[[concepts/slug]]`, not `[[slug]]`.
+- Index table rows must use `[[concepts/slug]]`, `[[synthesis/slug]]`, and `[[atlas/slug]]`.

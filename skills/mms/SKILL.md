@@ -105,6 +105,8 @@ Use these paths:
 - Count concept pages with zero outbound wikilinks (isolated concepts).
 - Count concept pages containing `[!contradiction]` callouts (unresolved contradictions).
 - Count concept pages containing `[!gap]` callouts (knowledge gaps).
+- Count bare slug wikilinks such as `[[foo]]` across knowledge articles and the root `index.md` (short-form wikilinks).
+- Count source refs that start with `[[{subfolder}/_raw/` across knowledge articles and the root `index.md` (wrong-prefix source refs).
 
 ## Report Format
 
@@ -125,6 +127,8 @@ Return status exactly like this:
 - Isolated concepts (0 links): {count}
 - Unresolved contradictions: {count}
 - Knowledge gaps: {count}
+- Short-form wikilinks: {count}
+- Wrong-prefix source refs: {count}
 
 ## Recent Index (first 5 entries)
 {index preview}
