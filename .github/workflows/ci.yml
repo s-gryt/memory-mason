@@ -72,6 +72,12 @@ jobs:
       - name: Run hook coverage
         run: npm run coverage
 
+      - name: Stage coverage summary for badge action
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          mkdir -p ../coverage
+          cp reports/coverage/coverage-summary.json ../coverage/coverage-summary.json
+
       - name: Update Coverage Badge
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: we-cli/coverage-badge-action@main
