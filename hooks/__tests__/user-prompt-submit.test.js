@@ -2,7 +2,7 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
-const { UTF8_ENCODING } = require("../lib/constants");
+const { UTF8_ENCODING } = require("../lib/shared/constants");
 const {
   ENV_KEY_VAULT_PATH,
   ENV_KEY_SUBFOLDER,
@@ -10,9 +10,9 @@ const {
   DOTENV_FILE_NAME,
   GLOBAL_MM_DIR_NAME,
   GLOBAL_CONFIG_FILE_NAME,
-} = require("../lib/config-keys");
-const { buildDailyChunkPath, buildDailyFilePath } = require("../lib/vault");
-const { resolveCaptureStatePath } = require("../lib/capture-state");
+} = require("../lib/config/constants");
+const { buildDailyChunkPath, buildDailyFilePath } = require("../lib/vault/vault");
+const { resolveCaptureStatePath } = require("../lib/capture/capture-state");
 const userPromptSubmit = require("../user-prompt-submit");
 const { materializeProjectDotEnvConfig } = require("./helpers/project-dot-env");
 const {
@@ -435,13 +435,13 @@ describe("user-prompt-submit.js", () => {
 
 describe("run - mm command filtering", () => {
   const runWithPrompt = (prompt) => {
-    const writerPath = require.resolve("../lib/writer");
+    const writerPath = require.resolve("../lib/vault/writer");
     const userPromptSubmitPath = require.resolve("../user-prompt-submit");
 
     delete require.cache[userPromptSubmitPath];
     delete require.cache[writerPath];
 
-    const writer = require("../lib/writer");
+    const writer = require("../lib/vault/writer");
     const appendToDailySpy = vi.spyOn(writer, "appendToDaily");
     const isolatedUserPromptSubmit = require("../user-prompt-submit");
 
@@ -482,7 +482,7 @@ describe("run - mm command filtering", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     delete require.cache[require.resolve("../user-prompt-submit")];
-    delete require.cache[require.resolve("../lib/writer")];
+    delete require.cache[require.resolve("../lib/vault/writer")];
   });
 
   it("returns status 0 and skips vault write for /mmc prompt", () => {
@@ -886,3 +886,4 @@ describe("user-prompt-submit.js runtime fallback branches", () => {
     expect(result.status).toBe(0);
   });
 });
+

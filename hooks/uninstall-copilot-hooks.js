@@ -2,20 +2,14 @@
 "use strict";
 
 const fs = require("node:fs");
-const path = require("node:path");
-const { parseArgs, resolveTargetDir, runHookOpsMain } = require("./lib/hook-ops");
+const hookOps = require("./lib/hook/hook-ops");
+const hookConstants = require("./lib/hook/constants");
 
-const hookFiles = [
-  "session-start.json",
-  "user-prompt-submit.json",
-  "post-tool-use.json",
-  "pre-compact.json",
-  "stop.json",
-  "session-end.json",
-];
+const hookFiles = hookConstants.HOOK_FILES;
+const { parseArgs, resolveTargetDir, runHookOpsMain } = hookOps;
 
 function buildHookPaths(targetDir) {
-  return hookFiles.map((fileName) => path.join(targetDir, fileName));
+  return hookFiles.map((fileName) => require("node:path").join(targetDir, fileName));
 }
 
 function removeHookFile(filePath) {

@@ -3,7 +3,8 @@
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { OBSIDIAN_CLI_TIMEOUT_MS, UTF8_ENCODING } = require("../lib/constants");
+const { OBSIDIAN_CLI_TIMEOUT_MS } = require("../lib/vault/constants");
+const { UTF8_ENCODING } = require("../lib/shared/constants");
 const {
   buildDailyFilePath,
   buildDailyHeader,
@@ -11,8 +12,8 @@ const {
   buildDailyChunkPath,
   buildDailyMetaPath,
   buildChunkHeader,
-} = require("../lib/vault");
-const { tryObsidianCli, appendToDaily } = require("../lib/writer");
+} = require("../lib/vault/vault");
+const { tryObsidianCli, appendToDaily } = require("../lib/vault/writer");
 const {
   TEST_DEFAULT_SUBFOLDER: DEFAULT_SUBFOLDER,
   TEST_PLATFORM_WIN32: PLATFORM_WIN32,
@@ -65,7 +66,7 @@ const seedChunkedDay = (vaultPath, subfolder, today, existingContent = "") => {
 };
 
 afterEach(() => {
-  delete require.cache[require.resolve("../lib/writer")];
+  delete require.cache[require.resolve("../lib/vault/writer")];
 });
 
 describe("tryObsidianCli", () => {
@@ -312,3 +313,4 @@ describe("appendToDaily - routing", () => {
     }
   });
 });
+

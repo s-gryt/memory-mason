@@ -1,14 +1,18 @@
 #!/usr/bin/env node
+/**
+ * This module handles user prompt submit logic.
+ */
 "use strict";
 
 const fs = require("node:fs");
-const { parseJsonInput, detectPlatform } = require("./lib/config");
-const { buildCommandErrorResult } = require("./lib/cli");
-const { buildDailyEntry, localNow } = require("./lib/vault");
-const { appendToDaily } = require("./lib/writer");
-const { extractPromptEntry, isMmCommand } = require("./lib/prompt");
-const { parseJsonlTranscript } = require("./lib/transcript");
-const { recordCaptureMetrics } = require("./lib/state");
+const { parseJsonInput, detectPlatform } = require("./lib/config/config");
+const { buildCommandErrorResult } = require("./lib/cli/cli");
+const { buildDailyEntry } = require("./lib/vault/vault");
+const { appendToDaily } = require("./lib/vault/writer");
+const { extractPromptEntry, isMmCommand } = require("./lib/prompt/prompt");
+const { parseJsonlTranscript } = require("./lib/capture/transcript");
+const { recordCaptureMetrics } = require("./lib/state/state");
+const { buildCaptureTimestamp } = require("./lib/hook/capture-ops");
 const {
   readStdin,
   toStringOrEmpty,
@@ -16,23 +20,21 @@ const {
   readDotEnvText,
   readGlobalConfigText,
   readGlobalDotEnvText,
-  resolveRuntimeEnv,
-  resolveFallbackCwd,
-  resolveRuntimeHomedir,
+  resolveRuntimeContext,
   resolveInputCwd,
   resolveRuntimeConfig,
   buildSuccessResult,
   runStdinMain,
-} = require("./lib/hook-runtime");
+} = require("./lib/hook/hook-runtime");
 const {
   loadCaptureState,
   saveCaptureState,
   setTranscriptTurnCount,
   getMmSuppressed,
   setMmSuppressed,
-} = require("./lib/capture-state");
-const { UTF8_ENCODING } = require("./lib/constants");
-const { HOOK_EVENT_USER_PROMPT_SUBMIT_KEBAB } = require("./lib/hook-events");
+} = require("./lib/capture/capture-state");
+const { UTF8_ENCODING } = require("./lib/shared/constants");
+const { HOOK_EVENT_USER_PROMPT_SUBMIT_KEBAB } = require("./lib/hook/hook-events");
 
 function resolvePromptPayload(rawStdin) {
   const input = parseJsonInput(rawStdin);
@@ -57,19 +59,8 @@ function buildPromptStateAnchors(input) {
   };
 }
 
-function buildCaptureTimestamp() {
-  const now = localNow();
-  return {
-    today: now.date,
-    timestamp: now.time,
-    iso: `${now.date}T${now.time}`,
-  };
-}
-
 function buildRunPlan(rawStdin, runtime = {}) {
-  const env = resolveRuntimeEnv(runtime);
-  const fallbackCwd = resolveFallbackCwd(runtime);
-  const homedir = resolveRuntimeHomedir(runtime);
+  const { env, fallbackCwd, homedir } = resolveRuntimeContext(runtime);
   const payload = resolvePromptPayload(rawStdin);
   const cwd = resolveInputCwd(payload.input, fallbackCwd);
   const anchors = buildPromptStateAnchors(payload.input);
@@ -105,20 +96,24 @@ function persistPromptSubmission(plan, resolvedConfig) {
     updateTranscriptState(resolvedConfig, plan.transcriptPath, plan.sessionId);
   }
 
-  const dailyEntry = buildDailyEntry(
-    plan.promptEntry.entryName,
-    plan.promptEntry.text,
-    plan.timestamp,
-  );
-  appendToDaily(resolvedConfig.vaultPath, resolvedConfig.subfolder, plan.today, dailyEntry);
+  const vaultPath = resolvedConfig.vaultPath;
+  const subfolder = resolvedConfig.subfolder;
+  const promptText = plan.promptEntry.text;
+
+  const dailyEntry = buildDailyEntry(plan.promptEntry.entryName, promptText, plan.timestamp);
+  appendToDaily(vaultPath, subfolder, plan.today, dailyEntry);
   recordCaptureMetrics(
-    resolvedConfig.vaultPath,
-    resolvedConfig.subfolder,
+    vaultPath,
+    subfolder,
     HOOK_EVENT_USER_PROMPT_SUBMIT_KEBAB,
     plan.iso,
-    plan.promptEntry.text,
-    plan.promptEntry.text,
+    promptText,
+    promptText,
   );
+}
+
+function toCommandErrorResult(error) {
+  return buildCommandErrorResult(error);
 }
 
 function run(rawStdin, runtime = {}) {
@@ -136,6 +131,7 @@ function run(rawStdin, runtime = {}) {
     }
 
     const captureState = loadCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder);
+    const mmSuppressed = getMmSuppressed(captureState);
 
     if (isMmCommand(plan.promptEntry.text)) {
       const suppressedState = setMmSuppressed(captureState, true);
@@ -143,7 +139,7 @@ function run(rawStdin, runtime = {}) {
       return buildSuccessResult();
     }
 
-    if (getMmSuppressed(captureState)) {
+    if (mmSuppressed) {
       const unsuppressedState = setMmSuppressed(captureState, false);
       saveCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder, unsuppressedState);
     }
@@ -151,26 +147,23 @@ function run(rawStdin, runtime = {}) {
     persistPromptSubmission(plan, resolvedConfig);
     return buildSuccessResult();
   } catch (error) {
-    return buildCommandErrorResult(error);
+    return toCommandErrorResult(error);
   }
 }
 
-function main(runtime = {}) {
-  return runStdinMain(runtime, run);
-}
+const main = (runtime = {}) => runStdinMain(runtime, run);
 
 module.exports = {
-  readStdin,
-  firstNonEmptyString,
-  readDotEnvText,
-  readGlobalConfigText,
-  readGlobalDotEnvText,
   resolveRuntimeConfig,
+  firstNonEmptyString,
+  readStdin,
+  readGlobalConfigText,
+  readDotEnvText,
+  readGlobalDotEnvText,
   run,
   main,
 };
 
-/* c8 ignore next 3 */
 if (require.main === module) {
   main();
 }

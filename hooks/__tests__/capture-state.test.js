@@ -5,8 +5,8 @@ const path = require("node:path");
 const {
   CAPTURE_HASH_PREFIX_LENGTH,
   DUPLICATE_CAPTURE_WINDOW_MS,
-  UTF8_ENCODING,
-} = require("../lib/constants");
+} = require("../lib/capture/constants");
+const { UTF8_ENCODING } = require("../lib/shared/constants");
 const {
   TEST_DEFAULT_SESSION_ID,
   TEST_DEFAULT_VAULT_PATH,
@@ -25,7 +25,7 @@ const {
   setTranscriptTurnCount,
   getMmSuppressed,
   setMmSuppressed,
-} = require("../lib/capture-state");
+} = require("../lib/capture/capture-state");
 
 const { createTempVaultPath, cleanupTempVaultPaths } =
   createTempVaultFixture("capture-state-test-");

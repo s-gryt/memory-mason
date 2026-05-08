@@ -1,0 +1,34 @@
+/**
+ * This module handles markdown labels logic.
+ */
+"use strict";
+
+const DAILY_LOG_HEADING_PREFIX = "Daily Log: ";
+const SESSIONS_HEADING = "Sessions";
+const PARTS_HEADING = "Parts";
+const TODAY_HEADING = "Today";
+const KNOWLEDGE_BASE_INDEX_HEADING = "Knowledge Base Index";
+const SESSION_CONTEXT_HEADING = "Session Context";
+const RECENT_DAILY_LOG_HEADING = "Recent Daily Log";
+const ASSISTANT_REPLY_ENTRY_NAME = "AssistantReply";
+const PLACEHOLDER_NO_ARTICLES = "(empty - no articles compiled yet)";
+const PLACEHOLDER_NO_SESSION_CONTEXT = "(empty - no session context yet)";
+const PLACEHOLDER_NO_RECENT_DAILY_LOG = "(no recent daily log)";
+const UNKNOWN_LABEL = "unknown";
+const TRUNCATION_MARKER = "...(truncated)";
+
+module.exports = {
+  DAILY_LOG_HEADING_PREFIX,
+  SESSIONS_HEADING,
+  PARTS_HEADING,
+  TODAY_HEADING,
+  KNOWLEDGE_BASE_INDEX_HEADING,
+  SESSION_CONTEXT_HEADING,
+  RECENT_DAILY_LOG_HEADING,
+  ASSISTANT_REPLY_ENTRY_NAME,
+  PLACEHOLDER_NO_ARTICLES,
+  PLACEHOLDER_NO_SESSION_CONTEXT,
+  PLACEHOLDER_NO_RECENT_DAILY_LOG,
+  UNKNOWN_LABEL,
+  TRUNCATION_MARKER,
+};

@@ -1,8 +1,8 @@
 {
   "threshold": 0,
-  "minLines": 10,
+  "mode": "strict",
   "reporters": ["console", "html", "json"],
-  "output": "reports/jscpd",
+  "output": "reports/duplicates",
   "format": "javascript",
   "ignore": ["**/__tests__/**", "**/node_modules/**", "**/coverage/**", "**/reports/**"]
 }

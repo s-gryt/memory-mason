@@ -2,8 +2,8 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
-const { UTF8_ENCODING } = require("../lib/constants");
-const { VAULT_META_DIR_NAME, VAULT_STATE_FILE_NAME } = require("../lib/vault-paths");
+const { UTF8_ENCODING } = require("../lib/shared/constants");
+const { VAULT_META_DIR_NAME, VAULT_STATE_FILE_NAME } = require("../lib/vault/vault-paths");
 const {
   TEST_DEFAULT_VAULT_PATH,
   TEST_DEFAULT_SUBFOLDER: DEFAULT_SUBFOLDER,
@@ -16,7 +16,7 @@ const {
   saveState,
   updateStateCaptureMetrics,
   recordCaptureMetrics,
-} = require("../lib/state");
+} = require("../lib/state/state");
 
 const { createTempVaultPath, cleanupTempVaultPaths } = createTempVaultFixture("state-test-");
 const JSON_INDENT_SPACES = 2;
@@ -396,3 +396,4 @@ describe("recordCaptureMetrics", () => {
     });
   });
 });
+

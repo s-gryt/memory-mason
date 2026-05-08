@@ -1,51 +1,54 @@
 #!/usr/bin/env node
+/**
+ * This module handles pre compact logic.
+ */
 "use strict";
 
 const fs = require("node:fs");
-const { parseJsonInput } = require("./lib/config");
-const { buildCommandErrorResult, formatErrorMessage } = require("./lib/cli");
-const { parseJsonlTranscript, renderTurnsAsMarkdown } = require("./lib/transcript");
-const { buildSessionHeader, localNow } = require("./lib/vault");
-const { appendToDaily } = require("./lib/writer");
-const { recordCaptureMetrics } = require("./lib/state");
+const { parseJsonInput } = require("./lib/config/config");
+const { buildCommandErrorResult, formatErrorMessage } = require("./lib/cli/cli");
+const { parseJsonlTranscript, renderTurnsAsMarkdown } = require("./lib/capture/transcript");
+const { buildSessionHeader } = require("./lib/vault/vault");
+const { appendToDaily } = require("./lib/vault/writer");
+const { recordCaptureMetrics } = require("./lib/state/state");
 const {
-  readStdin,
-  toStringOrEmpty,
-  firstNonEmptyString: firstNonEmptyStringFromRuntime,
-  resolveTranscriptPath,
-  resolveRuntimeEnv,
-  resolveFallbackCwd,
-  resolveRuntimeHomedir,
-  resolveInputCwd,
-  resolveRuntimeConfig,
+  buildCaptureTimestamp,
+  buildTagWarning,
+  buildWarningsResult,
+} = require("./lib/hook/capture-ops");
+const hookRuntime = require("./lib/hook/hook-runtime");
+const {
   buildSuccessResult,
-  runStdinMain,
+  firstNonEmptyString: firstNonEmptyStringFromRuntime,
+  readStdin,
   readDotEnvText,
   readGlobalConfigText,
   readGlobalDotEnvText,
-} = require("./lib/hook-runtime");
+  resolveInputCwd,
+  resolveRuntimeConfig,
+  resolveTranscriptPath,
+  resolveRuntimeContext,
+  runStdinMain,
+  toStringOrEmpty,
+} = hookRuntime;
 const {
   loadCaptureState,
   saveCaptureState,
   buildCaptureRecord,
   isDuplicateCapture,
   getMmSuppressed,
-} = require("./lib/capture-state");
-const {
-  CAPTURE_MODE_LITE,
-  PRE_COMPACT_MIN_TURNS,
-  DUPLICATE_CAPTURE_WINDOW_MS,
-  UTF8_ENCODING,
-  HOOK_WARNING_TAG_LIMIT_PREFIX,
-} = require("./lib/constants");
-const { HOOK_EVENT_PRE_COMPACT_KEBAB } = require("./lib/hook-events");
-const { UNKNOWN_LABEL } = require("./lib/markdown-labels");
-const { ENV_KEY_INVOKED_BY } = require("./lib/config-keys");
-const { stripMemoryTags, countMemoryTags, MAX_TAG_STRIP_COUNT } = require("./lib/tag-stripper");
-const { compressNarrativeText } = require("./lib/compress");
-const { detectSensitiveContent } = require("./lib/sensitive-guard");
-const { HOOK_WARNING_SENSITIVE_SKIP_PREFIX } = require("./lib/constants");
-const { TRANSCRIPT_ROLE_ASSISTANT } = require("./lib/transcript-labels");
+} = require("./lib/capture/capture-state");
+const { CAPTURE_MODE_LITE, ENV_KEY_INVOKED_BY } = require("./lib/config/constants");
+const { PRE_COMPACT_MIN_TURNS } = require("./lib/hook/constants");
+const { DUPLICATE_CAPTURE_WINDOW_MS } = require("./lib/capture/constants");
+const { UTF8_ENCODING } = require("./lib/shared/constants");
+const { HOOK_EVENT_PRE_COMPACT_KEBAB } = require("./lib/hook/hook-events");
+const { UNKNOWN_LABEL } = require("./lib/vault/markdown-labels");
+const { stripMemoryTags, countMemoryTags } = require("./lib/filter/tag-stripper");
+const { compressNarrativeText } = require("./lib/economics/compress");
+const { detectSensitiveContent } = require("./lib/filter/sensitive-guard");
+const { HOOK_WARNING_SENSITIVE_SKIP_PREFIX } = require("./lib/filter/constants");
+const { TRANSCRIPT_ROLE_ASSISTANT } = require("./lib/capture/transcript-labels");
 const { stripVTControlCharacters } = require("node:util");
 
 const EMPTY_STRING = "";
@@ -54,10 +57,10 @@ const HOOK_WARNING_FILTER_FALLBACK_PREFIX =
   "[memory-mason] capture filter failed; using uncompressed sanitized transcript";
 
 function firstNonEmptyString(values) {
-  if (!Array.isArray(values)) {
-    throw new Error("values must be an array");
+  if (Array.isArray(values)) {
+    return firstNonEmptyStringFromRuntime(values);
   }
-  return firstNonEmptyStringFromRuntime(values);
+  throw new Error("values must be an array");
 }
 
 function shouldSkipForInvoker(env) {
@@ -80,24 +83,8 @@ function resolveSessionId(input) {
   ]);
 }
 
-function buildCaptureTimestamp() {
-  const now = localNow();
-  return {
-    iso: `${now.date}T${now.time}`,
-    today: now.date,
-  };
-}
-
 function buildDuplicateDecision(captureState, captureRecord) {
   return isDuplicateCapture(captureState.lastCapture, captureRecord, DUPLICATE_CAPTURE_WINDOW_MS);
-}
-
-function buildTagWarning(tagCount) {
-  if (tagCount <= MAX_TAG_STRIP_COUNT) {
-    return EMPTY_STRING;
-  }
-
-  return `${HOOK_WARNING_TAG_LIMIT_PREFIX}: ${tagCount} tags found${NEWLINE}`;
 }
 
 function buildFilterFallbackWarning(error) {
@@ -108,17 +95,37 @@ function sanitizeTranscriptBaseContent(content) {
   return stripVTControlCharacters(stripMemoryTags(content));
 }
 
-function buildSanitizedTranscript(transcriptContent, captureMode) {
+function parseTranscriptTurnsForSanitization(transcriptContent, captureMode) {
   if (transcriptContent === EMPTY_STRING) {
-    return {
-      markdown: EMPTY_STRING,
-      rawMarkdown: EMPTY_STRING,
-      filterWarning: EMPTY_STRING,
-      turnCount: 0,
-    };
+    return [];
   }
 
-  const turns = parseJsonlTranscript(transcriptContent, captureMode);
+  return parseJsonlTranscript(transcriptContent, captureMode);
+}
+
+function sanitizeTurnsBaseContent(turns) {
+  return turns
+    .map((turn) => ({
+      ...turn,
+      content: sanitizeTranscriptBaseContent(turn.content),
+    }))
+    .filter((turn) => turn.content !== EMPTY_STRING);
+}
+
+function compressAssistantTurns(turns) {
+  return turns
+    .map((turn) => ({
+      ...turn,
+      content:
+        turn.role === TRANSCRIPT_ROLE_ASSISTANT
+          ? compressNarrativeText(turn.content)
+          : turn.content,
+    }))
+    .filter((turn) => turn.content !== EMPTY_STRING);
+}
+
+function buildSanitizedTranscript(transcriptContent, captureMode) {
+  const turns = parseTranscriptTurnsForSanitization(transcriptContent, captureMode);
 
   if (turns.length === 0) {
     return {
@@ -130,12 +137,7 @@ function buildSanitizedTranscript(transcriptContent, captureMode) {
   }
 
   const rawMarkdown = renderTurnsAsMarkdown(turns);
-  const baseSanitizedTurns = turns
-    .map((turn) => ({
-      ...turn,
-      content: sanitizeTranscriptBaseContent(turn.content),
-    }))
-    .filter((turn) => turn.content !== EMPTY_STRING);
+  const baseSanitizedTurns = sanitizeTurnsBaseContent(turns);
 
   if (baseSanitizedTurns.length === 0) {
     return {
@@ -149,15 +151,7 @@ function buildSanitizedTranscript(transcriptContent, captureMode) {
   const baseSanitizedMarkdown = renderTurnsAsMarkdown(baseSanitizedTurns);
 
   try {
-    const sanitizedTurns = baseSanitizedTurns
-      .map((turn) => ({
-        ...turn,
-        content:
-          turn.role === TRANSCRIPT_ROLE_ASSISTANT
-            ? compressNarrativeText(turn.content)
-            : turn.content,
-      }))
-      .filter((turn) => turn.content !== EMPTY_STRING);
+    const sanitizedTurns = compressAssistantTurns(baseSanitizedTurns);
 
     if (sanitizedTurns.length === 0) {
       return {
@@ -214,17 +208,8 @@ function persistCapture(
   );
 }
 
-/**
- * Capture pre-compact transcript excerpts into the vault after sanitation and dedupe checks.
- *
- * @param {string} rawStdin
- * @param {Record<string, unknown>} [runtime]
- * @returns {{ status: number, stdout: string, stderr: string }}
- */
 function run(rawStdin, runtime = {}) {
-  const env = resolveRuntimeEnv(runtime);
-  const fallbackCwd = resolveFallbackCwd(runtime);
-  const homedir = resolveRuntimeHomedir(runtime);
+  const { env, fallbackCwd, homedir } = resolveRuntimeContext(runtime);
 
   if (shouldSkipForInvoker(env)) {
     return buildSuccessResult();
@@ -240,8 +225,9 @@ function run(rawStdin, runtime = {}) {
 
     const cwd = resolveInputCwd(input, fallbackCwd);
     const resolvedConfig = resolveRuntimeConfig(cwd, homedir);
+    const syncDisabled = resolvedConfig.sync === false;
 
-    if (resolvedConfig.sync === false) {
+    if (syncDisabled) {
       return buildSuccessResult();
     }
 
@@ -249,7 +235,8 @@ function run(rawStdin, runtime = {}) {
       return buildSuccessResult();
     }
 
-    const captureState = loadCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder);
+    const captureStatePath = [resolvedConfig.vaultPath, resolvedConfig.subfolder];
+    const captureState = loadCaptureState(captureStatePath[0], captureStatePath[1]);
 
     if (getMmSuppressed(captureState)) {
       return buildSuccessResult();
@@ -263,13 +250,7 @@ function run(rawStdin, runtime = {}) {
     const filterWarning = fullTranscript.filterWarning;
 
     if (shouldSkipShortTranscript(fullTranscript)) {
-      const shortResult = buildSuccessResult();
-
-      if (tagWarning !== EMPTY_STRING || filterWarning !== EMPTY_STRING) {
-        return { ...shortResult, stderr: `${tagWarning}${filterWarning}` };
-      }
-
-      return shortResult;
+      return buildWarningsResult(tagWarning, filterWarning);
     }
 
     const captureTimestamp = buildCaptureTimestamp();
@@ -282,30 +263,17 @@ function run(rawStdin, runtime = {}) {
     );
 
     if (buildDuplicateDecision(captureState, captureRecord)) {
-      const duplicateResult = buildSuccessResult();
-
-      if (tagWarning !== EMPTY_STRING || filterWarning !== EMPTY_STRING) {
-        return { ...duplicateResult, stderr: `${tagWarning}${filterWarning}` };
-      }
-
-      return duplicateResult;
+      return buildWarningsResult(tagWarning, filterWarning);
     }
 
     if (sanitizedMarkdown === EMPTY_STRING) {
-      const emptyResult = buildSuccessResult();
-
-      if (tagWarning !== EMPTY_STRING || filterWarning !== EMPTY_STRING) {
-        return { ...emptyResult, stderr: `${tagWarning}${filterWarning}` };
-      }
-
-      return emptyResult;
+      return buildWarningsResult(tagWarning, filterWarning);
     }
 
     const sensitiveCheck = detectSensitiveContent(sanitizedMarkdown);
     if (sensitiveCheck.isSensitive) {
       const sensitiveWarning = `${HOOK_WARNING_SENSITIVE_SKIP_PREFIX}: ${sensitiveCheck.reasons.join(", ")}${NEWLINE}`;
-      const skipResult = buildSuccessResult();
-      return { ...skipResult, stderr: `${tagWarning}${filterWarning}${sensitiveWarning}` };
+      return buildWarningsResult(tagWarning, filterWarning, sensitiveWarning);
     }
 
     const sessionHeader = buildSessionHeader(
@@ -323,21 +291,14 @@ function run(rawStdin, runtime = {}) {
       captureRecord,
       captureTimestamp.iso,
     );
-    const successResult = buildSuccessResult();
-
-    if (tagWarning !== EMPTY_STRING || filterWarning !== EMPTY_STRING) {
-      return { ...successResult, stderr: `${tagWarning}${filterWarning}` };
-    }
-
-    return successResult;
+    return buildWarningsResult(tagWarning, filterWarning);
   } catch (error) {
-    return buildCommandErrorResult(error);
+    const failure = buildCommandErrorResult(error);
+    return failure;
   }
 }
 
-function main(runtime = {}) {
-  return runStdinMain(runtime, run);
-}
+const main = (runtime = {}) => runStdinMain(runtime, run);
 
 module.exports = {
   readStdin,
@@ -350,7 +311,6 @@ module.exports = {
   main,
 };
 
-/* c8 ignore next 3 */
 if (require.main === module) {
   main();
 }

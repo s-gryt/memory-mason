@@ -1,19 +1,22 @@
 #!/usr/bin/env node
+/**
+ * This module handles session end logic.
+ */
 "use strict";
 
 const fs = require("node:fs");
 const path = require("node:path");
-const { parseJsonInput, detectPlatform } = require("./lib/config");
-const { buildCommandErrorResult } = require("./lib/cli");
+const { parseJsonInput, detectPlatform } = require("./lib/config/config");
+const { buildCommandErrorResult } = require("./lib/cli/cli");
 const {
   parseJsonlTranscript,
   filterMmTurns,
   renderTurnsAsMarkdown,
   normalizeTranscriptText,
-} = require("./lib/transcript");
-const { buildSessionHeader, buildAssistantReplyEntry, localNow } = require("./lib/vault");
-const { appendToDaily } = require("./lib/writer");
-const { recordCaptureMetrics } = require("./lib/state");
+} = require("./lib/capture/transcript");
+const { buildSessionHeader, buildAssistantReplyEntry, localNow } = require("./lib/vault/vault");
+const { appendToDaily } = require("./lib/vault/writer");
+const { recordCaptureMetrics } = require("./lib/state/state");
 const {
   loadCaptureState,
   saveCaptureState,
@@ -22,32 +25,27 @@ const {
   getTranscriptTurnCount,
   setTranscriptTurnCount,
   getMmSuppressed,
-} = require("./lib/capture-state");
-const {
-  CAPTURE_MODE_LITE,
-  HOOK_EVENT_STOP,
-  DUPLICATE_CAPTURE_WINDOW_MS,
-  UTF8_ENCODING,
-  HOOK_WARNING_TAG_LIMIT_PREFIX,
-  HOOK_WARNING_SENSITIVE_SKIP_PREFIX,
-} = require("./lib/constants");
-const { PLATFORM_COPILOT_CLI, PLATFORM_CODEX } = require("./lib/platforms");
-const { UNKNOWN_LABEL } = require("./lib/markdown-labels");
-const { ENV_KEY_INVOKED_BY } = require("./lib/config-keys");
-const { stripMemoryTags, countMemoryTags, MAX_TAG_STRIP_COUNT } = require("./lib/tag-stripper");
-const { detectSensitiveContent } = require("./lib/sensitive-guard");
-const { compressNarrativeText } = require("./lib/compress");
-const { HOOK_EVENT_SESSION_END_KEBAB } = require("./lib/hook-events");
-const { TRANSCRIPT_ROLE_ASSISTANT } = require("./lib/transcript-labels");
+} = require("./lib/capture/capture-state");
+const { CAPTURE_MODE_LITE, ENV_KEY_INVOKED_BY } = require("./lib/config/constants");
+const { HOOK_EVENT_STOP } = require("./lib/hook/constants");
+const { DUPLICATE_CAPTURE_WINDOW_MS } = require("./lib/capture/constants");
+const { UTF8_ENCODING } = require("./lib/shared/constants");
+const { HOOK_WARNING_SENSITIVE_SKIP_PREFIX } = require("./lib/filter/constants");
+const { PLATFORM_COPILOT_CLI, PLATFORM_CODEX } = require("./lib/config/platforms");
+const { UNKNOWN_LABEL } = require("./lib/vault/markdown-labels");
+const { stripMemoryTags, countMemoryTags } = require("./lib/filter/tag-stripper");
+const { detectSensitiveContent } = require("./lib/filter/sensitive-guard");
+const { compressNarrativeText } = require("./lib/economics/compress");
+const { HOOK_EVENT_SESSION_END_KEBAB } = require("./lib/hook/hook-events");
+const { buildTagWarning, buildWarningsResult } = require("./lib/hook/capture-ops");
+const { TRANSCRIPT_ROLE_ASSISTANT } = require("./lib/capture/transcript-labels");
 const { stripVTControlCharacters } = require("node:util");
 const {
   readStdin,
   toStringOrEmpty,
   firstNonEmptyString: firstNonEmptyStringFromRuntime,
   resolveTranscriptPath,
-  resolveRuntimeEnv,
-  resolveFallbackCwd,
-  resolveRuntimeHomedir,
+  resolveRuntimeContext,
   resolveInputCwd,
   resolveRuntimeConfig,
   buildSuccessResult,
@@ -55,7 +53,7 @@ const {
   readDotEnvText,
   readGlobalConfigText,
   readGlobalDotEnvText,
-} = require("./lib/hook-runtime");
+} = require("./lib/hook/hook-runtime");
 
 const CODEX_DIR = ".codex";
 const CODEX_SESSIONS_DIR = "sessions";
@@ -261,6 +259,12 @@ function discoverTranscriptContent(platform, transcriptFromPath, homedir, sessio
   return resolveTranscriptContent(platform, transcriptFromPath, codexContent, copilotCliContent);
 }
 
+function resolveSessionTranscript(input, platform, homedir, sessionIdRaw, cwd) {
+  const transcriptPath = resolveTranscriptPath(input);
+  const transcriptFromPath = readTranscriptFromPath(transcriptPath);
+  return discoverTranscriptContent(platform, transcriptFromPath, homedir, sessionIdRaw, cwd);
+}
+
 function parseTranscriptTurns(transcriptContent, captureMode = CAPTURE_MODE_LITE) {
   if (transcriptContent === "") {
     return [];
@@ -361,14 +365,6 @@ function buildSafeStopTurns(assistantContents) {
   );
 }
 
-function buildTagWarning(tagCount) {
-  if (tagCount <= MAX_TAG_STRIP_COUNT) {
-    return EMPTY_STRING;
-  }
-
-  return `${HOOK_WARNING_TAG_LIMIT_PREFIX}: ${tagCount} tags found${NEWLINE}`;
-}
-
 function buildSensitiveSkipWarning(skippedCount) {
   if (skippedCount < ONE) {
     return EMPTY_STRING;
@@ -385,19 +381,158 @@ function joinWarnings(warnings) {
   return warnings.filter((warning) => warning !== EMPTY_STRING).join(EMPTY_STRING);
 }
 
-/**
- * Process session-end and stop hook events and persist sanitized transcript content.
- *
- * @param {string} rawStdin
- * @param {Record<string, unknown>} [runtime]
- * @returns {{ status: number, stdout: string, stderr: string }}
- */
-function run(rawStdin, runtime = {}) {
-  const env = resolveRuntimeEnv(runtime);
-  const fallbackCwd = resolveFallbackCwd(runtime);
-  const homedir = resolveRuntimeHomedir(runtime);
+function captureStopPath(input, platform, cwd, homedir, resolvedConfig, captureMode, sessionIdRaw) {
+  if (sessionIdRaw === "") {
+    return buildSuccessResult();
+  }
 
-  if (toStringOrEmpty(env[ENV_KEY_INVOKED_BY]) !== "") {
+  const stopCaptureState = loadCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder);
+  if (getMmSuppressed(stopCaptureState)) {
+    return buildSuccessResult();
+  }
+
+  const transcriptContent = resolveSessionTranscript(input, platform, homedir, sessionIdRaw, cwd);
+
+  const turns = parseTranscriptTurns(transcriptContent, captureMode);
+  const lastCount = getTranscriptTurnCount(stopCaptureState, sessionIdRaw);
+  const lastAssistantMessage = normalizeTranscriptText(
+    resolveLastAssistantMessage(input),
+    captureMode,
+  );
+  const stopSelection = buildStopAssistantSelection(
+    turns,
+    lastCount,
+    lastAssistantMessage,
+    captureMode,
+  );
+  const stopAssistantContents = stopSelection.selectedTurns;
+  const totalTagCount = stopAssistantContents.reduce(
+    (sum, content) => sum + countMemoryTags(content),
+    ZERO,
+  );
+  const safeStopTurns = buildSafeStopTurns(stopAssistantContents);
+  const tagWarning = buildTagWarning(totalTagCount);
+  const sensitiveWarning = buildSensitiveSkipWarning(safeStopTurns.sensitiveSkippedCount);
+  const stopWarnings = joinWarnings([tagWarning, sensitiveWarning]);
+
+  const stopNow = writeAssistantTurns(
+    resolvedConfig.vaultPath,
+    resolvedConfig.subfolder,
+    safeStopTurns.storedTurns,
+  );
+
+  if (safeStopTurns.storedTurns.length > ZERO) {
+    recordCaptureMetrics(
+      resolvedConfig.vaultPath,
+      resolvedConfig.subfolder,
+      HOOK_EVENT_STOP,
+      `${stopNow.date}T${stopNow.time}`,
+      safeStopTurns.rawTurns.join(NEWLINE),
+      safeStopTurns.storedTurns.join(NEWLINE),
+    );
+  }
+
+  const nextTurnCount = calculateNextTurnCount(
+    stopSelection.shouldAppendPayloadAssistant,
+    turns,
+    lastCount,
+  );
+  const updatedState = setTranscriptTurnCount(stopCaptureState, sessionIdRaw, nextTurnCount);
+  saveCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder, updatedState);
+  return buildWarningsResult(stopWarnings);
+}
+
+function captureSessionEndPath(
+  input,
+  platform,
+  cwd,
+  homedir,
+  resolvedConfig,
+  captureMode,
+  sessionIdRaw,
+) {
+  const captureState = loadCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder);
+  const transcriptContent = resolveSessionTranscript(input, platform, homedir, sessionIdRaw, cwd);
+
+  if (transcriptContent === "") {
+    return buildSuccessResult();
+  }
+
+  const allTurns = parseJsonlTranscript(transcriptContent, captureMode);
+  const filteredTurns = filterMmTurns(allTurns);
+  if (filteredTurns.length < 1) {
+    return buildSuccessResult();
+  }
+
+  const totalTagCount = filteredTurns.reduce(
+    (sum, turn) => sum + countMemoryTags(turn.content),
+    ZERO,
+  );
+  const rawTranscriptMarkdown = renderTurnsAsMarkdown(filteredTurns);
+  const sanitizedTurns = filteredTurns
+    .map((turn) => ({
+      ...turn,
+      content: sanitizeTranscriptContent(turn.content, turn.role === TRANSCRIPT_ROLE_ASSISTANT),
+    }))
+    .filter((turn) => turn.content !== EMPTY_STRING);
+
+  if (sanitizedTurns.length < 1) {
+    return buildSuccessResult();
+  }
+
+  const fullTranscriptMarkdown = renderTurnsAsMarkdown(sanitizedTurns);
+  const fullTranscriptGuard = detectSensitiveContent(fullTranscriptMarkdown);
+  const tagWarning = buildTagWarning(totalTagCount);
+
+  if (fullTranscriptGuard.isSensitive) {
+    const sensitiveWarning = buildSensitiveReasonWarning(fullTranscriptGuard.reasons);
+    const fullWarnings = joinWarnings([tagWarning, sensitiveWarning]);
+    return buildWarningsResult(fullWarnings);
+  }
+
+  const today = localNow().date;
+  const sessionId = firstNonEmptyString([sessionIdRaw, UNKNOWN_LABEL]);
+  const source = firstNonEmptyString([toStringOrEmpty(input.source), platform]);
+  const captureRecord = buildCaptureRecord(sessionId, source, fullTranscriptMarkdown, Date.now());
+
+  if (isDuplicateCapture(captureState.lastCapture, captureRecord, DUPLICATE_CAPTURE_WINDOW_MS)) {
+    return buildSuccessResult();
+  }
+
+  const now = localNow();
+  const capturedAt = `${now.date}T${now.time}`;
+  const sessionHeader = buildSessionHeader(sessionId, source, capturedAt);
+  appendToDaily(
+    resolvedConfig.vaultPath,
+    resolvedConfig.subfolder,
+    today,
+    sessionHeader + fullTranscriptMarkdown,
+  );
+  const nextCaptureState = {
+    ...captureState,
+    lastCapture: captureRecord,
+  };
+  saveCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder, nextCaptureState);
+  recordCaptureMetrics(
+    resolvedConfig.vaultPath,
+    resolvedConfig.subfolder,
+    HOOK_EVENT_SESSION_END_KEBAB,
+    capturedAt,
+    rawTranscriptMarkdown,
+    fullTranscriptMarkdown,
+  );
+
+  return buildWarningsResult(tagWarning);
+}
+
+function run(rawStdin, runtime = {}) {
+  const runtimeContext = resolveRuntimeContext(runtime);
+  const env = runtimeContext.env;
+  const fallbackCwd = runtimeContext.fallbackCwd;
+  const homedir = runtimeContext.homedir;
+  const wasInvokedByTool = toStringOrEmpty(env[ENV_KEY_INVOKED_BY]) !== "";
+
+  if (wasInvokedByTool) {
     return buildSuccessResult();
   }
 
@@ -412,7 +547,9 @@ function run(rawStdin, runtime = {}) {
     const cwd = resolveInputCwd(input, fallbackCwd);
     const resolvedConfig = resolveRuntimeConfig(cwd, homedir);
 
-    if (resolvedConfig.sync === false) {
+    const syncDisabled = resolvedConfig.sync === false;
+
+    if (syncDisabled) {
       return buildSuccessResult();
     }
 
@@ -425,165 +562,26 @@ function run(rawStdin, runtime = {}) {
     }
 
     if (normalizedHookEventName === HOOK_EVENT_STOP) {
-      if (sessionIdRaw === "") {
-        return buildSuccessResult();
-      }
-
-      const stopCaptureState = loadCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder);
-      if (getMmSuppressed(stopCaptureState)) {
-        return buildSuccessResult();
-      }
-
-      const transcriptPath = resolveTranscriptPath(input);
-      const transcriptFromPath = readTranscriptFromPath(transcriptPath);
-      const transcriptContent = discoverTranscriptContent(
+      return captureStopPath(
+        input,
         platform,
-        transcriptFromPath,
-        homedir,
-        sessionIdRaw,
         cwd,
-      );
-
-      const turns = parseTranscriptTurns(transcriptContent, captureMode);
-      const lastCount = getTranscriptTurnCount(stopCaptureState, sessionIdRaw);
-      const lastAssistantMessage = normalizeTranscriptText(
-        resolveLastAssistantMessage(input),
+        homedir,
+        resolvedConfig,
         captureMode,
+        sessionIdRaw,
       );
-      const stopSelection = buildStopAssistantSelection(
-        turns,
-        lastCount,
-        lastAssistantMessage,
-        captureMode,
-      );
-      const stopAssistantContents = stopSelection.selectedTurns;
-      const totalTagCount = stopAssistantContents.reduce(
-        (sum, content) => sum + countMemoryTags(content),
-        ZERO,
-      );
-      const safeStopTurns = buildSafeStopTurns(stopAssistantContents);
-      const tagWarning = buildTagWarning(totalTagCount);
-      const sensitiveWarning = buildSensitiveSkipWarning(safeStopTurns.sensitiveSkippedCount);
-      const stopWarnings = joinWarnings([tagWarning, sensitiveWarning]);
-
-      const stopNow = writeAssistantTurns(
-        resolvedConfig.vaultPath,
-        resolvedConfig.subfolder,
-        safeStopTurns.storedTurns,
-      );
-
-      if (safeStopTurns.storedTurns.length > ZERO) {
-        recordCaptureMetrics(
-          resolvedConfig.vaultPath,
-          resolvedConfig.subfolder,
-          HOOK_EVENT_STOP,
-          `${stopNow.date}T${stopNow.time}`,
-          safeStopTurns.rawTurns.join(NEWLINE),
-          safeStopTurns.storedTurns.join(NEWLINE),
-        );
-      }
-
-      const nextTurnCount = calculateNextTurnCount(
-        stopSelection.shouldAppendPayloadAssistant,
-        turns,
-        lastCount,
-      );
-      const updatedState = setTranscriptTurnCount(stopCaptureState, sessionIdRaw, nextTurnCount);
-      saveCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder, updatedState);
-      const stopResult = buildSuccessResult();
-
-      if (stopWarnings !== EMPTY_STRING) {
-        return { ...stopResult, stderr: stopWarnings };
-      }
-
-      return stopResult;
     }
 
-    const captureState = loadCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder);
-    const transcriptPath = resolveTranscriptPath(input);
-    const transcriptFromPath = readTranscriptFromPath(transcriptPath);
-    const transcriptContent = discoverTranscriptContent(
+    return captureSessionEndPath(
+      input,
       platform,
-      transcriptFromPath,
-      homedir,
-      sessionIdRaw,
       cwd,
+      homedir,
+      resolvedConfig,
+      captureMode,
+      sessionIdRaw,
     );
-
-    if (transcriptContent === "") {
-      return buildSuccessResult();
-    }
-
-    const allTurns = parseJsonlTranscript(transcriptContent, captureMode);
-    const filteredTurns = filterMmTurns(allTurns);
-    if (filteredTurns.length < 1) {
-      return buildSuccessResult();
-    }
-
-    const totalTagCount = filteredTurns.reduce(
-      (sum, turn) => sum + countMemoryTags(turn.content),
-      ZERO,
-    );
-    const rawTranscriptMarkdown = renderTurnsAsMarkdown(filteredTurns);
-    const sanitizedTurns = filteredTurns
-      .map((turn) => ({
-        ...turn,
-        content: sanitizeTranscriptContent(turn.content, turn.role === TRANSCRIPT_ROLE_ASSISTANT),
-      }))
-      .filter((turn) => turn.content !== EMPTY_STRING);
-
-    if (sanitizedTurns.length < 1) {
-      return buildSuccessResult();
-    }
-
-    const fullTranscriptMarkdown = renderTurnsAsMarkdown(sanitizedTurns);
-    const fullTranscriptGuard = detectSensitiveContent(fullTranscriptMarkdown);
-    const tagWarning = buildTagWarning(totalTagCount);
-
-    if (fullTranscriptGuard.isSensitive) {
-      const sensitiveWarning = buildSensitiveReasonWarning(fullTranscriptGuard.reasons);
-      const fullWarnings = joinWarnings([tagWarning, sensitiveWarning]);
-      const sensitiveResult = buildSuccessResult();
-
-      return { ...sensitiveResult, stderr: fullWarnings };
-    }
-
-    const today = localNow().date;
-    const sessionId = firstNonEmptyString([sessionIdRaw, UNKNOWN_LABEL]);
-    const source = firstNonEmptyString([toStringOrEmpty(input.source), platform]);
-    const captureRecord = buildCaptureRecord(sessionId, source, fullTranscriptMarkdown, Date.now());
-
-    if (isDuplicateCapture(captureState.lastCapture, captureRecord, DUPLICATE_CAPTURE_WINDOW_MS)) {
-      return buildSuccessResult();
-    }
-
-    const now = localNow();
-    const sessionHeader = buildSessionHeader(sessionId, source, `${now.date}T${now.time}`);
-    appendToDaily(
-      resolvedConfig.vaultPath,
-      resolvedConfig.subfolder,
-      today,
-      sessionHeader + fullTranscriptMarkdown,
-    );
-    saveCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder, {
-      ...captureState,
-      lastCapture: captureRecord,
-    });
-    recordCaptureMetrics(
-      resolvedConfig.vaultPath,
-      resolvedConfig.subfolder,
-      HOOK_EVENT_SESSION_END_KEBAB,
-      `${now.date}T${now.time}`,
-      rawTranscriptMarkdown,
-      fullTranscriptMarkdown,
-    );
-    const fullResult = buildSuccessResult();
-
-    if (tagWarning !== EMPTY_STRING) {
-      return { ...fullResult, stderr: tagWarning };
-    }
-
-    return fullResult;
   } catch (error) {
     return buildCommandErrorResult(error);
   }
@@ -593,7 +591,6 @@ function main(runtime = {}) {
   return runStdinMain(runtime, run);
 }
 
-/* c8 ignore next 3 */
 if (require.main === module) {
   main();
 }

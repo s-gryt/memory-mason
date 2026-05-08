@@ -4,10 +4,10 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
-const { UTF8_ENCODING } = require("../lib/constants");
-const { ENV_KEY_VAULT_PATH, ENV_KEY_CAPTURE_MODE } = require("../lib/config-keys");
-const { buildDailyChunkPath } = require("../lib/vault");
-const { buildCommandErrorResult, formatErrorMessage, writeIfPresent } = require("../lib/cli");
+const { UTF8_ENCODING } = require("../lib/shared/constants");
+const { ENV_KEY_VAULT_PATH, ENV_KEY_CAPTURE_MODE } = require("../lib/config/constants");
+const { buildDailyChunkPath } = require("../lib/vault/vault");
+const { buildCommandErrorResult, formatErrorMessage, writeIfPresent } = require("../lib/cli/cli");
 const { materializeProjectDotEnvConfig } = require("./helpers/project-dot-env");
 const {
   TEST_MM_CWD_PREFIX,
@@ -257,3 +257,4 @@ describe("CLI direct execution", () => {
     );
   });
 });
+

@@ -4,11 +4,11 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const {
-  UTF8_ENCODING,
   MAX_TAG_STRIP_COUNT,
   HOOK_WARNING_TAG_LIMIT_PREFIX,
   HOOK_WARNING_SENSITIVE_SKIP_PREFIX,
-} = require("../lib/constants");
+} = require("../lib/filter/constants");
+const { UTF8_ENCODING } = require("../lib/shared/constants");
 const {
   ENV_KEY_VAULT_PATH,
   ENV_KEY_SUBFOLDER,
@@ -18,7 +18,7 @@ const {
   DOTENV_FILE_NAME,
   GLOBAL_MM_DIR_NAME,
   GLOBAL_CONFIG_FILE_NAME,
-} = require("../lib/config-keys");
+} = require("../lib/config/constants");
 const {
   TEST_VAULT_PREFIX,
   TEST_HOME_PREFIX,
@@ -45,8 +45,8 @@ const {
   TEST_ASSISTANT_REPLY_ENTRY_NAME: ASSISTANT_REPLY_ENTRY_NAME,
   TEST_UNKNOWN_LABEL: UNKNOWN_LABEL,
 } = require("./helpers/test-constants");
-const { buildDailyChunkPath, buildDailyFilePath } = require("../lib/vault");
-const { resolveCaptureStatePath } = require("../lib/capture-state");
+const { buildDailyChunkPath, buildDailyFilePath } = require("../lib/vault/vault");
+const { resolveCaptureStatePath } = require("../lib/capture/capture-state");
 const sessionEnd = require("../session-end");
 const { buildStopAssistantSelection } = require("../session-end");
 const userPromptSubmit = require("../user-prompt-submit");
@@ -2131,3 +2131,4 @@ describe("session-end.js main", () => {
     expect(errors.join("")).toContain("invalid JSON in stdin");
   });
 });
+

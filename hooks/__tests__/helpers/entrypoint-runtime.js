@@ -118,53 +118,60 @@ const resolveScriptModule = (scriptPath) => {
   return scriptModules[scriptName];
 };
 
-const runHookEntrypoint = (scriptPath, options = {}) => {
-  const scriptModule = resolveScriptModule(scriptPath);
-  const env = typeof options.env === "object" && options.env !== null ? options.env : process.env;
-  const homedir =
-    typeof env.USERPROFILE === "string" && env.USERPROFILE !== "" ? env.USERPROFILE : os.homedir();
-  const extraRuntime =
-    typeof options.runtime === "object" && options.runtime !== null ? options.runtime : {};
-  const requestedRuntimeCwd = typeof options.cwd === "string" ? options.cwd : hooksRoot;
-  const payload =
-    typeof options.payload === "object" &&
-    options.payload !== null &&
-    !Array.isArray(options.payload)
-      ? options.payload
-      : null;
-  const runtime = {
-    cwd: requestedRuntimeCwd,
-    env,
-    homedir,
-    ...extraRuntime,
-  };
-  const payloadCwd = payload !== null && typeof payload.cwd === "string" ? payload.cwd : "";
-  const isolatedProjectCwd =
-    hasEnvVaultPath(env) && (requestedRuntimeCwd === hooksRoot || payloadCwd === hooksRoot)
-      ? createTempDir("mm-cwd-")
-      : "";
-  const resolvedPayload =
-    payload !== null && payloadCwd !== ""
-      ? { ...payload, cwd: remapHooksRootCwd(payloadCwd, isolatedProjectCwd) }
-      : payload;
-  let stdinText = "";
-  if (typeof options.stdin === "string") {
-    stdinText = options.stdin;
-  } else if (typeof options.stdinText === "string") {
-    stdinText = options.stdinText;
-  } else if (resolvedPayload !== null) {
-    stdinText = JSON.stringify(resolvedPayload);
-  }
-  runtime.cwd = remapHooksRootCwd(runtime.cwd, isolatedProjectCwd);
+const isObjectValue = (value) => value !== null && typeof value === "object";
 
-  materializeProjectDotEnvConfig(runtime.cwd, env, generatedEnvPaths);
-  const resolvedPayloadCwd =
-    resolvedPayload !== null && typeof resolvedPayload.cwd === "string" ? resolvedPayload.cwd : "";
-  if (resolvedPayloadCwd !== "" && resolvedPayloadCwd !== runtime.cwd) {
+const resolveRuntimeEnv = (options) => (isObjectValue(options.env) ? options.env : process.env);
+
+const resolveRuntimeHomedir = (env) =>
+  typeof env.USERPROFILE === "string" && env.USERPROFILE !== "" ? env.USERPROFILE : os.homedir();
+
+const resolveExtraRuntime = (options) => (isObjectValue(options.runtime) ? options.runtime : {});
+
+const resolveRequestedRuntimeCwd = (options) =>
+  typeof options.cwd === "string" ? options.cwd : hooksRoot;
+
+const resolvePayload = (options) =>
+  isObjectValue(options.payload) && !Array.isArray(options.payload) ? options.payload : null;
+
+const resolvePayloadCwd = (payload) =>
+  payload !== null && typeof payload.cwd === "string" ? payload.cwd : "";
+
+const resolveIsolatedProjectCwd = (env, requestedRuntimeCwd, payloadCwd) =>
+  hasEnvVaultPath(env) && (requestedRuntimeCwd === hooksRoot || payloadCwd === hooksRoot)
+    ? createTempDir("mm-cwd-")
+    : "";
+
+const resolvePayloadRuntimeValue = (payload, payloadCwd, isolatedProjectCwd) =>
+  payload !== null && payloadCwd !== ""
+    ? { ...payload, cwd: remapHooksRootCwd(payloadCwd, isolatedProjectCwd) }
+    : payload;
+
+const resolveStdinText = (options, resolvedPayload) => {
+  if (typeof options.stdin === "string") {
+    return options.stdin;
+  }
+
+  if (typeof options.stdinText === "string") {
+    return options.stdinText;
+  }
+
+  if (resolvedPayload !== null) {
+    return JSON.stringify(resolvedPayload);
+  }
+
+  return "";
+};
+
+const materializeRuntimeConfigs = (runtimeCwd, resolvedPayload, env) => {
+  materializeProjectDotEnvConfig(runtimeCwd, env, generatedEnvPaths);
+
+  const resolvedPayloadCwd = resolvePayloadCwd(resolvedPayload);
+  if (resolvedPayloadCwd !== "" && resolvedPayloadCwd !== runtimeCwd) {
     materializeProjectDotEnvConfig(resolvedPayloadCwd, env, generatedEnvPaths);
   }
+};
 
-  const rawResult = scriptModule.run(stdinText, runtime);
+const normalizeHookResult = (rawResult) => {
   const status =
     rawResult !== null && typeof rawResult === "object" && Number.isInteger(rawResult.status)
       ? rawResult.status
@@ -187,6 +194,30 @@ const runHookEntrypoint = (scriptPath, options = {}) => {
   });
 
   return normalizedResult;
+};
+
+const runHookEntrypoint = (scriptPath, options = {}) => {
+  const scriptModule = resolveScriptModule(scriptPath);
+  const env = resolveRuntimeEnv(options);
+  const requestedRuntimeCwd = resolveRequestedRuntimeCwd(options);
+  const payload = resolvePayload(options);
+  const payloadCwd = resolvePayloadCwd(payload);
+  const isolatedProjectCwd = resolveIsolatedProjectCwd(env, requestedRuntimeCwd, payloadCwd);
+  const resolvedPayload = resolvePayloadRuntimeValue(payload, payloadCwd, isolatedProjectCwd);
+  const stdinText = resolveStdinText(options, resolvedPayload);
+  const runtime = {
+    cwd: requestedRuntimeCwd,
+    env,
+    homedir: resolveRuntimeHomedir(env),
+    ...resolveExtraRuntime(options),
+  };
+
+  runtime.cwd = remapHooksRootCwd(runtime.cwd, isolatedProjectCwd);
+
+  materializeRuntimeConfigs(runtime.cwd, resolvedPayload, env);
+
+  const rawResult = scriptModule.run(stdinText, runtime);
+  return normalizeHookResult(rawResult);
 };
 
 module.exports = {

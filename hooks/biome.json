@@ -29,12 +29,17 @@
         "noUnusedVariables": "error",
         "noUnusedImports": "error"
       },
+      "complexity": {
+        "noExcessiveCognitiveComplexity": "error"
+      },
       "suspicious": {
         "noExplicitAny": "error"
       },
       "style": {
         "noNestedTernary": "error",
-        "noMagicNumbers": "error"
+        "noMagicNumbers": "error",
+        "useCollapsedElseIf": "error",
+        "useConst": "error"
       }
     }
   },

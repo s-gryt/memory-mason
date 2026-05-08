@@ -1,10 +1,13 @@
 #!/usr/bin/env node
+/**
+ * This module handles post tool use logic.
+ */
 "use strict";
 
-const { parseJsonInput, detectPlatform } = require("./lib/config");
-const { buildCommandErrorResult } = require("./lib/cli");
+const { parseJsonInput, detectPlatform } = require("./lib/config/config");
+const { buildCommandErrorResult } = require("./lib/cli/cli");
+const { CAPTURE_MODE_LITE, ENV_KEY_INVOKED_BY } = require("./lib/config/constants");
 const {
-  CAPTURE_MODE_LITE,
   NOISY_TOOLS,
   EVENT_TYPE_EXPLORATION,
   EVENT_TYPE_META,
@@ -14,31 +17,30 @@ const {
   HOOK_WARNING_TAG_LIMIT_PREFIX,
   HOOK_WARNING_SENSITIVE_SKIP_PREFIX,
   MAX_TAG_STRIP_COUNT,
-} = require("./lib/constants");
+} = require("./lib/filter/constants");
 const {
   PLATFORM_CLAUDE_CODE,
   PLATFORM_COPILOT_VSCODE,
   PLATFORM_COPILOT_CLI,
   PLATFORM_CODEX,
-} = require("./lib/platforms");
-const { TRANSCRIPT_BLOCK_TYPE_TEXT } = require("./lib/transcript-labels");
-const { ENV_KEY_INVOKED_BY } = require("./lib/config-keys");
-const { buildDailyEntry, localNow } = require("./lib/vault");
-const { appendToDaily } = require("./lib/writer");
-const { recordCaptureMetrics } = require("./lib/state");
-const { loadCaptureState, getMmSuppressed } = require("./lib/capture-state");
-const { stripMemoryTags, countMemoryTags } = require("./lib/tag-stripper");
-const { classifyToolEvent } = require("./lib/classifier");
-const { detectSensitiveContent } = require("./lib/sensitive-guard");
-const { compressNarrativeText } = require("./lib/compress");
-const { HOOK_EVENT_POST_TOOL_USE_KEBAB } = require("./lib/hook-events");
+} = require("./lib/config/platforms");
+const { TRANSCRIPT_BLOCK_TYPE_TEXT } = require("./lib/capture/transcript-labels");
+const { buildDailyEntry } = require("./lib/vault/vault");
+const { appendToDaily } = require("./lib/vault/writer");
+const { recordCaptureMetrics } = require("./lib/state/state");
+const { loadCaptureState, getMmSuppressed } = require("./lib/capture/capture-state");
+const { stripMemoryTags, countMemoryTags } = require("./lib/filter/tag-stripper");
+const { classifyToolEvent } = require("./lib/filter/classifier");
+const { detectSensitiveContent } = require("./lib/filter/sensitive-guard");
+const { compressNarrativeText } = require("./lib/economics/compress");
+const { HOOK_EVENT_POST_TOOL_USE_KEBAB } = require("./lib/hook/hook-events");
+const { buildCaptureTimestamp } = require("./lib/hook/capture-ops");
 const { stripVTControlCharacters } = require("node:util");
+const hookRuntime = require("./lib/hook/hook-runtime");
 const {
   readStdin,
   toStringOrEmpty,
-  resolveRuntimeEnv,
-  resolveFallbackCwd,
-  resolveRuntimeHomedir,
+  resolveRuntimeContext,
   resolveInputCwd,
   resolveRuntimeConfig,
   buildSuccessResult,
@@ -46,29 +48,17 @@ const {
   readDotEnvText,
   readGlobalConfigText,
   readGlobalDotEnvText,
-} = require("./lib/hook-runtime");
+} = hookRuntime;
 
 const EMPTY_STRING = "";
 const NULL_VALUE = null;
 const ZERO = 0;
 const FIRST_INDEX = 0;
 
-/**
- * Convert unknown input into a plain object record.
- *
- * @param {unknown} value
- * @returns {Record<string, unknown>}
- */
 function toObjectRecord(value) {
   return value !== NULL_VALUE && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
 
-/**
- * Parse tool arguments payload from JSON string or object.
- *
- * @param {unknown} value
- * @returns {Record<string, unknown>}
- */
 function parseToolArgs(value) {
   if (typeof value === "string") {
     try {
@@ -82,12 +72,6 @@ function parseToolArgs(value) {
   return toObjectRecord(value);
 }
 
-/**
- * Return the first string value from an array-like candidate.
- *
- * @param {unknown} value
- * @returns {string}
- */
 function firstStringFromArray(value) {
   if (!Array.isArray(value)) {
     return EMPTY_STRING;
@@ -96,12 +80,6 @@ function firstStringFromArray(value) {
   return toStringOrEmpty(value[FIRST_INDEX]);
 }
 
-/**
- * Return the first non-empty string from ordered candidates.
- *
- * @param {unknown[]} candidates
- * @returns {string}
- */
 function firstNonEmptyString(candidates) {
   const found = candidates
     .map((candidate) => toStringOrEmpty(candidate))
@@ -110,23 +88,11 @@ function firstNonEmptyString(candidates) {
   return typeof found === "string" ? found : EMPTY_STRING;
 }
 
-/**
- * Return the first integer from ordered candidates.
- *
- * @param {unknown[]} candidates
- * @returns {number | null}
- */
 function firstInteger(candidates) {
   const found = candidates.find((candidate) => Number.isInteger(candidate));
   return typeof found === "number" ? found : NULL_VALUE;
 }
 
-/**
- * Serialize tool response payload content into capture-safe text.
- *
- * @param {unknown} toolResponse
- * @returns {string}
- */
 function serializeToolResponse(toolResponse) {
   if (typeof toolResponse === "string") {
     return toolResponse;
@@ -159,12 +125,6 @@ function serializeToolResponse(toolResponse) {
   return EMPTY_STRING;
 }
 
-/**
- * Extract tool payload fields from Claude Code or Copilot VS Code input shape.
- *
- * @param {Record<string, unknown>} input
- * @returns {{toolName: string, resultText: string, filePath: string, exitCode: number | null, commandText: string}}
- */
 function extractClaudeOrCopilotVscodePayload(input) {
   const toolInput = toObjectRecord(input.tool_input);
   const toolResponse = toObjectRecord(input.tool_response);
@@ -185,12 +145,6 @@ function extractClaudeOrCopilotVscodePayload(input) {
   };
 }
 
-/**
- * Extract tool payload fields from Copilot CLI input shape.
- *
- * @param {Record<string, unknown>} input
- * @returns {{toolName: string, resultText: string, filePath: string, exitCode: number | null, commandText: string}}
- */
 function extractCopilotCliPayload(input) {
   const toolResult = toObjectRecord(input.toolResult);
   const toolArgs = parseToolArgs(input.toolArgs);
@@ -205,12 +159,6 @@ function extractCopilotCliPayload(input) {
   };
 }
 
-/**
- * Extract tool payload fields from Codex input shape.
- *
- * @param {Record<string, unknown>} input
- * @returns {{toolName: string, resultText: string, filePath: string, exitCode: number | null, commandText: string}}
- */
 function extractCodexPayload(input) {
   const toolInput = toObjectRecord(input.tool_input);
 
@@ -223,13 +171,6 @@ function extractCodexPayload(input) {
   };
 }
 
-/**
- * Extract normalized tool payload by detected platform.
- *
- * @param {string} platform
- * @param {Record<string, unknown>} input
- * @returns {{toolName: string, resultText: string, filePath: string, exitCode: number | null, commandText: string}}
- */
 function extractToolPayload(platform, input) {
   const extractorByPlatform = {
     [PLATFORM_CLAUDE_CODE]: extractClaudeOrCopilotVscodePayload,
@@ -246,22 +187,6 @@ function extractToolPayload(platform, input) {
   throw new Error(`unsupported platform: ${platform}`);
 }
 
-function buildCaptureTimestamp() {
-  const now = localNow();
-  return {
-    today: now.date,
-    timestamp: now.time,
-    iso: `${now.date}T${now.time}`,
-  };
-}
-
-/**
- * Decide whether a normalized payload should be skipped for capture.
- *
- * @param {{toolName: string, exitCode?: number | null, strippedResultText?: string, filePath?: string, lineCount?: number, commandText?: string}} payload
- * @param {string} captureMode
- * @returns {boolean}
- */
 const shouldSkipToolPayload = (payload, captureMode) => {
   if (payload.toolName === "") {
     return true;
@@ -297,9 +222,7 @@ const shouldSkipToolPayload = (payload, captureMode) => {
 };
 
 function buildRunPlan(rawStdin, runtime = {}) {
-  const env = resolveRuntimeEnv(runtime);
-  const fallbackCwd = resolveFallbackCwd(runtime);
-  const homedir = resolveRuntimeHomedir(runtime);
+  const { env, fallbackCwd, homedir } = resolveRuntimeContext(runtime);
   const input = parseJsonInput(rawStdin);
   const platform = detectPlatform(input);
   const payload = extractToolPayload(platform, input);
@@ -317,15 +240,17 @@ function buildRunPlan(rawStdin, runtime = {}) {
 }
 
 function persistToolUsage(plan, resolvedConfig) {
+  const vaultPath = resolvedConfig.vaultPath;
+  const subfolder = resolvedConfig.subfolder;
   const dailyEntry = buildDailyEntry(
     plan.payload.toolName,
     plan.payload.resultText,
     plan.timestamp,
   );
-  appendToDaily(resolvedConfig.vaultPath, resolvedConfig.subfolder, plan.today, dailyEntry);
+  appendToDaily(vaultPath, subfolder, plan.today, dailyEntry);
   recordCaptureMetrics(
-    resolvedConfig.vaultPath,
-    resolvedConfig.subfolder,
+    vaultPath,
+    subfolder,
     HOOK_EVENT_POST_TOOL_USE_KEBAB,
     plan.iso,
     plan.payload.rawResultText,
@@ -333,15 +258,31 @@ function persistToolUsage(plan, resolvedConfig) {
   );
 }
 
-/**
- * Run post-tool-use capture flow for a raw stdin payload.
- *
- * @param {string} rawStdin
- * @param {Record<string, unknown>} [runtime]
- * @returns {{status: number, stdout: string, stderr: string}}
- */
+function loadCaptureStateForConfig(resolvedConfig) {
+  return loadCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder);
+}
+
+function enrichPayloadForCapture(payload) {
+  const tagCount = countMemoryTags(payload.resultText);
+  const strippedResultText = compressNarrativeText(
+    stripVTControlCharacters(stripMemoryTags(payload.resultText)),
+  );
+  const lineCount =
+    strippedResultText === EMPTY_STRING ? ZERO : strippedResultText.split(/\r?\n/).length;
+
+  return {
+    tagCount,
+    strippedResultText,
+    enrichedPayload: {
+      ...payload,
+      strippedResultText,
+      lineCount,
+    },
+  };
+}
+
 function run(rawStdin, runtime = {}) {
-  const env = resolveRuntimeEnv(runtime);
+  const { env } = resolveRuntimeContext(runtime);
 
   if (toStringOrEmpty(env[ENV_KEY_INVOKED_BY]) !== "") {
     return buildSuccessResult();
@@ -350,34 +291,30 @@ function run(rawStdin, runtime = {}) {
   try {
     const plan = buildRunPlan(rawStdin, runtime);
     const resolvedConfig = resolveRuntimeConfig(plan.cwd, plan.homedir);
+    const syncDisabled = resolvedConfig.sync === false;
 
-    if (resolvedConfig.sync === false) {
+    if (syncDisabled) {
       return buildSuccessResult();
     }
 
-    const captureState = loadCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder);
+    const captureState = loadCaptureStateForConfig(resolvedConfig);
+    const mmSuppressed = getMmSuppressed(captureState);
 
-    if (getMmSuppressed(captureState)) {
+    if (mmSuppressed) {
       return buildSuccessResult();
     }
 
-    const tagCount = countMemoryTags(plan.payload.resultText);
-    const strippedResultText = compressNarrativeText(
-      stripVTControlCharacters(stripMemoryTags(plan.payload.resultText)),
-    );
-    const lineCount =
-      strippedResultText === EMPTY_STRING ? ZERO : strippedResultText.split(/\r?\n/).length;
-    const enrichedPayload = {
-      ...plan.payload,
-      strippedResultText,
-      lineCount,
-    };
+    const payloadCaptureData = enrichPayloadForCapture(plan.payload);
 
-    if (shouldSkipToolPayload(enrichedPayload, resolvedConfig.captureMode)) {
+    if (shouldSkipToolPayload(payloadCaptureData.enrichedPayload, resolvedConfig.captureMode)) {
       return buildSuccessResult();
     }
 
-    const sensitiveInput = [plan.payload.filePath, plan.payload.commandText, strippedResultText]
+    const sensitiveInput = [
+      plan.payload.filePath,
+      plan.payload.commandText,
+      payloadCaptureData.strippedResultText,
+    ]
       .filter((part) => part !== EMPTY_STRING)
       .join("\n");
 
@@ -391,17 +328,17 @@ function run(rawStdin, runtime = {}) {
     }
 
     const tagWarning =
-      tagCount > MAX_TAG_STRIP_COUNT
-        ? `${HOOK_WARNING_TAG_LIMIT_PREFIX}: ${tagCount} tags found\n`
+      payloadCaptureData.tagCount > MAX_TAG_STRIP_COUNT
+        ? `${HOOK_WARNING_TAG_LIMIT_PREFIX}: ${payloadCaptureData.tagCount} tags found\n`
         : EMPTY_STRING;
 
     persistToolUsage(
       {
         ...plan,
         payload: {
-          ...enrichedPayload,
+          ...payloadCaptureData.enrichedPayload,
           rawResultText: plan.payload.resultText,
-          resultText: strippedResultText,
+          resultText: payloadCaptureData.strippedResultText,
         },
       },
       resolvedConfig,
@@ -414,12 +351,6 @@ function run(rawStdin, runtime = {}) {
   }
 }
 
-/**
- * Execute stdin-driven main entrypoint.
- *
- * @param {Record<string, unknown>} [runtime]
- * @returns {{status: number, stdout: string, stderr: string}}
- */
 const main = (runtime = {}) => runStdinMain(runtime, run);
 
 module.exports = {
@@ -434,7 +365,6 @@ module.exports = {
   main,
 };
 
-/* c8 ignore next 3 */
 if (require.main === module) {
   main();
 }

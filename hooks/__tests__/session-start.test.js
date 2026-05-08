@@ -6,9 +6,9 @@ const {
   SESSION_START_RECENT_LOG_LINES,
   HOT_CACHE_CONTEXT_MAX_CHARS,
   INDEX_CONTEXT_MAX_CHARS,
-  UTF8_ENCODING,
-} = require("../lib/constants");
-const { ROOT_INDEX_FILE_NAME, DAILY_META_FILE_NAME } = require("../lib/vault-paths");
+} = require("../lib/vault/constants");
+const { UTF8_ENCODING } = require("../lib/shared/constants");
+const { ROOT_INDEX_FILE_NAME, DAILY_META_FILE_NAME } = require("../lib/vault/vault-paths");
 const {
   ENV_KEY_VAULT_PATH,
   ENV_KEY_SUBFOLDER,
@@ -16,7 +16,7 @@ const {
   DOTENV_FILE_NAME,
   GLOBAL_MM_DIR_NAME,
   GLOBAL_CONFIG_FILE_NAME,
-} = require("../lib/config-keys");
+} = require("../lib/config/constants");
 const {
   TEST_HOME_PREFIX,
   TEST_VAULT_PREFIX,
@@ -35,7 +35,7 @@ const {
   buildRootIndexPath,
   buildSessionContextPath,
   buildDailyFolderPath,
-} = require("../lib/vault");
+} = require("../lib/vault/vault");
 const sessionStart = require("../session-start");
 const {
   createTempDir,
@@ -815,3 +815,4 @@ describe("session-start.js runtime fallback branches", () => {
     expect(result.stderr).toContain("invalid JSON");
   });
 });
+

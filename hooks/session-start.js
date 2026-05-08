@@ -1,10 +1,13 @@
 #!/usr/bin/env node
+/**
+ * This module handles session start logic.
+ */
 "use strict";
 
 const fs = require("node:fs");
 const path = require("node:path");
-const { parseJsonInput } = require("./lib/config");
-const { buildCommandErrorResult } = require("./lib/cli");
+const { parseJsonInput } = require("./lib/config/config");
+const { buildCommandErrorResult } = require("./lib/cli/cli");
 const {
   buildRootIndexPath,
   buildDailyFolderPath,
@@ -15,7 +18,7 @@ const {
   truncateContext,
   localNow,
   localYesterday,
-} = require("./lib/vault");
+} = require("./lib/vault/vault");
 const {
   readStdin,
   readDotEnvText,
@@ -26,20 +29,20 @@ const {
   resolveInputCwd,
   resolveRuntimeConfig,
   runStdinMain,
-} = require("./lib/hook-runtime");
+} = require("./lib/hook/hook-runtime");
 const {
   SESSION_START_RECENT_LOG_LINES,
   HOT_CACHE_CONTEXT_MAX_CHARS,
   INDEX_CONTEXT_MAX_CHARS,
-  UTF8_ENCODING,
-} = require("./lib/constants");
+} = require("./lib/vault/constants");
+const { UTF8_ENCODING } = require("./lib/shared/constants");
 const {
   KNOWLEDGE_BASE_INDEX_HEADING,
   SESSION_CONTEXT_HEADING,
   PLACEHOLDER_NO_ARTICLES,
   PLACEHOLDER_NO_SESSION_CONTEXT,
-} = require("./lib/markdown-labels");
-const { HOOK_ENTRY_SESSION_START } = require("./lib/hook-events");
+} = require("./lib/vault/markdown-labels");
+const { HOOK_ENTRY_SESSION_START } = require("./lib/hook/hook-events");
 
 function readFileOrEmpty(filePath) {
   try {
@@ -175,7 +178,8 @@ function run(rawStdin, runtime = {}) {
     const additionalContext = buildSessionAdditionalContext(resolvedConfig);
     return buildSuccessResult(additionalContext);
   } catch (error) {
-    return buildCommandErrorResult(error);
+    const failure = buildCommandErrorResult(error);
+    return failure;
   }
 }
 
@@ -195,7 +199,6 @@ module.exports = {
   main,
 };
 
-/* c8 ignore next 3 */
 if (require.main === module) {
   main();
 }

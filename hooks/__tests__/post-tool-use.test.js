@@ -3,13 +3,13 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const {
-  UTF8_ENCODING,
   USER_INPUT_TOOLS,
   NOISY_TOOLS,
   MAX_TAG_STRIP_COUNT,
   HOOK_WARNING_TAG_LIMIT_PREFIX,
   HOOK_WARNING_SENSITIVE_SKIP_PREFIX,
-} = require("../lib/constants");
+} = require("../lib/filter/constants");
+const { UTF8_ENCODING } = require("../lib/shared/constants");
 const {
   ENV_KEY_VAULT_PATH,
   ENV_KEY_SUBFOLDER,
@@ -19,9 +19,9 @@ const {
   DOTENV_FILE_NAME,
   GLOBAL_MM_DIR_NAME,
   GLOBAL_CONFIG_FILE_NAME,
-} = require("../lib/config-keys");
-const { buildDailyChunkPath, buildDailyFilePath } = require("../lib/vault");
-const { resolveCaptureStatePath } = require("../lib/capture-state");
+} = require("../lib/config/constants");
+const { buildDailyChunkPath, buildDailyFilePath } = require("../lib/vault/vault");
+const { resolveCaptureStatePath } = require("../lib/capture/capture-state");
 const postToolUse = require("../post-tool-use");
 const { materializeProjectDotEnvConfig } = require("./helpers/project-dot-env");
 const {
@@ -1216,3 +1216,4 @@ describe("post-tool-use.js main", () => {
     expect(result.status).toBe(0);
   });
 });
+

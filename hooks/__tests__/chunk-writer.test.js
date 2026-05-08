@@ -5,14 +5,14 @@ const {
   DEFAULT_DAILY_CHUNK_CAP_BYTES,
   MAX_DAILY_CHUNK_COUNT,
   CHUNK_ID_WIDTH,
-  UTF8_ENCODING,
-} = require("../lib/constants");
+} = require("../lib/vault/constants");
+const { UTF8_ENCODING } = require("../lib/shared/constants");
 const {
   VAULT_RAW_DIR_NAME,
   ROOT_INDEX_FILE_NAME,
   DAILY_META_FILE_NAME,
-} = require("../lib/vault-paths");
-const vaultModule = require("../lib/vault");
+} = require("../lib/vault/vault-paths");
+const vaultModule = require("../lib/vault/vault");
 const {
   TEST_DEFAULT_DATE,
   TEST_DEFAULT_DATE_ISO,
@@ -100,7 +100,7 @@ const {
   nextChunkNum,
   buildChunkEntry,
   appendToChunked,
-} = require("../lib/chunk-writer");
+} = require("../lib/vault/chunk-writer");
 
 const makeChunk = (chunkNum, sizeBytes, createdAt = TEST_DEFAULT_DATE_ISO) => {
   const id = padChunkId(chunkNum);
@@ -917,3 +917,4 @@ describe("appendToChunked - validation", () => {
     }
   });
 });
+

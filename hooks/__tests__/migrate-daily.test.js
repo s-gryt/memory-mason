@@ -8,14 +8,14 @@ const {
   DEFAULT_DAILY_CHUNK_CAP_BYTES,
   MAX_DAILY_CHUNK_COUNT,
   CHUNK_ID_WIDTH,
-  UTF8_ENCODING,
-} = require("../lib/constants");
+} = require("../lib/vault/constants");
+const { UTF8_ENCODING } = require("../lib/shared/constants");
 const {
   TEST_DEFAULT_DATE,
   TEST_DEFAULT_SUBFOLDER: DEFAULT_SUBFOLDER,
 } = require("./helpers/test-constants");
 
-const { migrateFlatToChunked } = require("../lib/migrate-daily");
+const { migrateFlatToChunked } = require("../lib/migration/migrate-daily");
 const {
   buildDailyFilePath,
   buildDailyFolderPath,
@@ -25,7 +25,7 @@ const {
   buildDailyChunkPath,
   buildChunkHeader,
   buildChunkIndexContent,
-} = require("../lib/vault");
+} = require("../lib/vault/vault");
 
 const TWO = 2;
 const THREE = CHUNK_ID_WIDTH;
@@ -477,3 +477,4 @@ describe("migrateFlatToChunked - header and prefix handling", () => {
     expect(fsApi._files[firstChunkPath]).toBe(buildChunkHeader(paths.dateIso, 1));
   });
 });
+

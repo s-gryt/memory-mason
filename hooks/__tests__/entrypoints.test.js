@@ -3,7 +3,8 @@
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { PRE_COMPACT_MIN_TURNS, UTF8_ENCODING } = require("../lib/constants");
+const { PRE_COMPACT_MIN_TURNS } = require("../lib/hook/constants");
+const { UTF8_ENCODING } = require("../lib/shared/constants");
 const {
   ENV_KEY_VAULT_PATH,
   ENV_KEY_SUBFOLDER,
@@ -15,9 +16,9 @@ const {
   DOTENV_FILE_NAME,
   GLOBAL_MM_DIR_NAME,
   GLOBAL_CONFIG_FILE_NAME,
-} = require("../lib/config-keys");
-const { buildDailyChunkPath, buildDailyFilePath, buildRootIndexPath } = require("../lib/vault");
-const { resolveCaptureStatePath } = require("../lib/capture-state");
+} = require("../lib/config/constants");
+const { buildDailyChunkPath, buildDailyFilePath, buildRootIndexPath } = require("../lib/vault/vault");
+const { resolveCaptureStatePath } = require("../lib/capture/capture-state");
 const sessionStart = require("../session-start");
 const userPromptSubmit = require("../user-prompt-submit");
 const postToolUse = require("../post-tool-use");
@@ -1688,7 +1689,7 @@ describe("capture-state.js helpers", () => {
     setTranscriptTurnCount,
     defaultCaptureState,
     loadCaptureState,
-  } = require("../lib/capture-state");
+  } = require("../lib/capture/capture-state");
 
   it("getTranscriptTurnCount returns 0 when sessionId not found", () => {
     const state = defaultCaptureState();
@@ -1789,7 +1790,7 @@ describe("capture-state.js helpers", () => {
 });
 
 describe("vault.js buildAssistantReplyEntry", () => {
-  const { buildAssistantReplyEntry } = require("../lib/vault");
+  const { buildAssistantReplyEntry } = require("../lib/vault/vault");
 
   it("builds a labeled AssistantReply entry", () => {
     const entry = buildAssistantReplyEntry("SELECT * FROM foo;", "14:22:31");
@@ -3325,3 +3326,4 @@ describe("session-end.js calculateNextTurnCount edge cases", () => {
     expect(result.status).toBe(0);
   });
 });
+

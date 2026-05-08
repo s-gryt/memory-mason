@@ -1,6 +1,6 @@
 "use strict";
 
-const { ENV_KEY_VAULT_PATH, ENV_KEY_SYNC, ENV_KEY_CAPTURE_MODE } = require("../lib/config-keys");
+const { ENV_KEY_VAULT_PATH, ENV_KEY_SYNC, ENV_KEY_CAPTURE_MODE } = require("../lib/config/constants");
 const {
   detectPlatform,
   parseJsonInput,
@@ -8,7 +8,7 @@ const {
   parseMemoryMasonConfig,
   parseDotEnv,
   resolveVaultConfig,
-} = require("../lib/config");
+} = require("../lib/config/config");
 const {
   TEST_DEFAULT_HOME_PATH,
   TEST_DEFAULT_REPO_PATH,
@@ -1005,3 +1005,4 @@ describe("resolveVaultConfig", () => {
     );
   });
 });
+

@@ -3,18 +3,11 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
-const { parseArgs, resolveTargetDir, runHookOpsMain } = require("./lib/hook-ops");
+const { parseArgs, resolveTargetDir, runHookOpsMain } = require("./lib/hook/hook-ops");
+const { HOOK_FILES: hookFiles } = require("./lib/hook/constants");
 
 const repoRoot = path.resolve(__dirname, "..");
 const defaultSourceDir = path.join(repoRoot, ".github", "hooks");
-const hookFiles = [
-  "session-start.json",
-  "user-prompt-submit.json",
-  "post-tool-use.json",
-  "pre-compact.json",
-  "stop.json",
-  "session-end.json",
-];
 const HOOK_SCRIPT_NAMES = {
   "session-start.json": "session-start.js",
   "user-prompt-submit.json": "user-prompt-submit.js",

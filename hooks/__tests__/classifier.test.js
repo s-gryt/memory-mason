@@ -1,7 +1,7 @@
 "use strict";
 
-const { classifyToolEvent } = require("../lib/classifier");
-const { countMemoryTags } = require("../lib/tag-stripper");
+const { classifyToolEvent } = require("../lib/filter/classifier");
+const { countMemoryTags } = require("../lib/filter/tag-stripper");
 const {
   EVENT_TYPE_ERROR,
   EVENT_TYPE_TEST_RESULT,
@@ -12,7 +12,7 @@ const {
   EVENT_TYPE_EXPLORATION,
   EVENT_TYPE_META,
   EVENT_TYPE_NOISE,
-} = require("../lib/constants");
+} = require("../lib/filter/constants");
 
 const ZERO = 0;
 const ONE = 1;

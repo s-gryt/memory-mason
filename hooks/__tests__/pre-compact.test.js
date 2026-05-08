@@ -3,11 +3,11 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const {
-  UTF8_ENCODING,
   MAX_TAG_STRIP_COUNT,
   HOOK_WARNING_TAG_LIMIT_PREFIX,
   HOOK_WARNING_SENSITIVE_SKIP_PREFIX,
-} = require("../lib/constants");
+} = require("../lib/filter/constants");
+const { UTF8_ENCODING } = require("../lib/shared/constants");
 const {
   ENV_KEY_VAULT_PATH,
   ENV_KEY_SUBFOLDER,
@@ -17,12 +17,12 @@ const {
   DOTENV_FILE_NAME,
   GLOBAL_MM_DIR_NAME,
   GLOBAL_CONFIG_FILE_NAME,
-} = require("../lib/config-keys");
-const { buildDailyChunkPath, buildDailyFilePath } = require("../lib/vault");
-const { resolveCaptureStatePath, buildCaptureRecord } = require("../lib/capture-state");
-const { parseJsonlTranscript, renderTurnsAsMarkdown } = require("../lib/transcript");
-const { stripMemoryTags } = require("../lib/tag-stripper");
-const { compressNarrativeText } = require("../lib/compress");
+} = require("../lib/config/constants");
+const { buildDailyChunkPath, buildDailyFilePath } = require("../lib/vault/vault");
+const { resolveCaptureStatePath, buildCaptureRecord } = require("../lib/capture/capture-state");
+const { parseJsonlTranscript, renderTurnsAsMarkdown } = require("../lib/capture/transcript");
+const { stripMemoryTags } = require("../lib/filter/tag-stripper");
+const { compressNarrativeText } = require("../lib/economics/compress");
 const { stripVTControlCharacters } = require("node:util");
 const preCompact = require("../pre-compact");
 const { materializeProjectDotEnvConfig } = require("./helpers/project-dot-env");
@@ -1286,3 +1286,4 @@ describe("pre-compact.js main", () => {
     expect(errors.join("")).toContain("invalid JSON in stdin");
   });
 });
+

@@ -1,14 +1,14 @@
 "use strict";
 
 const path = require("node:path");
-const { CHUNK_ID_WIDTH, MAX_DAILY_CHUNK_COUNT } = require("../lib/constants");
+const { CHUNK_ID_WIDTH, MAX_DAILY_CHUNK_COUNT } = require("../lib/vault/constants");
 const {
   DAILY_META_FILE_NAME,
   ROOT_INDEX_FILE_NAME,
   SESSION_CONTEXT_FILE_NAME,
   VAULT_META_DIR_NAME,
   VAULT_RAW_DIR_NAME,
-} = require("../lib/vault-paths");
+} = require("../lib/vault/vault-paths");
 const {
   TEST_DEFAULT_DATE,
   TEST_DEFAULT_VAULT_PATH,
@@ -46,7 +46,7 @@ const {
   buildDailyMetaPath,
   buildChunkHeader,
   buildChunkIndexContent,
-} = require("../lib/vault");
+} = require("../lib/vault/vault");
 
 const TEST_NON_STRING_VALUE = 123;
 const TEST_UNDER_LIMIT_MAX_CHARS = 10;
@@ -559,3 +559,4 @@ describe("buildChunkIndexContent", () => {
     expect(() => buildChunkIndexContent("", 1)).toThrow("dateIso must be a non-empty string");
   });
 });
+
