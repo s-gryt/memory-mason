@@ -2,7 +2,12 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
-const { UTF8_ENCODING } = require("../lib/constants");
+const {
+  UTF8_ENCODING,
+  MAX_TAG_STRIP_COUNT,
+  HOOK_WARNING_TAG_LIMIT_PREFIX,
+  HOOK_WARNING_SENSITIVE_SKIP_PREFIX,
+} = require("../lib/constants");
 const {
   ENV_KEY_VAULT_PATH,
   ENV_KEY_SUBFOLDER,
@@ -14,7 +19,11 @@ const {
   GLOBAL_CONFIG_FILE_NAME,
 } = require("../lib/config-keys");
 const { buildDailyChunkPath, buildDailyFilePath } = require("../lib/vault");
-const { resolveCaptureStatePath } = require("../lib/capture-state");
+const { resolveCaptureStatePath, buildCaptureRecord } = require("../lib/capture-state");
+const { parseJsonlTranscript, renderTurnsAsMarkdown } = require("../lib/transcript");
+const { stripMemoryTags } = require("../lib/tag-stripper");
+const { compressNarrativeText } = require("../lib/compress");
+const { stripVTControlCharacters } = require("node:util");
 const preCompact = require("../pre-compact");
 const { materializeProjectDotEnvConfig } = require("./helpers/project-dot-env");
 const {
@@ -54,6 +63,11 @@ const TEST_LONG_FIRST_TURN_REPEAT_COUNT = 17000;
 const TEST_INVALID_NON_ARRAY_INPUT = 42;
 const TEST_INVALID_RUNTIME_CWD = 123;
 const TEST_INVALID_RUNTIME_HOMEDIR = 42;
+const TEST_TAG_WARNING_EXTRA_COUNT = 1;
+const TEST_POSITIVE_TIMESTAMP_MS = 1;
+const TEST_FILTER_FAILURE_MESSAGE = "compress validation failed: protected segment altered";
+const TEST_FILTER_FALLBACK_WARNING_PREFIX =
+  "[memory-mason] capture filter failed; using uncompressed sanitized transcript";
 
 const withProcessCaptureMode = (value, callback) => {
   const hadCaptureMode = Object.hasOwn(process.env, ENV_KEY_CAPTURE_MODE);
@@ -253,6 +267,273 @@ describe("pre-compact.js", () => {
       );
     }));
 
+  it("strips memory tags from transcript markdown before vault write", () =>
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+      const transcriptPath = path.join(
+        createTempDir(TEST_TRANSCRIPT_PREFIX),
+        TEST_DEFAULT_TRANSCRIPT_FILE,
+      );
+      const transcript = [
+        JSON.stringify({
+          message: {
+            role: TRANSCRIPT_ROLE_USER,
+            content: "user<system-reminder>tag content</system-reminder>",
+          },
+        }),
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: "assistant" } }),
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "user-2" } }),
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: "assistant-2" } }),
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "user-3" } }),
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: "assistant-3" } }),
+      ].join("\n");
+
+      writeText(transcriptPath, transcript);
+
+      const result = runHookEntrypoint(ENTRYPOINT, {
+        payload: {
+          cwd: hooksRoot,
+          transcript_path: transcriptPath,
+          session_id: "session-strip-tags",
+        },
+        env: buildEnv(homeDir, {
+          [ENV_KEY_VAULT_PATH]: vaultPath,
+        }),
+      });
+
+      const dailyPath = buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1);
+      const dailyContent = fs.readFileSync(dailyPath, UTF8_ENCODING);
+
+      expect(result.status).toBe(0);
+      expect(dailyContent).toContain("user");
+      expect(dailyContent).toContain("assistant");
+      expect(dailyContent).not.toContain("<system-reminder>");
+      expect(dailyContent).not.toContain("tag content");
+    }));
+
+  it("preserves user wording while compressing assistant transcript turns", () =>
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+      const transcriptPath = path.join(
+        createTempDir(TEST_TRANSCRIPT_PREFIX),
+        TEST_DEFAULT_TRANSCRIPT_FILE,
+      );
+      const transcript = [
+        JSON.stringify({
+          message: { role: TRANSCRIPT_ROLE_USER, content: "just run tests" },
+        }),
+        JSON.stringify({
+          message: {
+            role: TRANSCRIPT_ROLE_ASSISTANT,
+            content: "I will just run tests really quickly",
+          },
+        }),
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "user-2" } }),
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: "assistant-2" } }),
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "user-3" } }),
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: "assistant-3" } }),
+      ].join("\n");
+
+      writeText(transcriptPath, transcript);
+
+      const result = runHookEntrypoint(ENTRYPOINT, {
+        payload: {
+          cwd: hooksRoot,
+          transcript_path: transcriptPath,
+          session_id: "session-preserve-user-wording",
+        },
+        env: buildEnv(homeDir, {
+          [ENV_KEY_VAULT_PATH]: vaultPath,
+        }),
+      });
+
+      const dailyContent = fs.readFileSync(
+        buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
+        UTF8_ENCODING,
+      );
+
+      expect(result.status).toBe(0);
+      expect(dailyContent).toContain("**User:** just run tests");
+      expect(dailyContent).toContain("**Assistant:** I will run tests quickly");
+      expect(dailyContent).not.toContain("**User:** run tests");
+      expect(dailyContent).not.toContain("**Assistant:** I will just run tests really quickly");
+    }));
+
+  it("returns tag warning when stripped tag count exceeds max and still writes", () =>
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+      const transcriptPath = path.join(
+        createTempDir(TEST_TRANSCRIPT_PREFIX),
+        TEST_DEFAULT_TRANSCRIPT_FILE,
+      );
+      const tagBlock = "<system-reminder>x</system-reminder>";
+      const tagCount = MAX_TAG_STRIP_COUNT + TEST_TAG_WARNING_EXTRA_COUNT;
+      const heavyTurn = `visible-${tagBlock.repeat(tagCount)}`;
+
+      writeText(transcriptPath, buildTranscript(TEST_TRANSCRIPT_TURN_COUNT_STANDARD, heavyTurn));
+
+      const result = runHookEntrypoint(ENTRYPOINT, {
+        payload: {
+          cwd: hooksRoot,
+          transcript_path: transcriptPath,
+          session_id: "session-tag-warning",
+        },
+        env: buildEnv(homeDir, {
+          [ENV_KEY_VAULT_PATH]: vaultPath,
+        }),
+      });
+
+      const dailyContent = fs.readFileSync(
+        buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
+        UTF8_ENCODING,
+      );
+
+      expect(result.status).toBe(0);
+      expect(result.stderr).toContain(HOOK_WARNING_TAG_LIMIT_PREFIX);
+      expect(dailyContent).toContain("visible-");
+    }));
+
+  it("returns tag warning for short transcript skip when tag count exceeds max", () =>
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+      const transcriptPath = path.join(
+        createTempDir(TEST_TRANSCRIPT_PREFIX),
+        TEST_DEFAULT_TRANSCRIPT_FILE,
+      );
+      const tagBlock = "<system-reminder>x</system-reminder>";
+      const heavyTurn = `short-${tagBlock.repeat(MAX_TAG_STRIP_COUNT + TEST_TAG_WARNING_EXTRA_COUNT)}`;
+
+      writeText(transcriptPath, buildTranscript(TEST_TRANSCRIPT_TURN_COUNT_SHORT, heavyTurn));
+
+      const result = runHookEntrypoint(ENTRYPOINT, {
+        payload: {
+          cwd: hooksRoot,
+          transcript_path: transcriptPath,
+          session_id: "session-short-tag-warning",
+        },
+        env: buildEnv(homeDir, {
+          [ENV_KEY_VAULT_PATH]: vaultPath,
+        }),
+      });
+
+      expect(result.status).toBe(0);
+      expect(result.stderr).toContain(HOOK_WARNING_TAG_LIMIT_PREFIX);
+      expect(fs.existsSync(buildDailyFilePath(vaultPath, DEFAULT_SUBFOLDER, today()))).toBe(false);
+    }));
+
+  it("returns tag warning on duplicate skip when tag count exceeds max", () =>
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+      const transcriptPath = path.join(
+        createTempDir(TEST_TRANSCRIPT_PREFIX),
+        TEST_DEFAULT_TRANSCRIPT_FILE,
+      );
+      const tagBlock = "<system-reminder>x</system-reminder>";
+      const heavyTurn = `duplicate-${tagBlock.repeat(MAX_TAG_STRIP_COUNT + TEST_TAG_WARNING_EXTRA_COUNT)}`;
+
+      writeText(transcriptPath, buildTranscript(TEST_TRANSCRIPT_TURN_COUNT_STANDARD, heavyTurn));
+
+      runHookEntrypoint(ENTRYPOINT, {
+        payload: {
+          cwd: hooksRoot,
+          transcript_path: transcriptPath,
+          session_id: "session-duplicate-tag-warning",
+        },
+        env: buildEnv(homeDir, {
+          [ENV_KEY_VAULT_PATH]: vaultPath,
+        }),
+      });
+
+      const dailyPath = buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1);
+      const firstContent = fs.readFileSync(dailyPath, UTF8_ENCODING);
+
+      const duplicateResult = runHookEntrypoint(ENTRYPOINT, {
+        payload: {
+          cwd: hooksRoot,
+          transcript_path: transcriptPath,
+          session_id: "session-duplicate-tag-warning",
+        },
+        env: buildEnv(homeDir, {
+          [ENV_KEY_VAULT_PATH]: vaultPath,
+        }),
+      });
+
+      expect(duplicateResult.status).toBe(0);
+      expect(duplicateResult.stderr).toContain(HOOK_WARNING_TAG_LIMIT_PREFIX);
+      expect(fs.readFileSync(dailyPath, UTF8_ENCODING)).toBe(firstContent);
+    }));
+
+  it("uses sanitized markdown for capture record hash", () =>
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+      const transcriptPath = path.join(
+        createTempDir(TEST_TRANSCRIPT_PREFIX),
+        TEST_DEFAULT_TRANSCRIPT_FILE,
+      );
+      const sessionId = "session-sanitized-hash";
+      const transcript = [
+        JSON.stringify({
+          message: {
+            role: TRANSCRIPT_ROLE_USER,
+            content: "hash<system-reminder>remove-me</system-reminder>",
+          },
+        }),
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: "assistant" } }),
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "user-2" } }),
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: "assistant-2" } }),
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "user-3" } }),
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: "assistant-3" } }),
+      ].join("\n");
+
+      writeText(transcriptPath, transcript);
+
+      const result = runHookEntrypoint(ENTRYPOINT, {
+        payload: {
+          cwd: hooksRoot,
+          transcript_path: transcriptPath,
+          session_id: sessionId,
+        },
+        env: buildEnv(homeDir, {
+          [ENV_KEY_VAULT_PATH]: vaultPath,
+        }),
+      });
+
+      const turns = parseJsonlTranscript(transcript, CAPTURE_MODE_FULL);
+      const sanitizedMarkdown = renderTurnsAsMarkdown(
+        turns.map((turn) => ({
+          ...turn,
+          content:
+            turn.role === TRANSCRIPT_ROLE_ASSISTANT
+              ? compressNarrativeText(stripVTControlCharacters(stripMemoryTags(turn.content)))
+              : stripVTControlCharacters(stripMemoryTags(turn.content)),
+        })),
+      );
+      const expectedSanitizedRecord = buildCaptureRecord(
+        sessionId,
+        HOOK_EVENT_PRE_COMPACT_KEBAB,
+        sanitizedMarkdown,
+        TEST_POSITIVE_TIMESTAMP_MS,
+      );
+      const expectedRawRecord = buildCaptureRecord(
+        sessionId,
+        HOOK_EVENT_PRE_COMPACT_KEBAB,
+        renderTurnsAsMarkdown(turns),
+        TEST_POSITIVE_TIMESTAMP_MS,
+      );
+      const statePath = resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER);
+      const state = JSON.parse(fs.readFileSync(statePath, UTF8_ENCODING));
+
+      expect(result.status).toBe(0);
+      expect(state.lastCapture.contentHash).toBe(expectedSanitizedRecord.contentHash);
+      expect(state.lastCapture.contentHash).not.toBe(expectedRawRecord.contentHash);
+    }));
+
   it("writes full transcript without turn or character truncation", () =>
     withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
       const homeDir = createTempDir(TEST_HOME_PREFIX);
@@ -288,6 +569,172 @@ describe("pre-compact.js", () => {
       expect(dailyContent).not.toContain("...(truncated)");
     }));
 
+  it("skips empty transcript file without writing capture", () =>
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+      const transcriptPath = path.join(
+        createTempDir(TEST_TRANSCRIPT_PREFIX),
+        TEST_DEFAULT_TRANSCRIPT_FILE,
+      );
+
+      writeText(transcriptPath, "");
+
+      const result = runHookEntrypoint(ENTRYPOINT, {
+        payload: {
+          cwd: hooksRoot,
+          transcript_path: transcriptPath,
+          session_id: "session-empty-transcript",
+        },
+        env: buildEnv(homeDir, {
+          [ENV_KEY_VAULT_PATH]: vaultPath,
+        }),
+      });
+
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(fs.existsSync(buildDailyFilePath(vaultPath, DEFAULT_SUBFOLDER, today()))).toBe(false);
+      expect(fs.existsSync(resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER))).toBe(false);
+    }));
+
+  it("skips transcript files whose lines do not parse into turns", () =>
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+      const transcriptPath = path.join(
+        createTempDir(TEST_TRANSCRIPT_PREFIX),
+        TEST_DEFAULT_TRANSCRIPT_FILE,
+      );
+
+      writeText(transcriptPath, "not-json\n{broken");
+
+      const result = runHookEntrypoint(ENTRYPOINT, {
+        payload: {
+          cwd: hooksRoot,
+          transcript_path: transcriptPath,
+          session_id: "session-invalid-turns",
+        },
+        env: buildEnv(homeDir, {
+          [ENV_KEY_VAULT_PATH]: vaultPath,
+        }),
+      });
+
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(fs.existsSync(buildDailyFilePath(vaultPath, DEFAULT_SUBFOLDER, today()))).toBe(false);
+      expect(fs.existsSync(resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER))).toBe(false);
+    }));
+
+  it("returns tag warning when sanitized transcript becomes empty after stripping", () =>
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+      const transcriptPath = path.join(
+        createTempDir(TEST_TRANSCRIPT_PREFIX),
+        TEST_DEFAULT_TRANSCRIPT_FILE,
+      );
+      const tagBlock = "<system-reminder>x</system-reminder>";
+      const strippedTurn = tagBlock.repeat(MAX_TAG_STRIP_COUNT + TEST_TAG_WARNING_EXTRA_COUNT);
+      const transcript = [
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: strippedTurn } }),
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: strippedTurn } }),
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: strippedTurn } }),
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: strippedTurn } }),
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: strippedTurn } }),
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: strippedTurn } }),
+      ].join("\n");
+
+      writeText(transcriptPath, transcript);
+
+      const result = runHookEntrypoint(ENTRYPOINT, {
+        payload: {
+          cwd: hooksRoot,
+          transcript_path: transcriptPath,
+          session_id: "session-empty-after-strip-warning",
+        },
+        env: buildEnv(homeDir, {
+          [ENV_KEY_VAULT_PATH]: vaultPath,
+        }),
+      });
+
+      expect(result.status).toBe(0);
+      expect(result.stderr).toContain(HOOK_WARNING_TAG_LIMIT_PREFIX);
+      expect(fs.existsSync(buildDailyFilePath(vaultPath, DEFAULT_SUBFOLDER, today()))).toBe(false);
+      expect(fs.existsSync(resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER))).toBe(false);
+    }));
+
+  it("skips sanitized-empty transcript without warning when tag count stays under limit", () =>
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+      const transcriptPath = path.join(
+        createTempDir(TEST_TRANSCRIPT_PREFIX),
+        TEST_DEFAULT_TRANSCRIPT_FILE,
+      );
+      const strippedTurn = "<system-reminder>x</system-reminder>";
+      const transcript = [
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: strippedTurn } }),
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: strippedTurn } }),
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: strippedTurn } }),
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: strippedTurn } }),
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: strippedTurn } }),
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: strippedTurn } }),
+      ].join("\n");
+
+      writeText(transcriptPath, transcript);
+
+      const result = runHookEntrypoint(ENTRYPOINT, {
+        payload: {
+          cwd: hooksRoot,
+          transcript_path: transcriptPath,
+          session_id: "session-empty-after-strip",
+        },
+        env: buildEnv(homeDir, {
+          [ENV_KEY_VAULT_PATH]: vaultPath,
+        }),
+      });
+
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(fs.existsSync(buildDailyFilePath(vaultPath, DEFAULT_SUBFOLDER, today()))).toBe(false);
+      expect(fs.existsSync(resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER))).toBe(false);
+    }));
+
+  it("skips transcript when assistant-only turns compress to empty", () =>
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+      const transcriptPath = path.join(
+        createTempDir(TEST_TRANSCRIPT_PREFIX),
+        TEST_DEFAULT_TRANSCRIPT_FILE,
+      );
+      const transcript = Array.from({ length: TEST_TRANSCRIPT_TURN_COUNT_STANDARD }, () =>
+        JSON.stringify({
+          message: {
+            role: TRANSCRIPT_ROLE_ASSISTANT,
+            content: "just really basically actually simply",
+          },
+        }),
+      ).join("\n");
+
+      writeText(transcriptPath, transcript);
+
+      const result = runHookEntrypoint(ENTRYPOINT, {
+        payload: {
+          cwd: hooksRoot,
+          transcript_path: transcriptPath,
+          session_id: "session-empty-after-compress",
+        },
+        env: buildEnv(homeDir, {
+          [ENV_KEY_VAULT_PATH]: vaultPath,
+        }),
+      });
+
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(fs.existsSync(buildDailyFilePath(vaultPath, DEFAULT_SUBFOLDER, today()))).toBe(false);
+      expect(fs.existsSync(resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER))).toBe(false);
+    }));
   it("lite mode skips pre-compact entirely", () => {
     const homeDir = createTempDir(TEST_HOME_PREFIX);
     const vaultPath = createTempDir(TEST_VAULT_PREFIX);
@@ -418,6 +865,127 @@ describe("pre-compact.js", () => {
       });
 
       expect(fs.readFileSync(dailyPath, UTF8_ENCODING)).toBe(firstContent);
+    }));
+
+  it("returns sensitive-content warning and skips write when transcript contains .env reference", () =>
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+      const transcriptPath = path.join(
+        createTempDir(TEST_TRANSCRIPT_PREFIX),
+        TEST_DEFAULT_TRANSCRIPT_FILE,
+      );
+      const transcript = [
+        JSON.stringify({
+          message: { role: TRANSCRIPT_ROLE_USER, content: "read my .env file" },
+        }),
+        JSON.stringify({
+          message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: "contents of .env file" },
+        }),
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "user-2" } }),
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: "assistant-2" } }),
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "user-3" } }),
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: "assistant-3" } }),
+      ].join("\n");
+
+      writeText(transcriptPath, transcript);
+
+      const result = runHookEntrypoint(ENTRYPOINT, {
+        payload: {
+          cwd: hooksRoot,
+          transcript_path: transcriptPath,
+          session_id: "session-sensitive",
+        },
+        env: buildEnv(homeDir, {
+          [ENV_KEY_VAULT_PATH]: vaultPath,
+        }),
+      });
+
+      expect(result.status).toBe(0);
+      expect(result.stderr).toContain(HOOK_WARNING_SENSITIVE_SKIP_PREFIX);
+      expect(fs.existsSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1))).toBe(
+        false,
+      );
+    }));
+
+  it("falls back to raw transcript when compression fails and still writes capture", () =>
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
+      const codeBlock = "```\nsome just code\n```";
+      const originalIncludes = String.prototype.includes;
+      const includesSpy = vi.spyOn(String.prototype, "includes").mockImplementation(function (
+        searchValue,
+        ...rest
+      ) {
+        if (searchValue === codeBlock) {
+          return false;
+        }
+
+        return originalIncludes.call(this, searchValue, ...rest);
+      });
+
+      try {
+        const projectCwd = createTempDir(TEST_CWD_PREFIX);
+        const homeDir = createTempDir(TEST_HOME_PREFIX);
+        const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+        const transcriptPath = path.join(
+          createTempDir(TEST_TRANSCRIPT_PREFIX),
+          TEST_DEFAULT_TRANSCRIPT_FILE,
+        );
+        const env = buildEnv(homeDir, {
+          [ENV_KEY_VAULT_PATH]: vaultPath,
+        });
+        const transcript = [
+          JSON.stringify({
+            message: {
+              role: TRANSCRIPT_ROLE_USER,
+              content: "\u001b[31mjust run<system-reminder>hidden</system-reminder> tests\u001b[0m",
+            },
+          }),
+          JSON.stringify({
+            message: {
+              role: TRANSCRIPT_ROLE_ASSISTANT,
+              content: codeBlock,
+            },
+          }),
+          JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "user-2" } }),
+          JSON.stringify({ message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: "assistant-2" } }),
+          JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "user-3" } }),
+          JSON.stringify({ message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: "assistant-3" } }),
+        ].join("\n");
+
+        materializeProjectDotEnvConfig(projectCwd, env, generatedEnvPaths);
+        writeText(transcriptPath, transcript);
+
+        const result = preCompact.run(
+          JSON.stringify({
+            cwd: projectCwd,
+            transcript_path: transcriptPath,
+            session_id: "session-filter-fallback",
+          }),
+          {
+            env,
+            cwd: projectCwd,
+            homedir: homeDir,
+          },
+        );
+
+        const dailyContent = fs.readFileSync(
+          buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
+          UTF8_ENCODING,
+        );
+
+        expect(result.status).toBe(0);
+        expect(result.stderr).toContain(TEST_FILTER_FALLBACK_WARNING_PREFIX);
+        expect(result.stderr).toContain(TEST_FILTER_FAILURE_MESSAGE);
+        expect(dailyContent).toContain("session-filter-fallback / pre-compact");
+        expect(dailyContent).toContain("**User:** just run tests");
+        expect(dailyContent).toContain(`**Assistant:** ${codeBlock}`);
+        expect(dailyContent).not.toContain("<system-reminder>");
+        expect(dailyContent).not.toContain("hidden");
+        expect(dailyContent).not.toContain("\u001b");
+      } finally {
+        includesSpy.mockRestore();
+      }
     }));
 
   it("reports invalid stdin to stderr", () => {

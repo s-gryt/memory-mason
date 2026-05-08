@@ -23,18 +23,22 @@ No API key needed. No cloud sync. Everything stays local in your Obsidian vault.
 ### How data flows in
 
 ```text
-[AI Conversation] ──> [Hook Runtime] ──> [Obsidian Vault]
-   (any agent)          (automatic)        _raw/YYYY-MM-DD/
+[AI Conversation] ──> [Hook Runtime] ──> [Smart Filter] ──> [Obsidian Vault]
+   (any agent)          (automatic)       (6-stage pipe)      _raw/YYYY-MM-DD/
 ```
 
-Hooks capture prompts, tool results, and session transcripts into daily log files. This happens silently in the background — no manual steps required.
+Hooks capture prompts, tool results, and session transcripts into daily log files. Before anything reaches your vault, a six-stage filtering pipeline strips noise and protects sensitive data:
 
-Memory Mason's own commands (`/mmc`, `/mmq`, `/mml`, `/mms`, `/mma`, `/mmsetup`) and
-namespaced `/memory-mason:*` forms are automatically excluded from capture. This means you can
-compile, query, and manage your knowledge base at any time without those interactions appearing in
-your daily logs or producing duplicate entries.
+1. **Tag stripping** — Removes system-reminder, system-instruction, and other injected tags
+2. **ANSI removal** — Strips terminal control characters from tool output
+3. **Event classification** — Categorizes each event as error, test result, discovery, exploration, meta, or noise. Exploration and meta events are discarded; errors and test results are always kept.
+4. **Prose compression** — Removes filler words and hedging phrases while preserving code blocks, URLs, inline code, and quoted strings
+5. **Sensitive content blocking** — Skips capture when input contains credentials, private keys, `.env` contents, or paths like `.ssh/` and `.aws/`
+6. **Deduplication** — Content-hash check prevents the same data from being written twice within a session
 
-Daily logs are stored in per-day folders and auto-split into files of up to 500KB each. This keeps Obsidian responsive and ensures each file stays within LLM processing limits. No data is lost — every conversation turn is preserved, and Obsidian indexes all chunks for full-text search. See [docs/README.md](docs/README.md) for technical details on chunked storage.
+Memory Mason's own commands (`/mmc`, `/mmq`, `/mml`, `/mms`, `/mma`, `/mmsetup`) and namespaced `/memory-mason:*` forms are automatically excluded from capture.
+
+Daily logs are stored in per-day folders and auto-split into files of up to 500KB each. This keeps Obsidian responsive and ensures each file stays within LLM processing limits. No data is lost — every conversation turn is preserved, and Obsidian indexes all chunks for full-text search. Token economics (raw vs. stored token counts and savings percentage) are tracked automatically and reported by `/mms`. See [docs/README.md](docs/README.md) for technical details on chunked storage.
 
 ### How knowledge is built
 
@@ -62,7 +66,7 @@ Run `/mmq` with a question. Memory Mason checks session context for recent focus
 | `/mmc` | Compile raw captures into concepts, MOCs, and synthesis pages; update session context and source manifest |
 | `/mmq` | Answer questions from your knowledge base with source citations |
 | `/mml` | Run knowledge base health checks (broken links, stale content, manifest integrity, and more) |
-| `/mms` | Show knowledge base status, health summary, and compilation coverage |
+| `/mms` | Show knowledge base status, token economics, health summary, and compilation coverage |
 | `/mma` | Archive old build log entries to keep the knowledge base log compact |
 | `/mmsetup` | First-time vault configuration (or uninstall) |
 
@@ -114,10 +118,14 @@ sources exist, vault path resolves in priority order: project `.env` → project
 
 `MEMORY_MASON_VAULT_PATH` sets the Obsidian vault location. `MEMORY_MASON_SUBFOLDER` sets the
 directory inside the vault. `MEMORY_MASON_SYNC` is optional — capture is enabled by default; set
-it to `false` to pause capture. `MEMORY_MASON_CAPTURE_MODE` is optional — set to `full` for
-detailed tool output, or leave unset for the default `lite` compact mode. Process environment
-variables `MEMORY_MASON_SYNC` and `MEMORY_MASON_CAPTURE_MODE` still override file config for a
-single session.
+it to `false` to pause capture. `MEMORY_MASON_CAPTURE_MODE` is optional and controls what gets
+captured:
+
+- **`lite`** (default) — Session bookends only: user prompts, errors, test results, and session summaries. Minimal vault footprint.
+- **`full`** — Everything in lite, plus plan outputs, agent findings, mid-run discoveries, and state-changing tool results. Exploration reads, meta-tool invocations, and noise are still filtered out.
+
+Process environment variables `MEMORY_MASON_SYNC` and `MEMORY_MASON_CAPTURE_MODE` override file
+config for a single session.
 
 ```env
 MEMORY_MASON_VAULT_PATH=/path/to/your/obsidian/vault
@@ -128,7 +136,7 @@ MEMORY_MASON_CAPTURE_MODE=lite
 
 ### JSON format
 
-`vaultPath` sets the Obsidian vault location. `subfolder` sets the directory inside the vault. `sync` is optional — capture is enabled by default; set it to `false` to pause capture. `captureMode` is optional — `full` keeps detailed tool output, default `lite` keeps capture compact. Use this format for `memory-mason.json` in a project root or `~/.memory-mason/config.json` for global config (`/mmsetup` creates the global file automatically).
+`vaultPath` sets the Obsidian vault location. `subfolder` sets the directory inside the vault. `sync` is optional — capture is enabled by default; set it to `false` to pause capture. `captureMode` is optional — `lite` (default) captures session bookends only, `full` adds plan outputs, agent findings, and mid-run discoveries. Use this format for `memory-mason.json` in a project root or `~/.memory-mason/config.json` for global config (`/mmsetup` creates the global file automatically).
 
 ```json
 {
@@ -161,3 +169,13 @@ For skills-only installs: `npx skills remove s-gryt/memory-mason -a <agent>`
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+## Star History
+
+<a href="https://www.star-history.com/?repos=s-gryt%2Fmemory-mason&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=s-gryt/memory-mason&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=s-gryt/memory-mason&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=s-gryt/memory-mason&type=date&legend=top-left" />
+ </picture>
+</a>

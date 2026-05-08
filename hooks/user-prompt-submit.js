@@ -8,6 +8,7 @@ const { buildDailyEntry, localNow } = require("./lib/vault");
 const { appendToDaily } = require("./lib/writer");
 const { extractPromptEntry, isMmCommand } = require("./lib/prompt");
 const { parseJsonlTranscript } = require("./lib/transcript");
+const { recordCaptureMetrics } = require("./lib/state");
 const {
   readStdin,
   toStringOrEmpty,
@@ -31,6 +32,7 @@ const {
   setMmSuppressed,
 } = require("./lib/capture-state");
 const { UTF8_ENCODING } = require("./lib/constants");
+const { HOOK_EVENT_USER_PROMPT_SUBMIT_KEBAB } = require("./lib/hook-events");
 
 function resolvePromptPayload(rawStdin) {
   const input = parseJsonInput(rawStdin);
@@ -60,6 +62,7 @@ function buildCaptureTimestamp() {
   return {
     today: now.date,
     timestamp: now.time,
+    iso: `${now.date}T${now.time}`,
   };
 }
 
@@ -81,6 +84,7 @@ function buildRunPlan(rawStdin, runtime = {}) {
     sessionId: anchors.sessionId,
     today: captureTimestamp.today,
     timestamp: captureTimestamp.timestamp,
+    iso: captureTimestamp.iso,
   };
 }
 
@@ -107,6 +111,14 @@ function persistPromptSubmission(plan, resolvedConfig) {
     plan.timestamp,
   );
   appendToDaily(resolvedConfig.vaultPath, resolvedConfig.subfolder, plan.today, dailyEntry);
+  recordCaptureMetrics(
+    resolvedConfig.vaultPath,
+    resolvedConfig.subfolder,
+    HOOK_EVENT_USER_PROMPT_SUBMIT_KEBAB,
+    plan.iso,
+    plan.promptEntry.text,
+    plan.promptEntry.text,
+  );
 }
 
 function run(rawStdin, runtime = {}) {

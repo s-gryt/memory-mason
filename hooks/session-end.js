@@ -13,6 +13,7 @@ const {
 } = require("./lib/transcript");
 const { buildSessionHeader, buildAssistantReplyEntry, localNow } = require("./lib/vault");
 const { appendToDaily } = require("./lib/writer");
+const { recordCaptureMetrics } = require("./lib/state");
 const {
   loadCaptureState,
   saveCaptureState,
@@ -27,10 +28,18 @@ const {
   HOOK_EVENT_STOP,
   DUPLICATE_CAPTURE_WINDOW_MS,
   UTF8_ENCODING,
+  HOOK_WARNING_TAG_LIMIT_PREFIX,
+  HOOK_WARNING_SENSITIVE_SKIP_PREFIX,
 } = require("./lib/constants");
 const { PLATFORM_COPILOT_CLI, PLATFORM_CODEX } = require("./lib/platforms");
 const { UNKNOWN_LABEL } = require("./lib/markdown-labels");
 const { ENV_KEY_INVOKED_BY } = require("./lib/config-keys");
+const { stripMemoryTags, countMemoryTags, MAX_TAG_STRIP_COUNT } = require("./lib/tag-stripper");
+const { detectSensitiveContent } = require("./lib/sensitive-guard");
+const { compressNarrativeText } = require("./lib/compress");
+const { HOOK_EVENT_SESSION_END_KEBAB } = require("./lib/hook-events");
+const { TRANSCRIPT_ROLE_ASSISTANT } = require("./lib/transcript-labels");
+const { stripVTControlCharacters } = require("node:util");
 const {
   readStdin,
   toStringOrEmpty,
@@ -52,6 +61,10 @@ const CODEX_DIR = ".codex";
 const CODEX_SESSIONS_DIR = "sessions";
 const COPILOT_STATE_DIR = ".copilot";
 const COPILOT_SESSION_STATE_DIR = "session-state";
+const ZERO = 0;
+const ONE = 1;
+const EMPTY_STRING = "";
+const NEWLINE = "\n";
 
 function firstNonEmptyString(values) {
   if (!Array.isArray(values)) {
@@ -290,17 +303,95 @@ function calculateNextTurnCount(shouldAppendPayloadAssistant, turns, lastCount) 
 }
 
 function writeAssistantTurns(vaultPath, subfolder, assistantContents) {
-  if (assistantContents.length < 1) {
-    return;
-  }
-
   const now = localNow();
+
+  if (assistantContents.length < 1) {
+    return now;
+  }
 
   assistantContents.forEach((content) => {
     appendToDaily(vaultPath, subfolder, now.date, buildAssistantReplyEntry(content, now.time));
   });
+
+  return now;
 }
 
+function sanitizeTranscriptContent(content, shouldCompress) {
+  const sanitizedContent = stripVTControlCharacters(stripMemoryTags(content));
+
+  if (!shouldCompress) {
+    return sanitizedContent;
+  }
+
+  return compressNarrativeText(sanitizedContent);
+}
+
+function buildSafeStopTurns(assistantContents) {
+  return assistantContents.reduce(
+    (state, content) => {
+      const sanitizedContent = compressNarrativeText(
+        stripVTControlCharacters(stripMemoryTags(content)),
+      );
+
+      if (sanitizedContent === EMPTY_STRING) {
+        return state;
+      }
+
+      const guard = detectSensitiveContent(sanitizedContent);
+
+      if (guard.isSensitive) {
+        return {
+          rawTurns: state.rawTurns,
+          storedTurns: state.storedTurns,
+          sensitiveSkippedCount: state.sensitiveSkippedCount + ONE,
+        };
+      }
+
+      return {
+        rawTurns: state.rawTurns.concat([content]),
+        storedTurns: state.storedTurns.concat([sanitizedContent]),
+        sensitiveSkippedCount: state.sensitiveSkippedCount,
+      };
+    },
+    {
+      rawTurns: [],
+      storedTurns: [],
+      sensitiveSkippedCount: ZERO,
+    },
+  );
+}
+
+function buildTagWarning(tagCount) {
+  if (tagCount <= MAX_TAG_STRIP_COUNT) {
+    return EMPTY_STRING;
+  }
+
+  return `${HOOK_WARNING_TAG_LIMIT_PREFIX}: ${tagCount} tags found${NEWLINE}`;
+}
+
+function buildSensitiveSkipWarning(skippedCount) {
+  if (skippedCount < ONE) {
+    return EMPTY_STRING;
+  }
+
+  return `${HOOK_WARNING_SENSITIVE_SKIP_PREFIX}: ${skippedCount} turn(s) skipped${NEWLINE}`;
+}
+
+function buildSensitiveReasonWarning(reasons) {
+  return `${HOOK_WARNING_SENSITIVE_SKIP_PREFIX}: ${reasons.join(", ")}${NEWLINE}`;
+}
+
+function joinWarnings(warnings) {
+  return warnings.filter((warning) => warning !== EMPTY_STRING).join(EMPTY_STRING);
+}
+
+/**
+ * Process session-end and stop hook events and persist sanitized transcript content.
+ *
+ * @param {string} rawStdin
+ * @param {Record<string, unknown>} [runtime]
+ * @returns {{ status: number, stdout: string, stderr: string }}
+ */
 function run(rawStdin, runtime = {}) {
   const env = resolveRuntimeEnv(runtime);
   const fallbackCwd = resolveFallbackCwd(runtime);
@@ -366,12 +457,31 @@ function run(rawStdin, runtime = {}) {
         captureMode,
       );
       const stopAssistantContents = stopSelection.selectedTurns;
+      const totalTagCount = stopAssistantContents.reduce(
+        (sum, content) => sum + countMemoryTags(content),
+        ZERO,
+      );
+      const safeStopTurns = buildSafeStopTurns(stopAssistantContents);
+      const tagWarning = buildTagWarning(totalTagCount);
+      const sensitiveWarning = buildSensitiveSkipWarning(safeStopTurns.sensitiveSkippedCount);
+      const stopWarnings = joinWarnings([tagWarning, sensitiveWarning]);
 
-      writeAssistantTurns(
+      const stopNow = writeAssistantTurns(
         resolvedConfig.vaultPath,
         resolvedConfig.subfolder,
-        stopAssistantContents,
+        safeStopTurns.storedTurns,
       );
+
+      if (safeStopTurns.storedTurns.length > ZERO) {
+        recordCaptureMetrics(
+          resolvedConfig.vaultPath,
+          resolvedConfig.subfolder,
+          HOOK_EVENT_STOP,
+          `${stopNow.date}T${stopNow.time}`,
+          safeStopTurns.rawTurns.join(NEWLINE),
+          safeStopTurns.storedTurns.join(NEWLINE),
+        );
+      }
 
       const nextTurnCount = calculateNextTurnCount(
         stopSelection.shouldAppendPayloadAssistant,
@@ -380,7 +490,13 @@ function run(rawStdin, runtime = {}) {
       );
       const updatedState = setTranscriptTurnCount(stopCaptureState, sessionIdRaw, nextTurnCount);
       saveCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder, updatedState);
-      return buildSuccessResult();
+      const stopResult = buildSuccessResult();
+
+      if (stopWarnings !== EMPTY_STRING) {
+        return { ...stopResult, stderr: stopWarnings };
+      }
+
+      return stopResult;
     }
 
     const captureState = loadCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder);
@@ -404,7 +520,33 @@ function run(rawStdin, runtime = {}) {
       return buildSuccessResult();
     }
 
-    const fullTranscriptMarkdown = renderTurnsAsMarkdown(filteredTurns);
+    const totalTagCount = filteredTurns.reduce(
+      (sum, turn) => sum + countMemoryTags(turn.content),
+      ZERO,
+    );
+    const rawTranscriptMarkdown = renderTurnsAsMarkdown(filteredTurns);
+    const sanitizedTurns = filteredTurns
+      .map((turn) => ({
+        ...turn,
+        content: sanitizeTranscriptContent(turn.content, turn.role === TRANSCRIPT_ROLE_ASSISTANT),
+      }))
+      .filter((turn) => turn.content !== EMPTY_STRING);
+
+    if (sanitizedTurns.length < 1) {
+      return buildSuccessResult();
+    }
+
+    const fullTranscriptMarkdown = renderTurnsAsMarkdown(sanitizedTurns);
+    const fullTranscriptGuard = detectSensitiveContent(fullTranscriptMarkdown);
+    const tagWarning = buildTagWarning(totalTagCount);
+
+    if (fullTranscriptGuard.isSensitive) {
+      const sensitiveWarning = buildSensitiveReasonWarning(fullTranscriptGuard.reasons);
+      const fullWarnings = joinWarnings([tagWarning, sensitiveWarning]);
+      const sensitiveResult = buildSuccessResult();
+
+      return { ...sensitiveResult, stderr: fullWarnings };
+    }
 
     const today = localNow().date;
     const sessionId = firstNonEmptyString([sessionIdRaw, UNKNOWN_LABEL]);
@@ -427,7 +569,21 @@ function run(rawStdin, runtime = {}) {
       ...captureState,
       lastCapture: captureRecord,
     });
-    return buildSuccessResult();
+    recordCaptureMetrics(
+      resolvedConfig.vaultPath,
+      resolvedConfig.subfolder,
+      HOOK_EVENT_SESSION_END_KEBAB,
+      `${now.date}T${now.time}`,
+      rawTranscriptMarkdown,
+      fullTranscriptMarkdown,
+    );
+    const fullResult = buildSuccessResult();
+
+    if (tagWarning !== EMPTY_STRING) {
+      return { ...fullResult, stderr: tagWarning };
+    }
+
+    return fullResult;
   } catch (error) {
     return buildCommandErrorResult(error);
   }

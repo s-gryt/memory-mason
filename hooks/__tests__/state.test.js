@@ -9,7 +9,14 @@ const {
   TEST_DEFAULT_SUBFOLDER: DEFAULT_SUBFOLDER,
 } = require("./helpers/test-constants");
 const { createTempVaultFixture } = require("./helpers/fs-mock");
-const { defaultState, resolveStatePath, loadState, saveState } = require("../lib/state");
+const {
+  defaultState,
+  resolveStatePath,
+  loadState,
+  saveState,
+  updateStateCaptureMetrics,
+  recordCaptureMetrics,
+} = require("../lib/state");
 
 const { createTempVaultPath, cleanupTempVaultPaths } = createTempVaultFixture("state-test-");
 const JSON_INDENT_SPACES = 2;
@@ -19,11 +26,23 @@ afterEach(() => {
 });
 
 describe("defaultState", () => {
-  it("returns object with ingested, last_compile, and last_lint defaults", () => {
+  it("returns object with compile and capture metric defaults", () => {
     expect(defaultState()).toEqual({
       ingested: {},
       last_compile: null,
       last_lint: null,
+      capture_metrics: {
+        capture_count: 0,
+        total_raw_chars: 0,
+        total_stored_chars: 0,
+        total_raw_tokens: 0,
+        total_stored_tokens: 0,
+        total_savings_chars: 0,
+        total_savings_tokens: 0,
+        total_savings_percent: 0,
+        last_capture_at: null,
+        last_capture: null,
+      },
     });
   });
 
@@ -57,6 +76,28 @@ describe("loadState", () => {
       },
       last_compile: "2026-04-26T14:30:00.000Z",
       last_lint: null,
+      capture_metrics: {
+        capture_count: 1,
+        total_raw_chars: 10,
+        total_stored_chars: 4,
+        total_raw_tokens: 3,
+        total_stored_tokens: 1,
+        total_savings_chars: 6,
+        total_savings_tokens: 2,
+        total_savings_percent: 67,
+        last_capture_at: "2026-04-26T14:30:00.000Z",
+        last_capture: {
+          source: "post-tool-use",
+          captured_at: "2026-04-26T14:30:00.000Z",
+          raw_chars: 10,
+          stored_chars: 4,
+          raw_tokens: 3,
+          stored_tokens: 1,
+          savings_chars: 6,
+          savings_tokens: 2,
+          savings_percent: 67,
+        },
+      },
     };
 
     fs.mkdirSync(path.dirname(statePath), { recursive: true });
@@ -99,6 +140,7 @@ describe("loadState", () => {
         ingested: null,
         last_compile: "2026-04-26T14:30:00.000Z",
         last_lint: null,
+        capture_metrics: null,
       }),
       UTF8_ENCODING,
     );
@@ -107,6 +149,54 @@ describe("loadState", () => {
       ingested: {},
       last_compile: "2026-04-26T14:30:00.000Z",
       last_lint: null,
+      capture_metrics: defaultState().capture_metrics,
+    });
+  });
+
+  it("normalizes invalid capture metrics values", () => {
+    const vaultPath = createTempVaultPath();
+    const subfolder = DEFAULT_SUBFOLDER;
+    const statePath = resolveStatePath(vaultPath, subfolder);
+
+    fs.mkdirSync(path.dirname(statePath), { recursive: true });
+    fs.writeFileSync(
+      statePath,
+      JSON.stringify({
+        ingested: {},
+        last_compile: null,
+        last_lint: null,
+        capture_metrics: {
+          capture_count: 2,
+          total_raw_chars: 8,
+          total_stored_chars: 4,
+          total_raw_tokens: 2,
+          total_stored_tokens: 1,
+          total_savings_chars: 999,
+          total_savings_tokens: 999,
+          total_savings_percent: 999,
+          last_capture_at: 123,
+          last_capture: { raw_chars: 4 },
+        },
+      }),
+      UTF8_ENCODING,
+    );
+
+    expect(loadState(vaultPath, subfolder)).toEqual({
+      ingested: {},
+      last_compile: null,
+      last_lint: null,
+      capture_metrics: {
+        capture_count: 2,
+        total_raw_chars: 8,
+        total_stored_chars: 4,
+        total_raw_tokens: 2,
+        total_stored_tokens: 1,
+        total_savings_chars: 4,
+        total_savings_tokens: 1,
+        total_savings_percent: 50,
+        last_capture_at: null,
+        last_capture: null,
+      },
     });
   });
 
@@ -144,6 +234,7 @@ describe("saveState", () => {
       },
       last_compile: "2026-04-26T14:30:00.000Z",
       last_lint: null,
+      capture_metrics: defaultState().capture_metrics,
     };
 
     saveState(vaultPath, subfolder, state);
@@ -185,5 +276,123 @@ describe("resolveStatePath", () => {
         VAULT_STATE_FILE_NAME,
       ),
     );
+  });
+});
+
+describe("updateStateCaptureMetrics", () => {
+  it("returns a new state with accumulated capture metrics", () => {
+    expect(
+      updateStateCaptureMetrics(
+        defaultState(),
+        "post-tool-use",
+        "2026-05-07T10:00:00",
+        "12345678",
+        "1234",
+      ),
+    ).toEqual({
+      ingested: {},
+      last_compile: null,
+      last_lint: null,
+      capture_metrics: {
+        capture_count: 1,
+        total_raw_chars: 8,
+        total_stored_chars: 4,
+        total_raw_tokens: 2,
+        total_stored_tokens: 1,
+        total_savings_chars: 4,
+        total_savings_tokens: 1,
+        total_savings_percent: 50,
+        last_capture_at: "2026-05-07T10:00:00",
+        last_capture: {
+          source: "post-tool-use",
+          captured_at: "2026-05-07T10:00:00",
+          raw_chars: 8,
+          stored_chars: 4,
+          raw_tokens: 2,
+          stored_tokens: 1,
+          savings_chars: 4,
+          savings_tokens: 1,
+          savings_percent: 50,
+        },
+      },
+    });
+  });
+
+  it("throws when state is not an object", () => {
+    expect(() =>
+      updateStateCaptureMetrics(null, "post-tool-use", "2026-05-07T10:00:00", "1234", "12"),
+    ).toThrow("state must be an object");
+  });
+});
+
+describe("recordCaptureMetrics", () => {
+  it("loads, updates, and saves capture metrics to state.json", () => {
+    const vaultPath = createTempVaultPath();
+    const subfolder = DEFAULT_SUBFOLDER;
+
+    expect(
+      recordCaptureMetrics(
+        vaultPath,
+        subfolder,
+        "post-tool-use",
+        "2026-05-07T10:00:00",
+        "12345678",
+        "1234",
+      ),
+    ).toEqual({
+      ingested: {},
+      last_compile: null,
+      last_lint: null,
+      capture_metrics: {
+        capture_count: 1,
+        total_raw_chars: 8,
+        total_stored_chars: 4,
+        total_raw_tokens: 2,
+        total_stored_tokens: 1,
+        total_savings_chars: 4,
+        total_savings_tokens: 1,
+        total_savings_percent: 50,
+        last_capture_at: "2026-05-07T10:00:00",
+        last_capture: {
+          source: "post-tool-use",
+          captured_at: "2026-05-07T10:00:00",
+          raw_chars: 8,
+          stored_chars: 4,
+          raw_tokens: 2,
+          stored_tokens: 1,
+          savings_chars: 4,
+          savings_tokens: 1,
+          savings_percent: 50,
+        },
+      },
+    });
+
+    expect(loadState(vaultPath, subfolder)).toEqual({
+      ingested: {},
+      last_compile: null,
+      last_lint: null,
+      capture_metrics: {
+        capture_count: 1,
+        total_raw_chars: 8,
+        total_stored_chars: 4,
+        total_raw_tokens: 2,
+        total_stored_tokens: 1,
+        total_savings_chars: 4,
+        total_savings_tokens: 1,
+        total_savings_percent: 50,
+        last_capture_at: "2026-05-07T10:00:00",
+        last_capture: {
+          source: "post-tool-use",
+          captured_at: "2026-05-07T10:00:00",
+          raw_chars: 8,
+          stored_chars: 4,
+          raw_tokens: 2,
+          stored_tokens: 1,
+          savings_chars: 4,
+          savings_tokens: 1,
+          savings_percent: 50,
+        },
+      },
+    });
   });
 });

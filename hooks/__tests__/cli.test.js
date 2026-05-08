@@ -201,19 +201,25 @@ describe("CLI direct execution", () => {
     );
   });
 
-  it("executes post-tool-use.js directly", () => {
-    expectCliWritesDailyChunk(
-      POST_TOOL_USE_ENTRYPOINT,
-      {
+  it("executes post-tool-use.js directly with low-signal output skipped", () => {
+    const homeDir = createTempDir(TEST_MM_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_MM_VAULT_PREFIX);
+    const result = runCli(POST_TOOL_USE_ENTRYPOINT, {
+      input: JSON.stringify({
         hook_event_name: HOOK_ENTRY_POST_TOOL_USE,
         cwd: hooksRoot,
         tool_name: "Write",
         tool_response: "cli tool output",
-      },
-      "cli tool output",
-      {
+      }),
+      env: buildEnv(homeDir, {
+        [ENV_KEY_VAULT_PATH]: vaultPath,
         [ENV_KEY_CAPTURE_MODE]: CAPTURE_MODE_FULL,
-      },
+      }),
+    });
+
+    expect(result.status).toBe(0);
+    expect(fs.existsSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1))).toBe(
+      false,
     );
   });
 

@@ -767,7 +767,7 @@ describe(USER_PROMPT_SUBMIT_FILE, () => {
 });
 
 describe(POST_TOOL_USE_FILE, () => {
-  it("writes tool output for copilot vscode payloads", () => {
+  it("skips low-signal tool output for copilot vscode payloads", () => {
     withMemoryMasonCaptureMode(CAPTURE_MODE_FULL, () => {
       const homeDir = createTempDir(TEST_HOME_PREFIX);
       const vaultPath = createTempDir(TEST_VAULT_PREFIX);
@@ -783,16 +783,11 @@ describe(POST_TOOL_USE_FILE, () => {
       });
 
       expect(result.status).toBe(0);
-      expect(
-        fs.readFileSync(
-          buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
-          UTF8_ENCODING,
-        ),
-      ).toContain("patched file");
+      expect(fs.existsSync(buildDailyFilePath(vaultPath, DEFAULT_SUBFOLDER, today()))).toBe(false);
     });
   });
 
-  it("writes structured tool output for claude payloads", () => {
+  it("skips low-signal structured tool output for claude payloads", () => {
     withMemoryMasonCaptureMode(CAPTURE_MODE_FULL, () => {
       const homeDir = createTempDir(TEST_HOME_PREFIX);
       const vaultPath = createTempDir(TEST_VAULT_PREFIX);
@@ -813,22 +808,11 @@ describe(POST_TOOL_USE_FILE, () => {
       });
 
       expect(result.status).toBe(0);
-      expect(
-        fs.readFileSync(
-          buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
-          UTF8_ENCODING,
-        ),
-      ).toContain("grep hit 1");
-      expect(
-        fs.readFileSync(
-          buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
-          UTF8_ENCODING,
-        ),
-      ).toContain("stdout");
+      expect(fs.existsSync(buildDailyFilePath(vaultPath, DEFAULT_SUBFOLDER, today()))).toBe(false);
     });
   });
 
-  it("writes text blocks for structured claude tool outputs", () => {
+  it("skips low-signal text blocks for structured claude tool outputs", () => {
     withMemoryMasonCaptureMode(CAPTURE_MODE_FULL, () => {
       const homeDir = createTempDir(TEST_HOME_PREFIX);
       const vaultPath = createTempDir(TEST_VAULT_PREFIX);
@@ -847,22 +831,11 @@ describe(POST_TOOL_USE_FILE, () => {
       });
 
       expect(result.status).toBe(0);
-      expect(
-        fs.readFileSync(
-          buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
-          UTF8_ENCODING,
-        ),
-      ).toContain("match 1");
-      expect(
-        fs.readFileSync(
-          buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
-          UTF8_ENCODING,
-        ),
-      ).toContain("match 2");
+      expect(fs.existsSync(buildDailyFilePath(vaultPath, DEFAULT_SUBFOLDER, today()))).toBe(false);
     });
   });
 
-  it("writes tool output for copilot cli payloads", () => {
+  it("skips low-signal tool output for copilot cli payloads", () => {
     withMemoryMasonCaptureMode(CAPTURE_MODE_FULL, () => {
       const homeDir = createTempDir(TEST_HOME_PREFIX);
       const vaultPath = createTempDir(TEST_VAULT_PREFIX);
@@ -877,16 +850,11 @@ describe(POST_TOOL_USE_FILE, () => {
         env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       });
 
-      expect(
-        fs.readFileSync(
-          buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
-          UTF8_ENCODING,
-        ),
-      ).toContain("patch ok");
+      expect(fs.existsSync(buildDailyFilePath(vaultPath, DEFAULT_SUBFOLDER, today()))).toBe(false);
     });
   });
 
-  it("writes tool output for codex payloads", () => {
+  it("skips low-signal tool output for codex payloads", () => {
     withMemoryMasonCaptureMode(CAPTURE_MODE_FULL, () => {
       const homeDir = createTempDir(TEST_HOME_PREFIX);
       const vaultPath = createTempDir(TEST_VAULT_PREFIX);
@@ -902,12 +870,7 @@ describe(POST_TOOL_USE_FILE, () => {
         env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       });
 
-      expect(
-        fs.readFileSync(
-          buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
-          UTF8_ENCODING,
-        ),
-      ).toContain("codex result");
+      expect(fs.existsSync(buildDailyFilePath(vaultPath, DEFAULT_SUBFOLDER, today()))).toBe(false);
     });
   });
 

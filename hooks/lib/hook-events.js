@@ -7,6 +7,7 @@ const HOOK_ENTRY_USER_PROMPT_SUBMIT = "UserPromptSubmit";
 const HOOK_ENTRY_POST_TOOL_USE = "PostToolUse";
 const HOOK_EVENT_POST_TOOL_USE_KEBAB = "post-tool-use";
 const HOOK_EVENT_USER_PROMPT_SUBMIT_KEBAB = "user-prompt-submit";
+const HOOK_EVENT_SESSION_END_KEBAB = "session-end";
 const HOOK_EVENT_PRE_COMPACT_KEBAB = "pre-compact";
 
 module.exports = {
@@ -17,5 +18,6 @@ module.exports = {
   HOOK_ENTRY_POST_TOOL_USE,
   HOOK_EVENT_POST_TOOL_USE_KEBAB,
   HOOK_EVENT_USER_PROMPT_SUBMIT_KEBAB,
+  HOOK_EVENT_SESSION_END_KEBAB,
   HOOK_EVENT_PRE_COMPACT_KEBAB,
 };

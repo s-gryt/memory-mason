@@ -1,48 +1,54 @@
-import { readFileSync, writeFileSync } from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const repoRoot = path.resolve(__dirname, '..');
+const repoRoot = path.resolve(__dirname, "..");
 
 const trackedFiles = [
   {
-    path: '.claude-plugin/plugin.json',
-    fields: [['version']],
+    path: ".claude-plugin/plugin.json",
+    fields: [["version"]],
   },
   {
-    path: '.claude-plugin/marketplace.json',
-    fields: [['metadata', 'version'], ['plugins', 0, 'version']],
+    path: ".claude-plugin/marketplace.json",
+    fields: [
+      ["metadata", "version"],
+      ["plugins", 0, "version"],
+    ],
   },
   {
-    path: '.github/plugin/plugin.json',
-    fields: [['version']],
+    path: ".github/plugin/plugin.json",
+    fields: [["version"]],
   },
   {
-    path: '.github/plugin/marketplace.json',
-    fields: [['metadata', 'version'], ['plugins', 0, 'version']],
+    path: ".github/plugin/marketplace.json",
+    fields: [
+      ["metadata", "version"],
+      ["plugins", 0, "version"],
+    ],
   },
   {
-    path: 'gemini-extension.json',
-    fields: [['version']],
+    path: "gemini-extension.json",
+    fields: [["version"]],
   },
   {
-    path: 'plugins/memory-mason/.codex-plugin/plugin.json',
-    fields: [['version']],
+    path: "plugins/memory-mason/.codex-plugin/plugin.json",
+    fields: [["version"]],
   },
   {
-    path: 'hooks/package.json',
-    fields: [['version']],
+    path: "hooks/package.json",
+    fields: [["version"]],
   },
   {
-    path: 'hooks/package-lock.json',
-    fields: [['version'], ['packages', '', 'version']],
+    path: "hooks/package-lock.json",
+    fields: [["version"], ["packages", "", "version"]],
   },
 ];
 
 function readVersion() {
-  const version = readFileSync(path.join(repoRoot, 'VERSION'), 'utf8').trim();
+  const version = readFileSync(path.join(repoRoot, "VERSION"), "utf8").trim();
 
   if (!/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(version)) {
     throw new Error(`VERSION must contain semver-like value, got "${version}"`);
@@ -52,7 +58,7 @@ function readVersion() {
 }
 
 function readJson(relativePath) {
-  return JSON.parse(readFileSync(path.join(repoRoot, relativePath), 'utf8'));
+  return JSON.parse(readFileSync(path.join(repoRoot, relativePath), "utf8"));
 }
 
 function writeJson(relativePath, value) {
@@ -67,7 +73,7 @@ function setField(container, fieldPath, nextValue) {
   const parent = fieldPath.slice(0, -1).reduce((value, segment) => value?.[segment], container);
 
   if (parent === undefined || parent === null) {
-    throw new Error(`Missing field path ${fieldPath.join('.')} in tracked manifest`);
+    throw new Error(`Missing field path ${fieldPath.join(".")} in tracked manifest`);
   }
 
   parent[fieldPath[fieldPath.length - 1]] = nextValue;
@@ -84,12 +90,14 @@ function collectMismatches(expectedVersion) {
         return [];
       }
 
-      return [{
-        filePath: trackedFile.path,
-        fieldPath: fieldPath.join('.'),
-        actualVersion,
-        expectedVersion,
-      }];
+      return [
+        {
+          filePath: trackedFile.path,
+          fieldPath: fieldPath.join("."),
+          actualVersion,
+          expectedVersion,
+        },
+      ];
     });
   });
 }
@@ -115,16 +123,16 @@ function printMismatches(mismatches) {
 }
 
 function main() {
-  const mode = process.argv[2] ?? 'check';
+  const mode = process.argv[2] ?? "check";
   const expectedVersion = readVersion();
 
-  if (mode === 'sync') {
+  if (mode === "sync") {
     syncVersions(expectedVersion);
     console.log(`Synced tracked manifest versions to ${expectedVersion}`);
     return;
   }
 
-  if (mode !== 'check') {
+  if (mode !== "check") {
     throw new Error(`Unknown mode "${mode}". Use "check" or "sync".`);
   }
 

@@ -2,7 +2,14 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
-const { UTF8_ENCODING, USER_INPUT_TOOLS, NOISY_TOOLS } = require("../lib/constants");
+const {
+  UTF8_ENCODING,
+  USER_INPUT_TOOLS,
+  NOISY_TOOLS,
+  MAX_TAG_STRIP_COUNT,
+  HOOK_WARNING_TAG_LIMIT_PREFIX,
+  HOOK_WARNING_SENSITIVE_SKIP_PREFIX,
+} = require("../lib/constants");
 const {
   ENV_KEY_VAULT_PATH,
   ENV_KEY_SUBFOLDER,
@@ -43,9 +50,28 @@ const {
 const hooksRoot = path.resolve(__dirname, "..");
 const ENTRYPOINT = "post-tool-use.js";
 const TOOL_WRITE = "Write";
+const TOOL_BASH = "bash";
 const EMPTY_CWD_PREFIX = "memory-mason-cwd-empty-";
 const EMPTY_HOME_PREFIX = "memory-mason-home-empty-";
 const TEST_INVALID_TOOL_RESPONSE_NUMBER = 42;
+const ONE = 1;
+const FIVE = 5;
+const TAG_COUNT_OVER_LIMIT = MAX_TAG_STRIP_COUNT + ONE;
+const SYSTEM_REMINDER_BLOCK = "<system-reminder>text</system-reminder>";
+
+const DEFAULT_SKIP_PAYLOAD = Object.freeze({
+  toolName: TOOL_WRITE,
+  exitCode: null,
+  strippedResultText: "ok",
+  filePath: "",
+  lineCount: ONE,
+  commandText: "",
+});
+
+const createSkipPayload = (overrides = {}) => ({
+  ...DEFAULT_SKIP_PAYLOAD,
+  ...overrides,
+});
 
 const withProcessCaptureMode = (value, callback) => {
   const hadCaptureMode = Object.hasOwn(process.env, ENV_KEY_CAPTURE_MODE);
@@ -118,7 +144,7 @@ describe("post-tool-use.js", () => {
           hookEventName: HOOK_EVENT_POST_TOOL_USE_KEBAB,
           cwd: hooksRoot,
           tool_name: "Edit",
-          tool_response: "patched file",
+          tool_response: "Error: patched file",
         },
         env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       });
@@ -144,7 +170,7 @@ describe("post-tool-use.js", () => {
           cwd: hooksRoot,
           tool_name: TOOL_WRITE,
           tool_response: {
-            stdout: "grep hit 1\ngrep hit 2",
+            stdout: "Error: grep hit 1\ngrep hit 2",
             stderr: "",
             interrupted: false,
             isImage: false,
@@ -180,7 +206,7 @@ describe("post-tool-use.js", () => {
           cwd: hooksRoot,
           tool_name: "apply_patch",
           tool_response: [
-            { type: TRANSCRIPT_BLOCK_TYPE_TEXT, text: "match 1" },
+            { type: TRANSCRIPT_BLOCK_TYPE_TEXT, text: "Error: match 1" },
             { type: TRANSCRIPT_BLOCK_TYPE_TEXT, text: "match 2" },
           ],
         },
@@ -213,7 +239,7 @@ describe("post-tool-use.js", () => {
           timestamp: "2026-04-27T10:00:00.000Z",
           cwd: hooksRoot,
           toolName: "apply_patch",
-          toolResult: { textResultForLlm: "patch ok" },
+          toolResult: { textResultForLlm: "Error: patch ok" },
         },
         env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       });
@@ -238,7 +264,7 @@ describe("post-tool-use.js", () => {
           turn_id: "turn-1",
           cwd: hooksRoot,
           tool_name: "apply_patch",
-          tool_result: "codex result",
+          tool_result: "Error: codex result",
         },
         env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       });
@@ -272,7 +298,7 @@ describe("post-tool-use.js", () => {
     );
   });
 
-  it("keeps AskUserQuestion tool output in lite mode", () => {
+  it("skips AskUserQuestion tool output in lite mode", () => {
     const homeDir = createTempDir(TEST_HOME_PREFIX);
     const vaultPath = createTempDir(TEST_VAULT_PREFIX);
 
@@ -287,9 +313,9 @@ describe("post-tool-use.js", () => {
     });
 
     expect(result.status).toBe(0);
-    expect(
-      fs.readFileSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1), UTF8_ENCODING),
-    ).toContain("user said: do the thing");
+    expect(fs.existsSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1))).toBe(
+      false,
+    );
   });
 
   it("skips noisy tools in full mode", () => {
@@ -312,7 +338,7 @@ describe("post-tool-use.js", () => {
     });
   });
 
-  it("captures sequential thinking tool output in full mode", () => {
+  it("skips sequential thinking tool output in full mode as noise", () => {
     withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
       const homeDir = createTempDir(TEST_HOME_PREFIX);
       const vaultPath = createTempDir(TEST_VAULT_PREFIX);
@@ -327,13 +353,175 @@ describe("post-tool-use.js", () => {
         env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       });
 
+      expect(result.status).toBe(0);
+      expect(fs.existsSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1))).toBe(
+        false,
+      );
+    });
+  });
+
+  it("skips Bash ls command output in full mode as exploration", () => {
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+
+      const result = runHookEntrypoint(ENTRYPOINT, {
+        payload: {
+          hook_event_name: HOOK_ENTRY_POST_TOOL_USE,
+          cwd: hooksRoot,
+          tool_name: TOOL_BASH,
+          tool_response: "listing files",
+          tool_input: {
+            command: "ls -la",
+          },
+        },
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
+      });
+
+      expect(result.status).toBe(0);
+      expect(fs.existsSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1))).toBe(
+        false,
+      );
+    });
+  });
+
+  it("captures Write error output in lite mode", () => {
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+
+    const result = runHookEntrypoint(ENTRYPOINT, {
+      payload: {
+        hook_event_name: HOOK_ENTRY_POST_TOOL_USE,
+        cwd: hooksRoot,
+        tool_name: TOOL_WRITE,
+        tool_response: "Error: file not found",
+      },
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
+    });
+
+    expect(result.status).toBe(0);
+    expect(
+      fs.readFileSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1), UTF8_ENCODING),
+    ).toContain("Error: file not found");
+  });
+
+  it("captures Write test results output in lite mode", () => {
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+
+    const result = runHookEntrypoint(ENTRYPOINT, {
+      payload: {
+        hook_event_name: HOOK_ENTRY_POST_TOOL_USE,
+        cwd: hooksRoot,
+        tool_name: TOOL_WRITE,
+        tool_response: `${FIVE} tests passed`,
+      },
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
+    });
+
+    expect(result.status).toBe(0);
+    expect(
+      fs.readFileSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1), UTF8_ENCODING),
+    ).toContain("5 tests passed");
+  });
+
+  it("captures Write output for plan paths in full mode", () => {
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+
+      const result = runHookEntrypoint(ENTRYPOINT, {
+        payload: {
+          hook_event_name: HOOK_ENTRY_POST_TOOL_USE,
+          cwd: hooksRoot,
+          tool_name: TOOL_WRITE,
+          tool_response: "plan body",
+          tool_input: {
+            file_path: ".claude/plans/foo.md",
+          },
+        },
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
+      });
+
+      expect(result.status).toBe(0);
+      expect(
+        fs.readFileSync(
+          buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
+          UTF8_ENCODING,
+        ),
+      ).toContain("plan body");
+    });
+  });
+
+  it("returns sensitive-content warning and skips write when output references .env", () => {
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+
+      const result = runHookEntrypoint(ENTRYPOINT, {
+        payload: {
+          hook_event_name: HOOK_ENTRY_POST_TOOL_USE,
+          cwd: hooksRoot,
+          tool_name: TOOL_WRITE,
+          tool_response: "Error: .env file not found",
+        },
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
+      });
+
+      expect(result.status).toBe(0);
+      expect(result.stderr).toContain(HOOK_WARNING_SENSITIVE_SKIP_PREFIX);
+      expect(fs.existsSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1))).toBe(
+        false,
+      );
+    });
+  });
+
+  it("skips tool output with only removable system tags as noise", () => {
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+
+      const result = runHookEntrypoint(ENTRYPOINT, {
+        payload: {
+          hook_event_name: HOOK_ENTRY_POST_TOOL_USE,
+          cwd: hooksRoot,
+          tool_name: TOOL_WRITE,
+          tool_response: SYSTEM_REMINDER_BLOCK,
+        },
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
+      });
+
+      expect(result.status).toBe(0);
+      expect(fs.existsSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1))).toBe(
+        false,
+      );
+    });
+  });
+
+  it("returns tag-limit warning and still writes when tag count exceeds max", () => {
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+      const taggedOutput = `${SYSTEM_REMINDER_BLOCK.repeat(TAG_COUNT_OVER_LIMIT)}Error: tag burst`;
+
+      const result = runHookEntrypoint(ENTRYPOINT, {
+        payload: {
+          hook_event_name: HOOK_ENTRY_POST_TOOL_USE,
+          cwd: hooksRoot,
+          tool_name: TOOL_WRITE,
+          tool_response: taggedOutput,
+        },
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
+      });
+
       const dailyContent = fs.readFileSync(
         buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
         UTF8_ENCODING,
       );
 
       expect(result.status).toBe(0);
-      expect(dailyContent).toContain("internal reasoning step");
+      expect(result.stderr).toContain(HOOK_WARNING_TAG_LIMIT_PREFIX);
+      expect(dailyContent).toContain("Error: tag burst");
     });
   });
 
@@ -405,7 +593,7 @@ describe("run - mm suppression", () => {
           hook_event_name: HOOK_ENTRY_POST_TOOL_USE,
           cwd: hooksRoot,
           tool_name: TOOL_WRITE,
-          tool_response: "tool output when not suppressed",
+          tool_response: "Error: tool output when not suppressed",
         },
         env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       });
@@ -430,7 +618,7 @@ describe("run - mm suppression", () => {
           hook_event_name: HOOK_ENTRY_POST_TOOL_USE,
           cwd: hooksRoot,
           tool_name: TOOL_WRITE,
-          tool_response: "tool output with missing state",
+          tool_response: "Error: tool output with missing state",
         },
         env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       });
@@ -506,7 +694,7 @@ describe("run - sync flag", () => {
         hook_event_name: HOOK_ENTRY_POST_TOOL_USE,
         cwd,
         tool_name: TOOL_WRITE,
-        tool_response: "tool output when sync is enabled",
+        tool_response: "Error: tool output when sync is enabled",
       },
       cwd,
       env: buildEnv(homeDir),
@@ -616,89 +804,71 @@ describe("constants", () => {
 describe("shouldSkipToolPayload", () => {
   it("skips empty tool name in lite", () => {
     expect(
-      postToolUse.shouldSkipToolPayload({ toolName: "", resultText: "" }, CAPTURE_MODE_LITE),
+      postToolUse.shouldSkipToolPayload(createSkipPayload({ toolName: "" }), CAPTURE_MODE_LITE),
     ).toBe(true);
   });
 
-  it("skips Write in lite", () => {
+  it("skips noisy Read tool in full mode", () => {
+    expect(
+      postToolUse.shouldSkipToolPayload(createSkipPayload({ toolName: "Read" }), CAPTURE_MODE_FULL),
+    ).toBe(true);
+  });
+
+  it("skips exploration bash command in full mode", () => {
     expect(
       postToolUse.shouldSkipToolPayload(
-        { toolName: TOOL_WRITE, resultText: "ok" },
-        CAPTURE_MODE_LITE,
+        createSkipPayload({ toolName: TOOL_BASH, commandText: "ls -la" }),
+        CAPTURE_MODE_FULL,
       ),
     ).toBe(true);
   });
 
-  it("keeps AskUserQuestion in lite", () => {
+  it("captures error classification in lite mode", () => {
     expect(
       postToolUse.shouldSkipToolPayload(
-        { toolName: "AskUserQuestion", resultText: "user answer" },
+        createSkipPayload({ strippedResultText: "Error: file not found" }),
         CAPTURE_MODE_LITE,
       ),
     ).toBe(false);
   });
 
-  it("skips apply_patch in lite", () => {
+  it("captures test_result classification in lite mode", () => {
     expect(
       postToolUse.shouldSkipToolPayload(
-        { toolName: "apply_patch", resultText: "ok" },
+        createSkipPayload({ strippedResultText: "5 tests passed" }),
         CAPTURE_MODE_LITE,
       ),
-    ).toBe(true);
-  });
-
-  it("skips replace_string_in_file in lite", () => {
-    expect(
-      postToolUse.shouldSkipToolPayload(
-        { toolName: "replace_string_in_file", resultText: "ok" },
-        CAPTURE_MODE_LITE,
-      ),
-    ).toBe(true);
-  });
-
-  it("skips editFiles in lite", () => {
-    expect(
-      postToolUse.shouldSkipToolPayload(
-        { toolName: "editFiles", resultText: "ok" },
-        CAPTURE_MODE_LITE,
-      ),
-    ).toBe(true);
-  });
-
-  it("skips Bash in lite", () => {
-    expect(
-      postToolUse.shouldSkipToolPayload({ toolName: "Bash", resultText: "ok" }, CAPTURE_MODE_LITE),
-    ).toBe(true);
-  });
-
-  it("skips read_file in lite", () => {
-    expect(
-      postToolUse.shouldSkipToolPayload(
-        { toolName: "read_file", resultText: "ok" },
-        CAPTURE_MODE_LITE,
-      ),
-    ).toBe(true);
-  });
-
-  it("persists Bash in full", () => {
-    expect(
-      postToolUse.shouldSkipToolPayload({ toolName: "Bash", resultText: "ok" }, CAPTURE_MODE_FULL),
     ).toBe(false);
   });
 
-  it("still skips Read in full", () => {
+  it("skips noise classification in lite mode", () => {
     expect(
-      postToolUse.shouldSkipToolPayload({ toolName: "Read", resultText: "ok" }, CAPTURE_MODE_FULL),
+      postToolUse.shouldSkipToolPayload(
+        createSkipPayload({ strippedResultText: "ok" }),
+        CAPTURE_MODE_LITE,
+      ),
     ).toBe(true);
   });
 
-  it("captures sequential thinking in full", () => {
+  it("captures plan output classification in full mode", () => {
     expect(
       postToolUse.shouldSkipToolPayload(
-        { toolName: "mcp_sequentialthi_sequentialthinking", resultText: "ok" },
+        createSkipPayload({
+          toolName: TOOL_WRITE,
+          filePath: ".claude/plans/foo.md",
+        }),
         CAPTURE_MODE_FULL,
       ),
     ).toBe(false);
+  });
+
+  it("skips tag-only content in full mode", () => {
+    expect(
+      postToolUse.shouldSkipToolPayload(
+        createSkipPayload({ strippedResultText: SYSTEM_REMINDER_BLOCK }),
+        CAPTURE_MODE_FULL,
+      ),
+    ).toBe(true);
   });
 });
 
@@ -753,6 +923,86 @@ describe("post-tool-use.js runtime fallback branches", () => {
   });
 });
 
+describe("post-tool-use.js extractToolPayload", () => {
+  it("extracts claude payload metadata from tool_input and tool_response", () => {
+    const payload = postToolUse.extractToolPayload("claude-code", {
+      tool_name: "Write",
+      tool_response: { exitCode: ONE, stdout: "done" },
+      tool_input: {
+        filePaths: ["docs/plan.md"],
+        command: "cat docs/plan.md",
+      },
+    });
+
+    expect(payload).toEqual({
+      toolName: "Write",
+      resultText: JSON.stringify({ exitCode: ONE, stdout: "done" }, null, 2),
+      filePath: "docs/plan.md",
+      exitCode: ONE,
+      commandText: "cat docs/plan.md",
+    });
+  });
+
+  it("extracts copilot-cli metadata from toolArgs JSON", () => {
+    const payload = postToolUse.extractToolPayload("copilot-cli", {
+      toolName: "Write",
+      toolResult: { textResultForLlm: "ok", exitCode: ONE },
+      toolArgs: JSON.stringify({ file_path: "src/a.ts", command: "ls -la" }),
+    });
+
+    expect(payload).toEqual({
+      toolName: "Write",
+      resultText: "ok",
+      filePath: "src/a.ts",
+      exitCode: ONE,
+      commandText: "ls -la",
+    });
+  });
+
+  it("uses input exitCode when copilot-cli toolResult exitCode is absent", () => {
+    const payload = postToolUse.extractToolPayload("copilot-cli", {
+      toolName: "Write",
+      toolResult: { textResultForLlm: "ok" },
+      toolArgs: JSON.stringify({ path: "src/b.ts" }),
+      exitCode: ONE,
+    });
+
+    expect(payload.exitCode).toBe(ONE);
+    expect(payload.filePath).toBe("src/b.ts");
+  });
+
+  it("returns empty metadata when copilot-cli toolArgs JSON is invalid", () => {
+    const payload = postToolUse.extractToolPayload("copilot-cli", {
+      toolName: "Write",
+      toolResult: { textResultForLlm: "ok" },
+      toolArgs: "{invalid-json}",
+    });
+
+    expect(payload.filePath).toBe("");
+    expect(payload.commandText).toBe("");
+  });
+
+  it("extracts codex metadata from tool_input", () => {
+    const payload = postToolUse.extractToolPayload("codex", {
+      tool_name: "Edit",
+      tool_result: "patched",
+      exitCode: ONE,
+      tool_input: {
+        path: "hooks/post-tool-use.js",
+        command: "grep tool",
+      },
+    });
+
+    expect(payload).toEqual({
+      toolName: "Edit",
+      resultText: "patched",
+      filePath: "hooks/post-tool-use.js",
+      exitCode: ONE,
+      commandText: "grep tool",
+    });
+  });
+});
+
 describe("post-tool-use.js extractToolPayload unsupported platform", () => {
   it("throws for unsupported platform", () => {
     expect(() => postToolUse.extractToolPayload("unknown-platform", {})).toThrow(
@@ -797,7 +1047,7 @@ describe("post-tool-use.js readConfigText with existing file", () => {
         hook_event_name: HOOK_ENTRY_POST_TOOL_USE,
         cwd,
         tool_name: TOOL_WRITE,
-        tool_response: "output",
+        tool_response: "Error: output",
       },
       cwd,
       env: buildEnv(homeDir),

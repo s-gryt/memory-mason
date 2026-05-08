@@ -3,7 +3,12 @@
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { UTF8_ENCODING } = require("../lib/constants");
+const {
+  UTF8_ENCODING,
+  MAX_TAG_STRIP_COUNT,
+  HOOK_WARNING_TAG_LIMIT_PREFIX,
+  HOOK_WARNING_SENSITIVE_SKIP_PREFIX,
+} = require("../lib/constants");
 const {
   ENV_KEY_VAULT_PATH,
   ENV_KEY_SUBFOLDER,
@@ -681,6 +686,130 @@ describe("session-end.js", () => {
     expect(dailyContent).not.toContain("thinking...");
     expect(dailyContent).not.toContain("intermediate step");
     expect(dailyContent.split(ASSISTANT_REPLY_ENTRY_NAME).length - 1).toBe(1);
+  });
+
+  it("strips memory tags from Stop assistant turn before writing", () => {
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const transcriptPath = path.join(
+      createTempDir(TEST_TRANSCRIPT_PREFIX),
+      TEST_DEFAULT_TRANSCRIPT_FILE,
+    );
+
+    writeText(
+      transcriptPath,
+      [
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "question" } }),
+        JSON.stringify({
+          message: {
+            role: TRANSCRIPT_ROLE_ASSISTANT,
+            content: "visible <system-reminder>tag content</system-reminder> reply",
+          },
+        }),
+      ].join("\n"),
+    );
+
+    const result = runScript(ENTRYPOINT_FILE, {
+      payload: {
+        hook_event_name: HOOK_EVENT_STOP_PASCAL,
+        cwd: hooksRoot,
+        transcript_path: transcriptPath,
+        session_id: "session-stop-strip-tags",
+      },
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
+    });
+
+    const dailyContent = fs.readFileSync(
+      buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
+      UTF8_ENCODING,
+    );
+
+    expect(result.status).toBe(0);
+    expect(dailyContent).toContain("visible");
+    expect(dailyContent).toContain("reply");
+    expect(dailyContent).not.toContain("<system-reminder>");
+    expect(dailyContent).not.toContain("tag content");
+  });
+
+  it("skips Stop assistant turn when stripping leaves empty content", () => {
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const transcriptPath = path.join(
+      createTempDir(TEST_TRANSCRIPT_PREFIX),
+      TEST_DEFAULT_TRANSCRIPT_FILE,
+    );
+    const sessionId = "session-stop-strip-empty";
+
+    writeText(
+      transcriptPath,
+      [
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "question" } }),
+        JSON.stringify({
+          message: {
+            role: TRANSCRIPT_ROLE_ASSISTANT,
+            content: "<system-reminder>tag content</system-reminder>",
+          },
+        }),
+      ].join("\n"),
+    );
+
+    const result = runScript(ENTRYPOINT_FILE, {
+      payload: {
+        hook_event_name: HOOK_EVENT_STOP_PASCAL,
+        cwd: hooksRoot,
+        transcript_path: transcriptPath,
+        session_id: sessionId,
+      },
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
+    });
+
+    const statePath = resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER);
+    const state = JSON.parse(fs.readFileSync(statePath, UTF8_ENCODING));
+
+    expect(result.status).toBe(0);
+    expect(fs.existsSync(buildDailyFilePath(vaultPath, DEFAULT_SUBFOLDER, today()))).toBe(false);
+    expect(state.transcriptTurnCounts[sessionId]).toBe(TWO);
+  });
+
+  it("skips sensitive Stop assistant turn and returns sensitive warning", () => {
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const transcriptPath = path.join(
+      createTempDir(TEST_TRANSCRIPT_PREFIX),
+      TEST_DEFAULT_TRANSCRIPT_FILE,
+    );
+    const sessionId = "session-stop-sensitive-skip";
+
+    writeText(
+      transcriptPath,
+      [
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "question" } }),
+        JSON.stringify({
+          message: {
+            role: TRANSCRIPT_ROLE_ASSISTANT,
+            content: "path includes .env secrets",
+          },
+        }),
+      ].join("\n"),
+    );
+
+    const result = runScript(ENTRYPOINT_FILE, {
+      payload: {
+        hook_event_name: HOOK_EVENT_STOP_PASCAL,
+        cwd: hooksRoot,
+        transcript_path: transcriptPath,
+        session_id: sessionId,
+      },
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
+    });
+
+    const statePath = resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER);
+    const state = JSON.parse(fs.readFileSync(statePath, UTF8_ENCODING));
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain(HOOK_WARNING_SENSITIVE_SKIP_PREFIX);
+    expect(fs.existsSync(buildDailyFilePath(vaultPath, DEFAULT_SUBFOLDER, today()))).toBe(false);
+    expect(state.transcriptTurnCounts[sessionId]).toBe(TWO);
   });
 
   it("session_end path lite skips entirely", () => {
@@ -1421,6 +1550,242 @@ describe("run - mm transcript filtering for SessionEnd event", () => {
     expect(fs.existsSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1))).toBe(
       false,
     );
+  });
+
+  it("strips memory tags in full transcript mode before writing", () => {
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+      const transcriptPath = path.join(
+        createTempDir(TEST_TRANSCRIPT_PREFIX),
+        TEST_DEFAULT_TRANSCRIPT_FILE,
+      );
+      const transcript = [
+        JSON.stringify({
+          message: {
+            role: TRANSCRIPT_ROLE_USER,
+            content: "hello<system-reminder>tag content</system-reminder>",
+          },
+        }),
+        JSON.stringify({
+          message: {
+            role: TRANSCRIPT_ROLE_ASSISTANT,
+            content: "answer<private>secret</private>",
+          },
+        }),
+      ].join("\n");
+
+      writeText(transcriptPath, transcript);
+
+      const result = runScript(ENTRYPOINT_FILE, {
+        payload: {
+          hook_event_name: HOOK_EVENT_SESSION_END_SNAKE,
+          cwd: hooksRoot,
+          transcript_path: transcriptPath,
+          session_id: "session-full-strip-tags",
+        },
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
+      });
+
+      const dailyContent = fs.readFileSync(
+        buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
+        UTF8_ENCODING,
+      );
+
+      expect(result.status).toBe(0);
+      expect(dailyContent).toContain("hello");
+      expect(dailyContent).toContain("answer");
+      expect(dailyContent).not.toContain("<system-reminder>");
+      expect(dailyContent).not.toContain("<private>");
+      expect(dailyContent).not.toContain("tag content");
+      expect(dailyContent).not.toContain("secret");
+    });
+  });
+
+  it("preserves user wording while compressing assistant transcript turns", () => {
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+      const transcriptPath = path.join(
+        createTempDir(TEST_TRANSCRIPT_PREFIX),
+        TEST_DEFAULT_TRANSCRIPT_FILE,
+      );
+      const transcript = [
+        JSON.stringify({
+          message: {
+            role: TRANSCRIPT_ROLE_USER,
+            content: "just run tests",
+          },
+        }),
+        JSON.stringify({
+          message: {
+            role: TRANSCRIPT_ROLE_ASSISTANT,
+            content: "I will just run tests really quickly",
+          },
+        }),
+      ].join("\n");
+
+      writeText(transcriptPath, transcript);
+
+      const result = runScript(ENTRYPOINT_FILE, {
+        payload: {
+          hook_event_name: HOOK_EVENT_SESSION_END_SNAKE,
+          cwd: hooksRoot,
+          transcript_path: transcriptPath,
+          session_id: "session-full-preserve-user-wording",
+        },
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
+      });
+
+      const dailyContent = fs.readFileSync(
+        buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
+        UTF8_ENCODING,
+      );
+
+      expect(result.status).toBe(0);
+      expect(dailyContent).toContain("**User:** just run tests");
+      expect(dailyContent).toContain("**Assistant:** I will run tests quickly");
+      expect(dailyContent).not.toContain("**User:** run tests");
+      expect(dailyContent).not.toContain("**Assistant:** I will just run tests really quickly");
+    });
+  });
+
+  it("skips full transcript write and state save when sensitive content is detected", () => {
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+      const transcriptPath = path.join(
+        createTempDir(TEST_TRANSCRIPT_PREFIX),
+        TEST_DEFAULT_TRANSCRIPT_FILE,
+      );
+      const transcript = [
+        JSON.stringify({
+          message: {
+            role: TRANSCRIPT_ROLE_USER,
+            content: "please open .env and read settings",
+          },
+        }),
+        JSON.stringify({
+          message: {
+            role: TRANSCRIPT_ROLE_ASSISTANT,
+            content: "cannot share that",
+          },
+        }),
+      ].join("\n");
+
+      writeText(transcriptPath, transcript);
+
+      const result = runScript(ENTRYPOINT_FILE, {
+        payload: {
+          hook_event_name: HOOK_EVENT_SESSION_END_SNAKE,
+          cwd: hooksRoot,
+          transcript_path: transcriptPath,
+          session_id: "session-full-sensitive-skip",
+        },
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
+      });
+
+      expect(result.status).toBe(0);
+      expect(result.stderr).toContain(HOOK_WARNING_SENSITIVE_SKIP_PREFIX);
+      expect(fs.existsSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1))).toBe(
+        false,
+      );
+      expect(fs.existsSync(resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER))).toBe(false);
+    });
+  });
+
+  it("skips full transcript write when all turn content is stripped to empty", () => {
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+      const transcriptPath = path.join(
+        createTempDir(TEST_TRANSCRIPT_PREFIX),
+        TEST_DEFAULT_TRANSCRIPT_FILE,
+      );
+      const transcript = [
+        JSON.stringify({
+          message: {
+            role: TRANSCRIPT_ROLE_USER,
+            content: "<system-reminder>remove-user</system-reminder>",
+          },
+        }),
+        JSON.stringify({
+          message: {
+            role: TRANSCRIPT_ROLE_ASSISTANT,
+            content: "<private>remove-assistant</private>",
+          },
+        }),
+      ].join("\n");
+
+      writeText(transcriptPath, transcript);
+
+      const result = runScript(ENTRYPOINT_FILE, {
+        payload: {
+          hook_event_name: HOOK_EVENT_SESSION_END_SNAKE,
+          cwd: hooksRoot,
+          transcript_path: transcriptPath,
+          session_id: "session-full-all-stripped",
+        },
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
+      });
+
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(fs.existsSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1))).toBe(
+        false,
+      );
+      expect(fs.existsSync(resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER))).toBe(false);
+    });
+  });
+
+  it("returns tag warning in full transcript mode when tag count exceeds max", () => {
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+      const transcriptPath = path.join(
+        createTempDir(TEST_TRANSCRIPT_PREFIX),
+        TEST_DEFAULT_TRANSCRIPT_FILE,
+      );
+      const repeatedTag = "<system-reminder>x</system-reminder>";
+      const heavyContent = `visible-${repeatedTag.repeat(MAX_TAG_STRIP_COUNT + 1)}`;
+      const transcript = [
+        JSON.stringify({
+          message: {
+            role: TRANSCRIPT_ROLE_USER,
+            content: heavyContent,
+          },
+        }),
+        JSON.stringify({
+          message: {
+            role: TRANSCRIPT_ROLE_ASSISTANT,
+            content: "assistant response",
+          },
+        }),
+      ].join("\n");
+
+      writeText(transcriptPath, transcript);
+
+      const result = runScript(ENTRYPOINT_FILE, {
+        payload: {
+          hook_event_name: HOOK_EVENT_SESSION_END_SNAKE,
+          cwd: hooksRoot,
+          transcript_path: transcriptPath,
+          session_id: "session-full-tag-warning",
+        },
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
+      });
+
+      const dailyContent = fs.readFileSync(
+        buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
+        UTF8_ENCODING,
+      );
+
+      expect(result.status).toBe(0);
+      expect(result.stderr).toContain(HOOK_WARNING_TAG_LIMIT_PREFIX);
+      expect(dailyContent).toContain("visible-");
+      expect(dailyContent).toContain("assistant response");
+      expect(dailyContent).not.toContain("<system-reminder>");
+    });
   });
 });
 
