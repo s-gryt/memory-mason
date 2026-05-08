@@ -886,4 +886,3 @@ describe("user-prompt-submit.js runtime fallback branches", () => {
     expect(result.status).toBe(0);
   });
 });
-

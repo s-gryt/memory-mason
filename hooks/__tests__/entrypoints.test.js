@@ -1,7 +1,6 @@
 "use strict";
 
 const fs = require("node:fs");
-const os = require("node:os");
 const path = require("node:path");
 const { PRE_COMPACT_MIN_TURNS } = require("../lib/hook/constants");
 const { UTF8_ENCODING } = require("../lib/shared/constants");
@@ -17,7 +16,11 @@ const {
   GLOBAL_MM_DIR_NAME,
   GLOBAL_CONFIG_FILE_NAME,
 } = require("../lib/config/constants");
-const { buildDailyChunkPath, buildDailyFilePath, buildRootIndexPath } = require("../lib/vault/vault");
+const {
+  buildDailyChunkPath,
+  buildDailyFilePath,
+  buildRootIndexPath,
+} = require("../lib/vault/vault");
 const { resolveCaptureStatePath } = require("../lib/capture/capture-state");
 const sessionStart = require("../session-start");
 const userPromptSubmit = require("../user-prompt-submit");
@@ -27,6 +30,16 @@ const sessionEnd = require("../session-end");
 const installCopilotHooks = require("../install-copilot-hooks");
 const uninstallCopilotHooks = require("../uninstall-copilot-hooks");
 const { materializeProjectDotEnvConfig } = require("./helpers/project-dot-env");
+const {
+  createTempDir,
+  buildEnv,
+  writeText,
+  today,
+  buildTranscript,
+  generatedEnvPaths,
+  cleanupGeneratedArtifacts,
+  runHookEntrypoint: runScript,
+} = require("./helpers/entrypoint-runtime");
 const {
   TEST_VAULT_PREFIX,
   TEST_HOME_PREFIX,
@@ -71,17 +84,6 @@ const TEST_INVALID_SESSION_ID_NUMBER = 123;
 const TEST_INVALID_NON_INTEGER_COUNT = 1.5;
 const TEST_LONG_ASSISTANT_REPLY_LENGTH = 6000;
 const TEST_INVALID_NUMBER_INPUT = 42;
-const tempDirs = [];
-const generatedEnvPaths = [];
-const scriptModules = {
-  [SESSION_START_FILE]: sessionStart,
-  [USER_PROMPT_SUBMIT_FILE]: userPromptSubmit,
-  [POST_TOOL_USE_FILE]: postToolUse,
-  [PRE_COMPACT_FILE]: preCompact,
-  [SESSION_END_FILE]: sessionEnd,
-  "install-copilot-hooks.js": installCopilotHooks,
-  "uninstall-copilot-hooks.js": uninstallCopilotHooks,
-};
 const entrypointConfigReaderModules = [
   { scriptName: SESSION_START_FILE, scriptModule: sessionStart },
   { scriptName: USER_PROMPT_SUBMIT_FILE, scriptModule: userPromptSubmit },
@@ -128,30 +130,6 @@ const copilotHookDefinitions = [
   },
 ];
 
-const createTempDir = (prefix) => {
-  const dirPath = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  tempDirs.push(dirPath);
-  return dirPath;
-};
-
-const buildEnv = (homeDir, overrides = {}) => ({
-  ...process.env,
-  PATH: "",
-  Path: "",
-  HOME: homeDir,
-  USERPROFILE: homeDir,
-  ...overrides,
-});
-
-const hasEnvVaultPath = (env) =>
-  env !== null &&
-  typeof env === "object" &&
-  typeof env[ENV_KEY_VAULT_PATH] === "string" &&
-  env[ENV_KEY_VAULT_PATH] !== "";
-
-const remapHooksRootCwd = (targetCwd, isolatedProjectCwd) =>
-  targetCwd === hooksRoot && isolatedProjectCwd !== "" ? isolatedProjectCwd : targetCwd;
-
 const withMemoryMasonCaptureMode = (value, callback) => {
   const hadCaptureMode = Object.hasOwn(process.env, ENV_KEY_CAPTURE_MODE);
   const previousCaptureMode = process.env[ENV_KEY_CAPTURE_MODE];
@@ -173,60 +151,6 @@ const withMemoryMasonCaptureMode = (value, callback) => {
   }
 };
 
-const runScript = (scriptName, options = {}) => {
-  const scriptModule = scriptModules[scriptName];
-  const env = typeof options.env === "object" && options.env !== null ? options.env : process.env;
-  const homedir =
-    typeof env.USERPROFILE === "string" && env.USERPROFILE !== "" ? env.USERPROFILE : os.homedir();
-  const extraRuntime =
-    typeof options.runtime === "object" && options.runtime !== null ? options.runtime : {};
-  const requestedRuntimeCwd = typeof options.cwd === "string" ? options.cwd : hooksRoot;
-  const payload =
-    typeof options.payload === "object" &&
-    options.payload !== null &&
-    !Array.isArray(options.payload)
-      ? options.payload
-      : null;
-  const runtime = {
-    cwd: requestedRuntimeCwd,
-    env,
-    homedir,
-    ...extraRuntime,
-  };
-  const payloadCwd = payload !== null && typeof payload.cwd === "string" ? payload.cwd : "";
-  const isolatedProjectCwd =
-    hasEnvVaultPath(env) && (requestedRuntimeCwd === hooksRoot || payloadCwd === hooksRoot)
-      ? createTempDir(TEST_MM_CWD_PREFIX)
-      : "";
-  const resolvedPayload =
-    payload !== null && payloadCwd !== ""
-      ? { ...payload, cwd: remapHooksRootCwd(payloadCwd, isolatedProjectCwd) }
-      : payload;
-  let stdinText = "";
-  if (typeof options.stdinText === "string") {
-    stdinText = options.stdinText;
-  } else if (resolvedPayload !== null) {
-    stdinText = JSON.stringify(resolvedPayload);
-  }
-  runtime.cwd = remapHooksRootCwd(runtime.cwd, isolatedProjectCwd);
-
-  materializeProjectDotEnvConfig(runtime.cwd, env, generatedEnvPaths);
-  const resolvedPayloadCwd =
-    resolvedPayload !== null && typeof resolvedPayload.cwd === "string" ? resolvedPayload.cwd : "";
-  if (resolvedPayloadCwd !== "" && resolvedPayloadCwd !== runtime.cwd) {
-    materializeProjectDotEnvConfig(resolvedPayloadCwd, env, generatedEnvPaths);
-  }
-
-  return scriptName === "install-copilot-hooks.js" || scriptName === "uninstall-copilot-hooks.js"
-    ? scriptModule.run(runtime)
-    : scriptModule.run(stdinText, runtime);
-};
-
-const writeText = (filePath, content) => {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, content, UTF8_ENCODING);
-};
-
 const assertInstalledCopilotHook = (hooksDirectory, hookRoot, definition) => {
   const installedPath = path.join(hooksDirectory, definition.fileName);
   const installed = JSON.parse(fs.readFileSync(installedPath, UTF8_ENCODING));
@@ -240,14 +164,6 @@ const assertInstalledCopilotHook = (hooksDirectory, hookRoot, definition) => {
     `node "${path.join(hookRoot, definition.scriptName).replace(/\\/g, "/")}"`,
   );
 };
-
-const buildTranscript = (turnCount, firstUserContent = "user turn") =>
-  Array.from({ length: turnCount }, (_, index) => {
-    const isUser = index % 2 === 0;
-    const role = isUser ? TRANSCRIPT_ROLE_USER : TRANSCRIPT_ROLE_ASSISTANT;
-    const content = isUser && index === 0 ? firstUserContent : `${role} turn ${index}`;
-    return JSON.stringify({ message: { role, content } });
-  }).join("\n");
 
 const buildVsCodeTranscript = (turns) => {
   const entries = [
@@ -305,12 +221,6 @@ const buildVsCodeTranscript = (turns) => {
     .join("\n");
 };
 
-const today = () => {
-  const now = new Date();
-  const pad = (n) => String(n).padStart(2, "0");
-  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-};
-
 const yesterday = () => {
   const d = new Date();
   d.setDate(d.getDate() - 1);
@@ -319,13 +229,7 @@ const yesterday = () => {
 };
 
 afterEach(() => {
-  while (tempDirs.length > 0) {
-    fs.rmSync(tempDirs.pop(), { recursive: true, force: true });
-  }
-
-  while (generatedEnvPaths.length > 0) {
-    fs.rmSync(generatedEnvPaths.pop(), { force: true });
-  }
+  cleanupGeneratedArtifacts();
 });
 
 describe("entrypoint config readers", () => {
@@ -3326,4 +3230,3 @@ describe("session-end.js calculateNextTurnCount edge cases", () => {
     expect(result.status).toBe(0);
   });
 });
-

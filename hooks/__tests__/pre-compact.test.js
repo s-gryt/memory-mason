@@ -1286,4 +1286,3 @@ describe("pre-compact.js main", () => {
     expect(errors.join("")).toContain("invalid JSON in stdin");
   });
 });
-

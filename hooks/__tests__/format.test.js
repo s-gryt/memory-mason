@@ -559,4 +559,3 @@ describe("buildChunkIndexContent", () => {
     expect(() => buildChunkIndexContent("", 1)).toThrow("dateIso must be a non-empty string");
   });
 });
-

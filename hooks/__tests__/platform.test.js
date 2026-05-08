@@ -1,6 +1,10 @@
 "use strict";
 
-const { ENV_KEY_VAULT_PATH, ENV_KEY_SYNC, ENV_KEY_CAPTURE_MODE } = require("../lib/config/constants");
+const {
+  ENV_KEY_VAULT_PATH,
+  ENV_KEY_SYNC,
+  ENV_KEY_CAPTURE_MODE,
+} = require("../lib/config/constants");
 const {
   detectPlatform,
   parseJsonInput,
@@ -1005,4 +1009,3 @@ describe("resolveVaultConfig", () => {
     );
   });
 });
-

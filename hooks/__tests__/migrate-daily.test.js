@@ -477,4 +477,3 @@ describe("migrateFlatToChunked - header and prefix handling", () => {
     expect(fsApi._files[firstChunkPath]).toBe(buildChunkHeader(paths.dateIso, 1));
   });
 });
-

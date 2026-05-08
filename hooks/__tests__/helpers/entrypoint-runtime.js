@@ -7,6 +7,9 @@ const userPromptSubmit = require("../../user-prompt-submit");
 const sessionStart = require("../../session-start");
 const preCompact = require("../../pre-compact");
 const postToolUse = require("../../post-tool-use");
+const sessionEnd = require("../../session-end");
+const installCopilotHooks = require("../../install-copilot-hooks");
+const uninstallCopilotHooks = require("../../uninstall-copilot-hooks");
 const { materializeProjectDotEnvConfig } = require("./project-dot-env");
 
 const hooksRoot = path.resolve(__dirname, "..", "..");
@@ -16,7 +19,12 @@ const scriptModules = {
   "session-start.js": sessionStart,
   "pre-compact.js": preCompact,
   "post-tool-use.js": postToolUse,
+  "session-end.js": sessionEnd,
+  "install-copilot-hooks.js": installCopilotHooks,
+  "uninstall-copilot-hooks.js": uninstallCopilotHooks,
 };
+
+const runtimeOnlyScriptNames = new Set(["install-copilot-hooks.js", "uninstall-copilot-hooks.js"]);
 
 const tempDirs = [];
 const generatedEnvPaths = [];
@@ -118,6 +126,9 @@ const resolveScriptModule = (scriptPath) => {
   return scriptModules[scriptName];
 };
 
+const resolveScriptName = (scriptPath) =>
+  typeof scriptPath === "string" && scriptPath !== "" ? path.basename(scriptPath) : "";
+
 const isObjectValue = (value) => value !== null && typeof value === "object";
 
 const resolveRuntimeEnv = (options) => (isObjectValue(options.env) ? options.env : process.env);
@@ -197,6 +208,7 @@ const normalizeHookResult = (rawResult) => {
 };
 
 const runHookEntrypoint = (scriptPath, options = {}) => {
+  const scriptName = resolveScriptName(scriptPath);
   const scriptModule = resolveScriptModule(scriptPath);
   const env = resolveRuntimeEnv(options);
   const requestedRuntimeCwd = resolveRequestedRuntimeCwd(options);
@@ -216,7 +228,9 @@ const runHookEntrypoint = (scriptPath, options = {}) => {
 
   materializeRuntimeConfigs(runtime.cwd, resolvedPayload, env);
 
-  const rawResult = scriptModule.run(stdinText, runtime);
+  const rawResult = runtimeOnlyScriptNames.has(scriptName)
+    ? scriptModule.run(runtime)
+    : scriptModule.run(stdinText, runtime);
   return normalizeHookResult(rawResult);
 };
 

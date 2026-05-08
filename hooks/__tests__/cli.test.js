@@ -257,4 +257,3 @@ describe("CLI direct execution", () => {
     );
   });
 });
-

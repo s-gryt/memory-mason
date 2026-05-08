@@ -815,4 +815,3 @@ describe("session-start.js runtime fallback branches", () => {
     expect(result.stderr).toContain("invalid JSON");
   });
 });
-

@@ -1,7 +1,6 @@
 "use strict";
 
 const fs = require("node:fs");
-const os = require("node:os");
 const path = require("node:path");
 const {
   MAX_TAG_STRIP_COUNT,
@@ -49,8 +48,17 @@ const { buildDailyChunkPath, buildDailyFilePath } = require("../lib/vault/vault"
 const { resolveCaptureStatePath } = require("../lib/capture/capture-state");
 const sessionEnd = require("../session-end");
 const { buildStopAssistantSelection } = require("../session-end");
-const userPromptSubmit = require("../user-prompt-submit");
 const { materializeProjectDotEnvConfig } = require("./helpers/project-dot-env");
+const {
+  createTempDir,
+  buildEnv,
+  writeText,
+  today,
+  buildTranscript,
+  generatedEnvPaths,
+  cleanupGeneratedArtifacts,
+  runHookEntrypoint: runScript,
+} = require("./helpers/entrypoint-runtime");
 const hooksRoot = path.resolve(__dirname, "..");
 
 const TWO = 2;
@@ -60,33 +68,6 @@ const FORTY = 40;
 const LONG_TURN_LENGTH = 17000;
 const ENTRYPOINT_FILE = "session-end.js";
 const USER_PROMPT_SUBMIT_ENTRYPOINT_FILE = "user-prompt-submit.js";
-
-const tempDirs = [];
-const generatedEnvPaths = [];
-
-const createTempDir = (prefix) => {
-  const dirPath = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  tempDirs.push(dirPath);
-  return dirPath;
-};
-
-const buildEnv = (homeDir, overrides = {}) => ({
-  ...process.env,
-  PATH: "",
-  Path: "",
-  HOME: homeDir,
-  USERPROFILE: homeDir,
-  ...overrides,
-});
-
-const hasEnvVaultPath = (env) =>
-  env !== null &&
-  typeof env === "object" &&
-  typeof env[ENV_KEY_VAULT_PATH] === "string" &&
-  env[ENV_KEY_VAULT_PATH] !== "";
-
-const remapHooksRootCwd = (targetCwd, isolatedProjectCwd) =>
-  targetCwd === hooksRoot && isolatedProjectCwd !== "" ? isolatedProjectCwd : targetCwd;
 
 const withProcessCaptureMode = (value, callback) => {
   const hadCaptureMode = Object.hasOwn(process.env, ENV_KEY_CAPTURE_MODE);
@@ -109,31 +90,12 @@ const withProcessCaptureMode = (value, callback) => {
   }
 };
 
-const writeText = (filePath, content) => {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, content, UTF8_ENCODING);
-};
-
-const today = () => {
-  const now = new Date();
-  const pad = (n) => String(n).padStart(TWO, "0");
-  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-};
-
 const _yesterday = () => {
   const d = new Date();
   d.setDate(d.getDate() - 1);
   const pad = (n) => String(n).padStart(TWO, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 };
-
-const buildTranscript = (turnCount, firstUserContent = "user turn") =>
-  Array.from({ length: turnCount }, (_, index) => {
-    const isUser = index % TWO === 0;
-    const role = isUser ? TRANSCRIPT_ROLE_USER : TRANSCRIPT_ROLE_ASSISTANT;
-    const content = isUser && index === 0 ? firstUserContent : `${role} turn ${index}`;
-    return JSON.stringify({ message: { role, content } });
-  }).join("\n");
 
 const buildVsCodeTranscript = (turns) => {
   const entries = [
@@ -191,57 +153,8 @@ const buildVsCodeTranscript = (turns) => {
     .join("\n");
 };
 
-const runScript = (scriptName, options = {}) => {
-  const env = options.env || process.env;
-  const homedir = env.USERPROFILE && env.USERPROFILE !== "" ? env.USERPROFILE : os.homedir();
-  const requestedRuntimeCwd = options.cwd || hooksRoot;
-  const payload =
-    typeof options.payload === "object" &&
-    options.payload !== null &&
-    !Array.isArray(options.payload)
-      ? options.payload
-      : null;
-  const payloadCwd = payload !== null && typeof payload.cwd === "string" ? payload.cwd : "";
-  const isolatedProjectCwd =
-    hasEnvVaultPath(env) && (requestedRuntimeCwd === hooksRoot || payloadCwd === hooksRoot)
-      ? createTempDir(TEST_MM_CWD_PREFIX)
-      : "";
-  const resolvedPayload =
-    payload !== null && payloadCwd !== ""
-      ? { ...payload, cwd: remapHooksRootCwd(payloadCwd, isolatedProjectCwd) }
-      : payload;
-  let stdinText = "";
-  if (typeof options.stdinText === "string") {
-    stdinText = options.stdinText;
-  } else if (resolvedPayload !== null) {
-    stdinText = JSON.stringify(resolvedPayload);
-  }
-  const runtime = {
-    cwd: remapHooksRootCwd(requestedRuntimeCwd, isolatedProjectCwd),
-    env,
-    homedir,
-    ...(options.runtime || {}),
-  };
-  materializeProjectDotEnvConfig(runtime.cwd, env, generatedEnvPaths);
-  const resolvedPayloadCwd =
-    resolvedPayload !== null && typeof resolvedPayload.cwd === "string" ? resolvedPayload.cwd : "";
-  if (resolvedPayloadCwd !== "" && resolvedPayloadCwd !== runtime.cwd) {
-    materializeProjectDotEnvConfig(resolvedPayloadCwd, env, generatedEnvPaths);
-  }
-  if (scriptName === USER_PROMPT_SUBMIT_ENTRYPOINT_FILE) {
-    return userPromptSubmit.run(stdinText, runtime);
-  }
-  return sessionEnd.run(stdinText, runtime);
-};
-
 afterEach(() => {
-  while (tempDirs.length > 0) {
-    fs.rmSync(tempDirs.pop(), { recursive: true, force: true });
-  }
-
-  while (generatedEnvPaths.length > 0) {
-    fs.rmSync(generatedEnvPaths.pop(), { force: true });
-  }
+  cleanupGeneratedArtifacts();
 });
 
 describe("entrypoint config readers", () => {
@@ -2131,4 +2044,3 @@ describe("session-end.js main", () => {
     expect(errors.join("")).toContain("invalid JSON in stdin");
   });
 });
-
