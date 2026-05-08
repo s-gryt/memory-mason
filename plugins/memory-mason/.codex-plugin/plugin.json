@@ -1,6 +1,6 @@
 {
   "name": "memory-mason",
-  "version": "0.3.9",
+  "version": "0.3.12",
   "description": "Sync AI conversations to an Obsidian knowledge base and run Memory Mason knowledge base workflows.",
   "author": {
     "name": "Sergii Grytsaienko",
@@ -32,7 +32,9 @@
     "longDescription": "Memory Mason adds knowledge base compile, query, lint, and status workflows for Codex while the shared knowledge base lives in Obsidian.",
     "developerName": "Sergii Grytsaienko",
     "category": "Productivity",
-    "capabilities": ["Write"],
+    "capabilities": [
+      "Write"
+    ],
     "websiteURL": "https://github.com/s-gryt/memory-mason",
     "privacyPolicyURL": "https://github.com/s-gryt/memory-mason/blob/main/README.md",
     "defaultPrompt": [

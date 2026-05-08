@@ -2,9 +2,9 @@
 name: mms
 description: >
   Show knowledge base statistics: article count by type, last compile time,
-  raw capture status, total vault size, session context status, manifest
-  status, and a health summary. Quick overview of the Memory Mason knowledge
-  base state.
+  raw capture status, token economics, session context status, manifest status,
+  and a health summary. Quick overview of the Memory Mason knowledge base
+  state.
 allowed-tools: "Read Glob Bash(obsidian *)"
 ---
 
@@ -66,6 +66,23 @@ Use these paths:
 3. From `state.json`, read:
 - `total_cost_usd` if present
 - `ingested` entries and each `compiled_at` timestamp
+- `capture_metrics` if present:
+  - `capture_count`
+  - `total_raw_tokens`
+  - `total_stored_tokens`
+  - `total_savings_tokens`
+  - `total_savings_percent`
+  - `last_capture_at`
+  - `last_capture.source`
+  - `last_capture.raw_tokens`
+  - `last_capture.stored_tokens`
+  - `last_capture.savings_tokens`
+  - `last_capture.savings_percent`
+
+3.2 Determine token economics status.
+- If `capture_metrics` is missing, invalid, or `capture_count` is 0, report token
+  economics as `not tracked yet` and use zero totals with `never` for last capture.
+- Otherwise report the cumulative totals from `capture_metrics`.
 
 3.5 From `_meta/manifest.json`, read:
 - total tracked source count (`sources` object size)
@@ -122,6 +139,14 @@ Return status exactly like this:
 **Manifest:** {present/missing} ({tracked source count} sources)
 **Context:** {fresh/stale/missing} ({updated timestamp or "never"})
 
+## Token Economics
+- Captures tracked: {capture count or 0}
+- Raw tokens: {total raw tokens or 0}
+- Stored tokens: {total stored tokens or 0}
+- Savings: {total savings percent or 0}% ({total savings tokens or 0} tokens)
+- Last capture: {last capture source or "never"} ({last capture timestamp or "never"})
+- Last capture savings: {last capture savings percent or 0}% ({last capture raw tokens or 0} -> {last capture stored tokens or 0} tokens)
+
 ## Knowledge Graph
 - Avg wikilinks per concept: {N.N}
 - Isolated concepts (0 links): {count}
@@ -137,6 +162,7 @@ Return status exactly like this:
 {healthy / N raw captures need compilation}
 - Manifest: {present / missing / stale references}
 - Context: {fresh / stale / missing}
+- Token economics: {tracked / not tracked yet}
 
 ## Raw Capture Sizes
 {table: folder | size | status}

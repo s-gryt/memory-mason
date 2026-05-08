@@ -313,9 +313,24 @@ Index format:
 {
   "ingested": {},
   "last_compile": null,
-  "last_lint": null
+  "last_lint": null,
+  "capture_metrics": {
+    "capture_count": 0,
+    "total_raw_chars": 0,
+    "total_stored_chars": 0,
+    "total_raw_tokens": 0,
+    "total_stored_tokens": 0,
+    "total_savings_chars": 0,
+    "total_savings_tokens": 0,
+    "total_savings_percent": 0,
+    "last_capture_at": null,
+    "last_capture": null
+  }
 }
 ```
+
+- If `state.json` already exists, preserve existing keys you are not actively updating,
+  including `capture_metrics` and `total_cost_usd`.
 
 - Set `ingested[sourceKey]` to:
 
