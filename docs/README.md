@@ -116,8 +116,8 @@ manage your knowledge base at any time without those interactions appearing in y
 producing duplicate entries. This works through three layers:
 
 1. **Prompt skip** — `user-prompt-submit.js` detects supported Memory Mason commands, including `/memory-mason:*`, and skips writing them to the daily log. It sets an `mmSuppressed` flag in capture state.
-2. **Capture state flag** — `post-tool-use.js` and `pre-compact.js` check the `mmSuppressed` flag and skip capture while it is active. The flag resets on the next non-Memory Mason prompt.
-3. **Transcript filter** — `session-end.js` runs `filterMmTurns()` to strip any supported Memory Mason user turns and their paired assistant replies from the full session transcript before writing.
+2. **Capture state flag** — `post-tool-use.js`, `pre-compact.js`, and `session-end.js` check the `mmSuppressed` flag and skip capture while it is active. The flag resets on the next non-Memory Mason prompt.
+3. **Transcript filter** — `session-end.js` and `pre-compact.js` run `filterMmTurns()` to remove the entire MM command exchange — all turns from the MM user prompt through all subsequent assistant turns — until the next non-MM user prompt.
 
 To exclude entire sessions from capture, set `sync` to `false` in your config file.
 
@@ -193,7 +193,7 @@ Run `/mmq` with a question. Memory Mason checks `_meta/context.md` first for rec
 |:-----|:-------|:-----|:-----|
 | SessionStart | session-start.js | Runs — outputs context to AI | Runs — outputs context to AI |
 | UserPromptSubmit | user-prompt-submit.js | Captures every user prompt | Captures every user prompt |
-| PostToolUse | post-tool-use.js | Allowlist: `AskUserQuestion` only | Blocklist: skip `NOISY_TOOLS` only |
+| PostToolUse | post-tool-use.js | Errors and test results only | All except `NOISY_TOOLS`, bash explorations, meta tools, and empty output |
 | Stop | session-end.js | Captures final assistant turn only | Captures all new assistant turns since last Stop |
 | PreCompact | pre-compact.js | Skips entirely | Captures full transcript (skipped if < 5 turns or duplicate within 60 s) |
 | SessionEnd | session-end.js | Skips entirely | Captures filtered transcript (MM turns removed, duplicate-guarded) |
@@ -204,8 +204,8 @@ Tool name matching is exact and case-sensitive.
 
 | Tool | Lite | Full | Reason |
 |:-----|:-----|:-----|:-------|
-| `AskUserQuestion` | Captured | Captured | In `USER_INPUT_TOOLS` allowlist |
-| `Bash`, `Edit`, `Write`, `Grep`, `Agent`, `WebFetch`, `WebSearch`, `ExitPlanMode` | Skipped | Captured | Not in either set |
+| `AskUserQuestion` | Skipped | Captured | Classified as `decision`; lite mode captures `error` and `test_result` only |
+| `Bash`, `Edit`, `Write`, `Grep`, `Agent`, `WebFetch`, `WebSearch`, `ExitPlanMode` | Skipped | Captured | Not in `NOISY_TOOLS` or `META_TOOLS`; classification decides |
 | `Read`, `Glob`, `LS`, `List`, `ls`, `read`, `glob` | Skipped | Skipped | In `NOISY_TOOLS` blocklist |
 | All other MCP tools | Skipped | Captured | Not in either set |
 | *(empty tool name)* | Skipped | Skipped | Always skipped |
@@ -216,8 +216,8 @@ Applied by `normalizeTranscriptText` during JSONL transcript parsing.
 
 | Content | Lite | Full |
 |:--------|:-----|:-----|
-| `<thinking>` blocks | Stripped | Preserved |
-| `<system-reminder>` blocks | Stripped | Preserved |
+| `<thinking>` blocks | Excluded (block-type filter — only `text` blocks captured) | Excluded (block-type filter) |
+| `<system-reminder>`, `<system-instruction>`, `<persisted-output>` | Stripped | Stripped |
 | Consecutive assistant turns | Collapsed — last in each consecutive run kept | Preserved |
 | Local command stdout | Extracted and ANSI-stripped | Extracted and ANSI-stripped |
 | Other text | Passed through | Passed through |
@@ -227,11 +227,11 @@ Applied by `normalizeTranscriptText` during JSONL transcript parsing.
 | Signal | Lite | Full |
 |:------|:-----|:-----|
 | User prompts | Every prompt | Every prompt |
-| `AskUserQuestion` Q+A | Every answer (full JSON: question + answer + annotations) | Every answer (full JSON) |
+| `AskUserQuestion` Q+A | Never | Every answer (full JSON) |
 | Final assistant reply | 1 per Stop | All new turns since last Stop |
-| Tool outputs | Never | Most (except `NOISY_TOOLS`) |
+| Tool outputs | Errors and test results only | Most (except `NOISY_TOOLS`, explorations, meta) |
 | Full transcript dump | Never | On SessionEnd + PreCompact |
-| `<thinking>` / `<system-reminder>` | Never | Preserved inline |
+| `<thinking>` / `<system-reminder>` | Never | Never (`<thinking>` excluded by type filter; system tags stripped) |
 
 ## Platform Manifests
 
