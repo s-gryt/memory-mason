@@ -5,7 +5,7 @@ description: >
   structure. Runs a three-stage EXTRACT -> TRANSFORM -> LOAD pipeline that
   updates concepts, atlas MOCs, synthesis pages, the root index, build log,
   manifest, state, session bootstrap context, and auto-archive folds.
-argument-hint: "[YYYY-MM-DD|raw-folder-path]"
+argument-hint: "[YYYY-MM-DD|raw-folder-path|--all]"
 allowed-tools: "Read Write Edit Glob Grep Bash(obsidian *)"
 ---
 
@@ -35,6 +35,15 @@ Subfolder rules:
 
 Do not claim config is missing until you have attempted all four locations above. If none provide a vault path, fail fast with an explicit error that names every location checked.
 
+## Project Isolation
+
+Each subfolder is a self-contained project boundary. Strict rules:
+
+1. **Read only from `{vault}/{subfolder}/`** — never glob, read, or reference files in sibling subfolders.
+2. **Link only within `{vault}/{subfolder}/`** — every wikilink in article bodies, index rows, and log entries must start with `{subfolder}/` so Obsidian resolves within the correct project regardless of vault-wide link settings.
+3. **Create pages only inside `{vault}/{subfolder}/`** — concepts, atlas, synthesis, index, and meta files all live under the configured subfolder.
+4. **Related section constraint** — only add `[[{subfolder}/concepts/slug]]` links to concepts that were confirmed to exist in `{vault}/{subfolder}/concepts/` during this compile. Never link to concepts you know exist in other subfolders.
+
 Use these paths for all operations:
 - Raw captures: {vault}/{subfolder}/_raw/
 - Raw day folder: {vault}/{subfolder}/_raw/{YYYY-MM-DD}/
@@ -56,6 +65,7 @@ Use these paths for all operations:
 
 ### 0. Resolve the target raw capture
 
+- If the argument is `--all`, enter batch mode: read `_meta/state.json` ingested map, glob all date folders under `_raw/`, identify every folder not present in the ingested map (or whose hash changed), and process each in chronological order. Run the full EXTRACT → TRANSFORM → LOAD pipeline for each date. Report per-day results. After all days complete, run a final TRANSFORM pass across the full concept set to ensure atlas/synthesis pages reflect the complete corpus.
 - If no argument was provided, target today's local date folder: {vault}/{subfolder}/_raw/{YYYY-MM-DD}/.
 - If the argument matches `YYYY-MM-DD`, use that date folder under `_raw/`.
 - If the argument is a folder path, normalize it and require that it resolves inside {vault}/{subfolder}/_raw/.
@@ -128,8 +138,8 @@ Concept page body format (frontmatter omitted here because the schema above is a
 
 ## Related
 
-- [[concepts/related-concept]] - [How it relates]
-- [[atlas/topic-slug]] - [Parent topic map]
+- [[{subfolder}/concepts/related-concept]] - [How it relates]
+- [[{subfolder}/atlas/topic-slug]] - [Parent topic map]
 ```
 
 - Keep source provenance in frontmatter only. Do not add a separate `## Sources` section to concept pages.
@@ -162,10 +172,10 @@ Gap flagging for thin concepts:
 
 ### 2. TRANSFORM
 
-- Scan the full concept set after EXTRACT, not just pages touched in this run.
+- Scan the full concept set within `{vault}/{subfolder}/` after EXTRACT, not just pages touched in this run. Never read concepts from sibling subfolders.
 - Use normalized tags from the concept corpus as the primary grouping mechanism.
 - Generate or update atlas MOCs and synthesis pages only from evidence already present in concept pages and raw sources.
-- When creating or updating any concept, scan existing concepts for shared tags. Add `[[concepts/related-slug]]` entries in the `## Related` section for concepts that share 2 or more tags. Target 3-5 outbound wikilinks per concept page.
+- When creating or updating any concept, scan existing concepts within `{vault}/{subfolder}/concepts/` for shared tags. Add `[[{subfolder}/concepts/related-slug]]` entries in the `## Related` section for concepts that share 2 or more tags. Target 3-5 outbound wikilinks per concept page. Only link to concepts confirmed to exist in the current subfolder.
 
 MOC generation rule:
 - If 5 or more concept pages share the same normalized tag, create or update {vault}/{subfolder}/atlas/{tag-slug}.md.
@@ -191,16 +201,16 @@ updated: 2026-05-04
 
 ## Concepts
 
-- [[concepts/concept-a]] - [One-line summary]
-- [[concepts/concept-b]] - [One-line summary]
+- [[{subfolder}/concepts/concept-a]] - [One-line summary]
+- [[{subfolder}/concepts/concept-b]] - [One-line summary]
 
 ## Related Synthesis
 
-- [[synthesis/tag-slug]] - [Only if a synthesis page exists]
+- [[{subfolder}/synthesis/tag-slug]] - [Only if a synthesis page exists]
 
 ## Related Tags
 
-- [[atlas/another-tag]] - [Only when genuinely related]
+- [[{subfolder}/atlas/another-tag]] - [Only when genuinely related]
 ```
 
 Synthesis generation rule:
@@ -237,9 +247,9 @@ updated: 2026-05-04
 
 ## Evidence
 
-- [[concepts/concept-a]] - [Evidence]
-- [[concepts/concept-b]] - [Evidence]
-- [[concepts/concept-c]] - [Evidence]
+- [[{subfolder}/concepts/concept-a]] - [Evidence]
+- [[{subfolder}/concepts/concept-b]] - [Evidence]
+- [[{subfolder}/concepts/concept-c]] - [Evidence]
 
 ## Implications
 
@@ -278,13 +288,13 @@ updated: 2026-05-04
 
 ## Active Tags
 
-- [[atlas/tag-slug]] - [Concept count for the tag]
+- [[{subfolder}/atlas/tag-slug]] - [Concept count for the tag]
 
 ## Recently Updated
 
-- [[concepts/example-concept]]
-- [[synthesis/example-tag]]
-- [[atlas/example-tag]]
+- [[{subfolder}/concepts/example-concept]]
+- [[{subfolder}/synthesis/example-tag]]
+- [[{subfolder}/atlas/example-tag]]
 ```
 
 ### 3. LOAD
@@ -302,9 +312,9 @@ Index format:
 
 | Type | Article | Summary | Updated |
 |------|---------|---------|---------|
-| concept | [[concepts/example-concept]] | One-line summary. | 2026-05-04 |
-| synthesis | [[synthesis/example-tag]] | One-line summary. | 2026-05-04 |
-| moc | [[atlas/example-tag]] | One-line summary. | 2026-05-04 |
+| concept | [[{subfolder}/concepts/example-concept]] | One-line summary. | 2026-05-04 |
+| synthesis | [[{subfolder}/synthesis/example-tag]] | One-line summary. | 2026-05-04 |
+| moc | [[{subfolder}/atlas/example-tag]] | One-line summary. | 2026-05-04 |
 ```
 
 - Read {vault}/{subfolder}/_meta/state.json if it exists. Otherwise start with:
@@ -380,6 +390,28 @@ Index format:
 - Preserve all other manifest entries.
 - Write {vault}/{subfolder}/_meta/manifest.json with 2-space JSON indentation.
 
+- Update {vault}/{subfolder}/_meta/taxonomy.md on every successful compile.
+- Glob all concept pages in {vault}/{subfolder}/concepts/. Collect every unique tag from frontmatter `tags:` arrays.
+- If taxonomy.md does not exist, create it with all collected tags.
+- If taxonomy.md exists, read it and append any new tags not already listed.
+- Taxonomy format:
+
+```markdown
+---
+type: meta
+title: "Taxonomy"
+updated: 2026-05-04
+---
+
+# Taxonomy
+
+| Tag | Canonical | Aliases |
+|-----|-----------|---------|
+| tag-slug | Tag Name | alias-1, alias-2 |
+```
+
+- When a concept uses a tag that resembles an existing tag (plural/singular, hyphenation variant), normalize it to the existing canonical form instead of creating a duplicate. Update the concept's frontmatter to use the canonical tag.
+
 - Append one build entry to {vault}/{subfolder}/_meta/log.md using this format:
 
 ```markdown
@@ -400,7 +432,7 @@ Index format:
 - Replace the folded range in `_meta/log.md` with:
 
 ```markdown
-<!-- folded: [[_meta/folds/{fold-id}]] ({COUNT} entries, {EARLIEST-DATE} to {LATEST-DATE}) -->
+<!-- folded: [[{subfolder}/_meta/folds/{fold-id}]] ({COUNT} entries, {EARLIEST-DATE} to {LATEST-DATE}) -->
 ```
 
 - Append a fold action entry to `_meta/log.md` after the replacement:
@@ -408,7 +440,7 @@ Index format:
 ```markdown
 ## [ISO-timestamp] fold | {fold-id}
 - Entries folded: {COUNT} ({EARLIEST-DATE} to {LATEST-DATE})
-- Fold page: [[_meta/folds/{fold-id}]]
+- Fold page: [[{subfolder}/_meta/folds/{fold-id}]]
 ```
 
 - Report the fold action in `/mmc` output whenever auto-archive runs.
@@ -453,17 +485,18 @@ updated: 2026-05-04T12:34:56Z
 
 ## Wikilink Convention
 
-Every `[[wikilink]]` in article bodies must use the full directory-prefixed path relative to the subfolder root. Never use bare slug links.
+Every `[[wikilink]]` in article bodies must include the `{subfolder}/` prefix followed by the full directory-prefixed path. This ensures Obsidian resolves links within the correct project when multiple subfolders share a vault.
 
 | Target type | Correct | Wrong |
 | --- | --- | --- |
-| Concept | `[[concepts/hook-system-architecture]]` | `[[hook-system-architecture]]` |
-| Synthesis | `[[synthesis/hook-architecture-and-wiring]]` | `[[hook-architecture-and-wiring]]` |
-| Atlas MOC | `[[atlas/hooks]]` | `[[hooks]]` |
-| Raw source (body) | `[[_raw/2026-05-04/001]]` | `[[memory-mason/_raw/2026-05-04/001]]` |
+| Concept | `[[{subfolder}/concepts/hook-system-architecture]]` | `[[concepts/hook-system-architecture]]` |
+| Synthesis | `[[{subfolder}/synthesis/hook-architecture-and-wiring]]` | `[[synthesis/hook-architecture-and-wiring]]` |
+| Atlas MOC | `[[{subfolder}/atlas/hooks]]` | `[[atlas/hooks]]` |
+| Raw source (body) | `[[{subfolder}/_raw/2026-05-04/001]]` | `[[_raw/2026-05-04/001]]` |
+| Meta fold | `[[{subfolder}/_meta/folds/fold-id]]` | `[[_meta/folds/fold-id]]` |
 
-- YAML `sources:` arrays use plain string paths like `"_raw/2026-05-04/001.md"`, not wikilink brackets.
-- Never prepend the subfolder name (for example `memory-mason/`) to any wikilink. Paths are already relative to the subfolder root.
-- The same slug can exist in multiple content directories. Always write the explicit directory so links remain unambiguous.
-- The `## Related` section in concept pages must link to `[[concepts/slug]]`, not `[[slug]]`.
-- Index table rows must use `[[concepts/slug]]`, `[[synthesis/slug]]`, and `[[atlas/slug]]`.
+- YAML `sources:` arrays use plain string paths like `"_raw/2026-05-04/001.md"`, not wikilink brackets. These do not need the subfolder prefix.
+- Always prepend `{subfolder}/` to every wikilink. Without it, Obsidian may resolve links to pages in sibling subfolders that share the same slug.
+- The same slug can exist in multiple content directories and in multiple subfolders. The `{subfolder}/` prefix plus explicit directory makes every link unambiguous.
+- The `## Related` section in concept pages must link to `[[{subfolder}/concepts/slug]]`, not `[[concepts/slug]]` or `[[slug]]`.
+- Index table rows must use `[[{subfolder}/concepts/slug]]`, `[[{subfolder}/synthesis/slug]]`, and `[[{subfolder}/atlas/slug]]`.

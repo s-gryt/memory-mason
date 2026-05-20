@@ -117,13 +117,14 @@ Use these paths:
 - Keep the header and first five article rows.
 
 7. Compute knowledge graph metrics:
-- For each concept page, count outbound `[[...]]` wikilinks in the body (exclude frontmatter, exclude `_raw/` source references).
+- For each concept page, count outbound `[[...]]` wikilinks in the body (exclude frontmatter, exclude `{subfolder}/_raw/` source references).
 - Compute average outbound wikilinks per concept page.
 - Count concept pages with zero outbound wikilinks (isolated concepts).
 - Count concept pages containing `[!contradiction]` callouts (unresolved contradictions).
 - Count concept pages containing `[!gap]` callouts (knowledge gaps).
 - Count bare slug wikilinks such as `[[foo]]` across knowledge articles and the root `index.md` (short-form wikilinks).
-- Count source refs that start with `[[{subfolder}/_raw/` across knowledge articles and the root `index.md` (wrong-prefix source refs).
+- Count wikilinks like `[[concepts/foo]]`, `[[atlas/foo]]`, `[[synthesis/foo]]`, or `[[_raw/...]]` that lack the `{subfolder}/` prefix across knowledge articles and the root `index.md` (missing subfolder prefix).
+- Count wikilinks that start with a subfolder prefix OTHER than `{subfolder}/` across knowledge articles and the root `index.md` (cross-project refs).
 
 ## Report Format
 
@@ -153,7 +154,8 @@ Return status exactly like this:
 - Unresolved contradictions: {count}
 - Knowledge gaps: {count}
 - Short-form wikilinks: {count}
-- Wrong-prefix source refs: {count}
+- Missing subfolder prefix: {count}
+- Cross-project refs: {count}
 
 ## Recent Index (first 5 entries)
 {index preview}

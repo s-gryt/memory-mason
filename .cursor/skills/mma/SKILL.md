@@ -99,13 +99,13 @@ created: {ISO-date}
 
 6. Remove the folded entries from log.md.
    - Replace the folded section with a single back-reference line:
-   `<!-- folded: [[_meta/folds/{fold-id}]] ({COUNT} entries, {EARLIEST-DATE} to {LATEST-DATE}) -->`
+   `<!-- folded: [[{subfolder}/_meta/folds/{fold-id}]] ({COUNT} entries, {EARLIEST-DATE} to {LATEST-DATE}) -->`
 
 7. Append to log.md:
 ```
 ## [{ISO-timestamp}] fold | {fold-id}
 - Entries folded: {COUNT} ({EARLIEST-DATE} to {LATEST-DATE})
-- Fold page: [[_meta/folds/{fold-id}]]
+- Fold page: [[{subfolder}/_meta/folds/{fold-id}]]
 ```
 
 ## Dry-run Output
