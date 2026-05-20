@@ -68,7 +68,7 @@ Use these paths:
 - If needed, inspect specific `_raw/YYYY-MM-DD/NNN.md` chunks directly instead of assuming the vault is current.
 
 5. Synthesize a clear, thorough answer.
-- Cite supporting sources with [[wikilinks]] such as [[concepts/example-concept]], [[synthesis/example-tag]], or [[atlas/example-tag]].
+- Cite supporting sources with [[wikilinks]] using the `{subfolder}/` prefix: [[{subfolder}/concepts/example-concept]], [[{subfolder}/synthesis/example-tag]], or [[{subfolder}/atlas/example-tag]].
 - Use `context.md` only as retrieval assistance. Do not cite `_meta/context.md` as authoritative when a durable page exists.
 - Mention raw chunk paths in prose only when you directly inspected them and no durable page exists yet.
 

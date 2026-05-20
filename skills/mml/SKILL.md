@@ -52,7 +52,7 @@ Use these paths:
 - Glob all markdown files under {vault}/{subfolder}/atlas/, {vault}/{subfolder}/concepts/, and {vault}/{subfolder}/synthesis/. Also include {vault}/{subfolder}/index.md if it exists.
 - Do not lint files under `_raw/` or `_meta/` as knowledge articles, except for the explicit checks below against `_meta/manifest.json` and `_meta/context.md`.
 - Parse wikilinks in the form `[[target]]` from article content.
-- Treat links starting with `_raw/` as valid source references.
+- Treat links starting with `{subfolder}/_raw/` as valid source references. Links starting with bare `_raw/` (missing subfolder prefix) are flagged by Check 13.
 - Treat bare slug links such as `[[foo]]` as format violations handled by Check 13.
 - Report every issue found. Do not stop after the first failure.
 
@@ -61,9 +61,10 @@ Use these paths:
 ### Check 1: Broken wikilinks (severity: error)
 
 - For each knowledge article and the root `index.md`, find all [[wikilinks]].
-- Skip links starting with `_raw/`.
+- Skip links starting with `{subfolder}/_raw/`. Skip bare `_raw/` links (Check 13 handles missing prefix).
 - Skip bare slug links that contain no `/`. Check 13 handles them.
-- Check whether each linked target exists at {vault}/{subfolder}/{link}.md.
+- For links starting with `{subfolder}/`, strip the prefix and check whether the target exists at {vault}/{subfolder}/{remainder}.md.
+- For links not starting with `{subfolder}/`, Check 13 or 14 handles them.
 - Report format:
 
 ```text
@@ -229,29 +230,28 @@ SUGGESTION [knowledge_gap] concepts/file.md: Contains [!gap] callout — awaitin
 
 ### Check 13: Wikilink format convention (severity: error)
 
-- For each bare slug wikilink `[[slug]]` in knowledge articles and the root `index.md`, search for matching files at:
-  - {vault}/{subfolder}/concepts/{slug}.md
-  - {vault}/{subfolder}/synthesis/{slug}.md
-  - {vault}/{subfolder}/atlas/{slug}.md
-- If exactly one matching file exists, report the explicit target path that must be used.
-- If more than one matching file exists, report the link as ambiguous and list every matching directory-prefixed candidate.
-- If no matching file exists, report the bare slug as invalid and require an explicit directory-prefixed target.
+All wikilinks must include the `{subfolder}/` prefix followed by the directory path. This ensures Obsidian resolves links within the correct project when multiple subfolders share a vault.
+
+- For each wikilink in knowledge articles and the root `index.md`:
+  - **Bare slug** `[[slug]]` — always an error. Search for matching files and suggest the full `{subfolder}/directory/slug` form.
+  - **Missing subfolder prefix** `[[concepts/slug]]`, `[[atlas/slug]]`, `[[synthesis/slug]]`, `[[_raw/...]]` — error. The link must be `[[{subfolder}/concepts/slug]]`, etc.
 - Report formats:
 
 ```text
-ERROR [short_form_link] file.md: [[foo]] should be [[concepts/foo]] — use full directory-prefixed paths
-ERROR [ambiguous_short_form_link] file.md: [[foo]] matches [[concepts/foo]], [[atlas/foo]] — use an explicit directory-prefixed target
-ERROR [short_form_link] file.md: [[foo]] is a bare slug link and cannot be resolved — use an explicit directory-prefixed target
+ERROR [short_form_link] file.md: [[foo]] should be [[{subfolder}/concepts/foo]] — use full {subfolder}-prefixed paths
+ERROR [ambiguous_short_form_link] file.md: [[foo]] matches [[{subfolder}/concepts/foo]], [[{subfolder}/atlas/foo]] — use an explicit {subfolder}-prefixed target
+ERROR [missing_subfolder_prefix] file.md: [[concepts/foo]] should be [[{subfolder}/concepts/foo]] — add {subfolder}/ prefix
+ERROR [missing_subfolder_prefix] file.md: [[_raw/2026-05-04/001]] should be [[{subfolder}/_raw/2026-05-04/001]] — add {subfolder}/ prefix
 ```
 
-### Check 14: Source reference prefix (severity: error)
+### Check 14: Cross-project reference (severity: error)
 
-- Scan article bodies and the root `index.md` for wikilinks that start with `[[{subfolder}/_raw/`.
-- Report any source reference that prepends the subfolder name. Source links must stay relative to the subfolder root.
+- Scan article bodies and the root `index.md` for wikilinks that start with a subfolder prefix OTHER than `{subfolder}/`.
+- Report any wikilink that references a sibling subfolder. Each project must link only within its own boundary.
 - Report format:
 
 ```text
-ERROR [wrong_source_prefix] file.md: [[memory-mason/_raw/...]] should be [[_raw/...]] — remove the subfolder prefix
+ERROR [cross_project_link] file.md: [[other-project/concepts/foo]] references a different subfolder — remove or replace with a local concept
 ```
 
 ## Output Format
@@ -265,7 +265,8 @@ Return results exactly in this structure:
 - ERROR [broken_link] ...
 - ERROR [short_form_link] ...
 - ERROR [ambiguous_short_form_link] ...
-- ERROR [wrong_source_prefix] ...
+- ERROR [missing_subfolder_prefix] ...
+- ERROR [cross_project_link] ...
 - ERROR [oversized_daily_folder] ...
 - ERROR [manifest_page_missing] ...
 
