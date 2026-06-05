@@ -4,11 +4,11 @@ param(
 )
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-. "$ScriptDir\install-common.ps1"
+. "$ScriptDir\_common.ps1"
 
 if ((-not (Get-Command Test-AbsolutePath -CommandType Function -ErrorAction SilentlyContinue)) -or (-not (Get-Command Test-LocalSourcesAvailable -CommandType Function -ErrorAction SilentlyContinue))) {
     $FallbackCommonPath = Join-Path ([System.IO.Path]::GetTempPath()) "memory-mason-install-common.ps1"
-    Invoke-WebRequest -Uri "https://raw.githubusercontent.com/s-gryt/memory-mason/main/hooks/install-common.ps1" -OutFile $FallbackCommonPath -UseBasicParsing
+    Invoke-WebRequest -Uri "https://raw.githubusercontent.com/s-gryt/memory-mason/main/scripts/install/_common.ps1" -OutFile $FallbackCommonPath -UseBasicParsing
     . $FallbackCommonPath
 }
 
@@ -83,7 +83,7 @@ function Copy-OrDownloadFile {
     }
 
     if ($SourceMode -eq "local") {
-        Copy-Item -LiteralPath (Join-Path $ScriptDir $RelativePath) -Destination $DestinationPath -Force
+        Copy-Item -LiteralPath (Join-Path $HooksSourceDir $RelativePath) -Destination $DestinationPath -Force
     } else {
         Invoke-WebRequest -Uri "$RepoUrl/$RelativePath" -OutFile $DestinationPath -UseBasicParsing
     }

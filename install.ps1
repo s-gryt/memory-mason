@@ -95,17 +95,17 @@ if (-not [string]::IsNullOrWhiteSpace($Workspace)) {
 $installed = @()
 
 if ($Agent -eq "claude" -or $Agent -eq "all") {
-    Invoke-InstallerScript -RelativePath "hooks/install.ps1" -ScriptArgs $ClaudeArgs
+    Invoke-InstallerScript -RelativePath "scripts/install/claude-code.ps1" -ScriptArgs $ClaudeArgs
     $installed += "Claude Code"
 }
 
 if ($Agent -eq "copilot" -or $Agent -eq "all") {
-    Invoke-InstallerScript -RelativePath "hooks/install-copilot-hooks.ps1" -ScriptArgs $CopilotArgs
+    Invoke-InstallerScript -RelativePath "scripts/install/copilot.ps1" -ScriptArgs $CopilotArgs
     $installed += "GitHub Copilot"
 }
 
 if ($Agent -eq "codex" -or $Agent -eq "all") {
-    Invoke-InstallerScript -RelativePath "hooks/install-codex-hooks.ps1" -ScriptArgs $CodexArgs
+    Invoke-InstallerScript -RelativePath "scripts/install/codex.ps1" -ScriptArgs $CodexArgs
     $installed += "Codex"
 }
 

@@ -50,7 +50,7 @@ These are checked-in generated distribution surfaces synced from the source file
 - Hook vault-path resolution order is: `.env` in project root, `memory-mason.json` in project root, `~/.memory-mason/.env`, then `~/.memory-mason/config.json`. It throws if none are found.
 - `.env` sources use their own `MEMORY_MASON_SUBFOLDER` when present and otherwise default to `ai-knowledge`. JSON sources use their own `subfolder`.
 - Memory Mason commands `/mma`, `/mmc`, `/mml`, `/mms`, `/mmq`, `/mmsetup`, and `/memory-mason:*` are excluded from capture and must not be written back into the vault.
-- Claude Code one-command install scripts are `hooks/install.sh` and `hooks/install.ps1`.
+- Claude Code one-command install scripts are `scripts/install/claude-code.sh` and `scripts/install/claude-code.ps1`.
 - Claude Code install bootstraps `~/.memory-mason/config.json` for cross-project use.
 - Do not commit a real `memory-mason.json`. Keep only `memory-mason.example.json` in git.
 - Versioning policy: bump patch for fixes/refactors, minor for backward-compatible features, and major for breaking changes.

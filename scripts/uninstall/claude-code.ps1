@@ -1,6 +1,6 @@
 # Memory Mason - uninstaller for Claude Code hooks
-# Usage: powershell -ExecutionPolicy Bypass -File hooks\uninstall.ps1
-#   or:  powershell -ExecutionPolicy Bypass -File hooks\uninstall.ps1 -Purge
+# Usage: powershell -ExecutionPolicy Bypass -File scripts\uninstall\claude-code.ps1
+#   or:  powershell -ExecutionPolicy Bypass -File scripts\uninstall\claude-code.ps1 -Purge
 param(
     [switch]$Purge
 )

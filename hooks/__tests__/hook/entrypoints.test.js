@@ -29,8 +29,6 @@ const userPromptSubmit = require("../../user-prompt-submit");
 const postToolUse = require("../../post-tool-use");
 const preCompact = require("../../pre-compact");
 const sessionEnd = require("../../session-end");
-const installCopilotHooks = require("../../install-copilot-hooks");
-const uninstallCopilotHooks = require("../../uninstall-copilot-hooks");
 const { materializeProjectDotEnvConfig } = require("../helpers/project-dot-env");
 const {
   TEST_VAULT_PREFIX,
@@ -60,6 +58,24 @@ const {
 
 const hooksRoot = path.resolve(__dirname, "..", "..");
 const repoRoot = path.resolve(hooksRoot, "..");
+const loadMovedCopilotModule = (sourcePath, runtimePath) => {
+  const sourceText = fs.readFileSync(sourcePath, UTF8_ENCODING);
+  const loadedModule = new Module(runtimePath, module);
+
+  loadedModule.filename = runtimePath;
+  loadedModule.paths = Module._nodeModulePaths(path.dirname(runtimePath));
+  loadedModule._compile(sourceText, runtimePath);
+
+  return loadedModule.exports;
+};
+const installCopilotHooks = loadMovedCopilotModule(
+  path.join(repoRoot, "scripts", "install", "copilot.mjs"),
+  path.join(hooksRoot, "install-copilot-hooks.js"),
+);
+const uninstallCopilotHooks = loadMovedCopilotModule(
+  path.join(repoRoot, "scripts", "uninstall", "copilot.mjs"),
+  path.join(hooksRoot, "uninstall-copilot-hooks.js"),
+);
 const SESSION_END_FILE = "session-end.js";
 const SESSION_START_FILE = "session-start.js";
 const USER_PROMPT_SUBMIT_FILE = "user-prompt-submit.js";
@@ -273,6 +289,49 @@ const loadEntrypointAsMain = (entrypointFile) => {
       delete require.cache[hookRuntimePath];
     } else {
       require.cache[hookRuntimePath] = previousHookRuntimeModule;
+    }
+  }
+
+  return callArguments;
+};
+
+const loadMovedEntrypointAsMain = (sourcePath, runtimePath) => {
+  const sourceText = fs.readFileSync(sourcePath, UTF8_ENCODING);
+  const hookOpsPath = require.resolve("../../lib/hook/hook-ops");
+  const previousHookOpsModule = require.cache[hookOpsPath];
+  const previousRequireMain = require.main;
+  const previousProcessMainModule = process.mainModule;
+  const callArguments = [];
+
+  const hookOpsModule = new Module(hookOpsPath, module);
+  hookOpsModule.filename = hookOpsPath;
+  hookOpsModule.loaded = true;
+  hookOpsModule.exports = {
+    parseArgs: () => ({ targetDir: "" }),
+    resolveTargetDir: () => "",
+    runHookOpsMain(...args) {
+      callArguments.push(args);
+      return { status: 0, stdout: "", stderr: "" };
+    },
+  };
+
+  const entrypointModule = new Module(runtimePath, module);
+  entrypointModule.filename = runtimePath;
+  entrypointModule.paths = Module._nodeModulePaths(path.dirname(runtimePath));
+
+  require.main = entrypointModule;
+  process.mainModule = entrypointModule;
+  require.cache[hookOpsPath] = hookOpsModule;
+
+  try {
+    entrypointModule._compile(sourceText, runtimePath);
+  } finally {
+    require.main = previousRequireMain;
+    process.mainModule = previousProcessMainModule;
+    if (typeof previousHookOpsModule === "undefined") {
+      delete require.cache[hookOpsPath];
+    } else {
+      require.cache[hookOpsPath] = previousHookOpsModule;
     }
   }
 
@@ -3049,6 +3108,30 @@ describe("entrypoint require.main guards", () => {
     expect(callArguments[0]).toHaveLength(2);
     expect(callArguments[0][0]).toEqual({});
     expect(typeof callArguments[0][1]).toBe("function");
+  });
+});
+
+describe("moved copilot entrypoint require.main guards", () => {
+  it("invokes main when moved copilot entrypoints are loaded as require.main", () => {
+    const movedEntrypoints = [
+      {
+        sourcePath: path.join(repoRoot, "scripts", "install", "copilot.mjs"),
+        runtimePath: path.join(hooksRoot, "install-copilot-hooks.js"),
+      },
+      {
+        sourcePath: path.join(repoRoot, "scripts", "uninstall", "copilot.mjs"),
+        runtimePath: path.join(hooksRoot, "uninstall-copilot-hooks.js"),
+      },
+    ];
+
+    movedEntrypoints.forEach(({ sourcePath, runtimePath }) => {
+      const callArguments = loadMovedEntrypointAsMain(sourcePath, runtimePath);
+
+      expect(callArguments).toHaveLength(1);
+      expect(callArguments[0]).toHaveLength(2);
+      expect(callArguments[0][0]).toEqual({});
+      expect(typeof callArguments[0][1]).toBe("function");
+    });
   });
 });
 

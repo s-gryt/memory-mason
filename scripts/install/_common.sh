@@ -37,19 +37,25 @@ resolve_workspace_dir() {
   echo "$(pwd)/$workspace_value"
 }
 
+if [ -n "${SCRIPT_DIR:-}" ] && [ -d "${SCRIPT_DIR}" ]; then
+  HOOKS_SOURCE_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)/hooks"
+else
+  HOOKS_SOURCE_DIR=""
+fi
+
 has_local_sources() {
-  if [ "$SCRIPT_DIR" = "" ]; then
+  if [ "$HOOKS_SOURCE_DIR" = "" ]; then
     return 1
   fi
 
   for runtime_file in "${HOOK_RUNTIME_FILES[@]}"; do
-    if [ ! -f "$SCRIPT_DIR/$runtime_file" ]; then
+    if [ ! -f "$HOOKS_SOURCE_DIR/$runtime_file" ]; then
       return 1
     fi
   done
 
   for lib_file in "${LIB_FILES[@]}"; do
-    if [ ! -f "$SCRIPT_DIR/lib/$lib_file" ]; then
+    if [ ! -f "$HOOKS_SOURCE_DIR/lib/$lib_file" ]; then
       return 1
     fi
   done

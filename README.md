@@ -121,8 +121,8 @@ directory inside the vault. `MEMORY_MASON_SYNC` is optional — capture is enabl
 it to `false` to pause capture. `MEMORY_MASON_CAPTURE_MODE` is optional and controls what gets
 captured:
 
-- **`lite`** (default) — Session bookends only: user prompts, errors, test results, and session summaries. Minimal vault footprint.
-- **`full`** — Everything in lite, plus plan outputs, agent findings, mid-run discoveries, and state-changing tool results. Exploration reads, meta-tool invocations, and noise are still filtered out.
+- **`lite`** (default) — Session bookends only: user prompts, explicit user decisions (answers to clarifying questions), and session summaries. Minimal vault footprint.
+- **`full`** — Everything in lite, plus errors, test results, plan outputs, agent findings, mid-run discoveries, and state-changing tool results. Exploration reads, meta-tool invocations, and noise are still filtered out.
 
 Process environment variables `MEMORY_MASON_SYNC` and `MEMORY_MASON_CAPTURE_MODE` override file
 config for a single session.
@@ -136,7 +136,7 @@ MEMORY_MASON_CAPTURE_MODE=lite
 
 ### JSON format
 
-`vaultPath` sets the Obsidian vault location. `subfolder` sets the directory inside the vault. `sync` is optional — capture is enabled by default; set it to `false` to pause capture. `captureMode` is optional — `lite` (default) captures session bookends only, `full` adds plan outputs, agent findings, and mid-run discoveries. Use this format for `memory-mason.json` in a project root or `~/.memory-mason/config.json` for global config (`/mmsetup` creates the global file automatically).
+`vaultPath` sets the Obsidian vault location. `subfolder` sets the directory inside the vault. `sync` is optional — capture is enabled by default; set it to `false` to pause capture. `captureMode` is optional — `lite` (default) captures session bookends only, `full` adds errors, test results, plan outputs, agent findings, and mid-run discoveries. Use this format for `memory-mason.json` in a project root or `~/.memory-mason/config.json` for global config (`/mmsetup` creates the global file automatically).
 
 ```json
 {

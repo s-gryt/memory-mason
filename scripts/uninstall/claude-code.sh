@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Memory Mason - uninstaller for Claude Code hooks
-# Usage: bash hooks/uninstall.sh
-#   or:  bash hooks/uninstall.sh --purge
+# Usage: bash scripts/uninstall/claude-code.sh
+#   or:  bash scripts/uninstall/claude-code.sh --purge
 set -e
 
 PURGE=0

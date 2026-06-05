@@ -155,17 +155,17 @@ fi
 INSTALLED=()
 
 if [ "$AGENT" = "claude" ] || [ "$AGENT" = "all" ]; then
-  run_installer "hooks/install.sh" "${CLAUDE_ARGS[@]}"
+  run_installer "scripts/install/claude-code.sh" "${CLAUDE_ARGS[@]}"
   INSTALLED+=("Claude Code")
 fi
 
 if [ "$AGENT" = "copilot" ] || [ "$AGENT" = "all" ]; then
-  run_installer "hooks/install-copilot-hooks.sh" "${COPILOT_ARGS[@]}"
+  run_installer "scripts/install/copilot.sh" "${COPILOT_ARGS[@]}"
   INSTALLED+=("GitHub Copilot")
 fi
 
 if [ "$AGENT" = "codex" ] || [ "$AGENT" = "all" ]; then
-  run_installer "hooks/install-codex-hooks.sh" "${CODEX_ARGS[@]}"
+  run_installer "scripts/install/codex.sh" "${CODEX_ARGS[@]}"
   INSTALLED+=("Codex")
 fi
 

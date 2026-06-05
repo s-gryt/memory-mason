@@ -93,7 +93,7 @@ Platform-specific removal:
 | Agent | Uninstall method |
 |:------|:-----------------|
 | **Claude Code** (plugin) | `/plugin uninstall memory-mason` |
-| **Claude Code** (shell) | `bash hooks/uninstall.sh` or `powershell -File hooks\uninstall.ps1` |
+| **Claude Code** (shell) | `bash scripts/uninstall/claude-code.sh` or `powershell -File scripts\uninstall\claude-code.ps1` |
 | **Copilot** | `/mmsetup` uninstall (removes hook files + workspace JSON) |
 | **Codex** | `/mmsetup` uninstall (removes hook files + `.codex/hooks.json` entries) |
 | **Cursor / Windsurf / Cline** | `npx skills remove s-gryt/memory-mason -a <agent>` |

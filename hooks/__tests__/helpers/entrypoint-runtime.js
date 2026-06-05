@@ -3,16 +3,37 @@
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const Module = require("node:module");
 const userPromptSubmit = require("../../user-prompt-submit");
 const sessionStart = require("../../session-start");
 const preCompact = require("../../pre-compact");
 const postToolUse = require("../../post-tool-use");
 const sessionEnd = require("../../session-end");
-const installCopilotHooks = require("../../install-copilot-hooks");
-const uninstallCopilotHooks = require("../../uninstall-copilot-hooks");
 const { materializeProjectDotEnvConfig } = require("./project-dot-env");
 
 const hooksRoot = path.resolve(__dirname, "..", "..");
+const repoRoot = path.resolve(hooksRoot, "..");
+
+const loadMovedCopilotModule = (sourcePath, runtimePath) => {
+  const sourceText = fs.readFileSync(sourcePath, "utf-8");
+  const loadedModule = new Module(runtimePath, module);
+
+  loadedModule.filename = runtimePath;
+  loadedModule.paths = Module._nodeModulePaths(path.dirname(runtimePath));
+  loadedModule._compile(sourceText, runtimePath);
+
+  return loadedModule.exports;
+};
+
+const installCopilotHooks = loadMovedCopilotModule(
+  path.join(repoRoot, "scripts", "install", "copilot.mjs"),
+  path.join(hooksRoot, "install-copilot-hooks.js"),
+);
+
+const uninstallCopilotHooks = loadMovedCopilotModule(
+  path.join(repoRoot, "scripts", "uninstall", "copilot.mjs"),
+  path.join(hooksRoot, "uninstall-copilot-hooks.js"),
+);
 
 const scriptModules = {
   "user-prompt-submit.js": userPromptSubmit,

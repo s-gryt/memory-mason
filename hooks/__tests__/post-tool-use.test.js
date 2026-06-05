@@ -298,7 +298,7 @@ describe("post-tool-use.js", () => {
     );
   });
 
-  it("skips AskUserQuestion tool output in lite mode", () => {
+  it("captures AskUserQuestion tool output in lite mode", () => {
     const homeDir = createTempDir(TEST_HOME_PREFIX);
     const vaultPath = createTempDir(TEST_VAULT_PREFIX);
 
@@ -313,9 +313,9 @@ describe("post-tool-use.js", () => {
     });
 
     expect(result.status).toBe(0);
-    expect(fs.existsSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1))).toBe(
-      false,
-    );
+    expect(
+      fs.readFileSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1), UTF8_ENCODING),
+    ).toContain("user said: do the thing");
   });
 
   it("skips noisy tools in full mode", () => {
@@ -385,7 +385,7 @@ describe("post-tool-use.js", () => {
     });
   });
 
-  it("captures Write error output in lite mode", () => {
+  it("skips Write error output in lite mode", () => {
     const homeDir = createTempDir(TEST_HOME_PREFIX);
     const vaultPath = createTempDir(TEST_VAULT_PREFIX);
 
@@ -400,12 +400,12 @@ describe("post-tool-use.js", () => {
     });
 
     expect(result.status).toBe(0);
-    expect(
-      fs.readFileSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1), UTF8_ENCODING),
-    ).toContain("Error: file not found");
+    expect(fs.existsSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1))).toBe(
+      false,
+    );
   });
 
-  it("captures Write test results output in lite mode", () => {
+  it("skips Write test results output in lite mode", () => {
     const homeDir = createTempDir(TEST_HOME_PREFIX);
     const vaultPath = createTempDir(TEST_VAULT_PREFIX);
 
@@ -420,9 +420,9 @@ describe("post-tool-use.js", () => {
     });
 
     expect(result.status).toBe(0);
-    expect(
-      fs.readFileSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1), UTF8_ENCODING),
-    ).toContain("5 tests passed");
+    expect(fs.existsSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1))).toBe(
+      false,
+    );
   });
 
   it("captures Write output for plan paths in full mode", () => {
@@ -823,22 +823,22 @@ describe("shouldSkipToolPayload", () => {
     ).toBe(true);
   });
 
-  it("captures error classification in lite mode", () => {
+  it("skips error classification in lite mode", () => {
     expect(
       postToolUse.shouldSkipToolPayload(
         createSkipPayload({ strippedResultText: "Error: file not found" }),
         CAPTURE_MODE_LITE,
       ),
-    ).toBe(false);
+    ).toBe(true);
   });
 
-  it("captures test_result classification in lite mode", () => {
+  it("skips test_result classification in lite mode", () => {
     expect(
       postToolUse.shouldSkipToolPayload(
         createSkipPayload({ strippedResultText: "5 tests passed" }),
         CAPTURE_MODE_LITE,
       ),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("skips noise classification in lite mode", () => {

@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
 # Memory Mason - one-command hook installer for Claude Code
-# Usage: bash hooks/install.sh
-#   or:  bash hooks/install.sh --force
-#   or:  bash <(curl -s https://raw.githubusercontent.com/s-gryt/memory-mason/main/hooks/install.sh)
+# Usage: bash scripts/install/claude-code.sh
+#   or:  bash scripts/install/claude-code.sh --force
+#   or:  bash <(curl -s https://raw.githubusercontent.com/s-gryt/memory-mason/main/scripts/install/claude-code.sh)
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [ -f "${SCRIPT_DIR}/install-common.sh" ]; then
-  source "${SCRIPT_DIR}/install-common.sh"
+if [ -f "${SCRIPT_DIR}/_common.sh" ]; then
+  source "${SCRIPT_DIR}/_common.sh"
 else
   if ! command -v curl >/dev/null 2>&1; then
     echo "ERROR: 'curl' is required when local source files are not available."
     exit 1
   fi
 
-  source /dev/stdin <<<"$(curl -fsSL "https://raw.githubusercontent.com/s-gryt/memory-mason/main/hooks/install-common.sh")"
+  source /dev/stdin <<<"$(curl -fsSL "https://raw.githubusercontent.com/s-gryt/memory-mason/main/scripts/install/_common.sh")"
 fi
 
 FORCE=0
@@ -102,8 +102,8 @@ copy_or_download_file() {
 
   mkdir -p "$(dirname "$destination_path")"
 
-  if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/$relative_path" ]; then
-    cp "$SCRIPT_DIR/$relative_path" "$destination_path"
+  if [ -n "${HOOKS_SOURCE_DIR:-}" ] && [ -f "$HOOKS_SOURCE_DIR/$relative_path" ]; then
+    cp "$HOOKS_SOURCE_DIR/$relative_path" "$destination_path"
   else
     if ! command -v curl >/dev/null 2>&1; then
       echo "ERROR: 'curl' is required when local source files are not available."
@@ -133,7 +133,7 @@ fi
 if [ "$FORCE" -eq 0 ] && [ "$ALL_FILES_PRESENT" -eq 1 ] && [ "$HOOKS_WIRED" -eq 1 ] && [ "$CONFIG_PRESENT" -eq 1 ]; then
   echo "Memory Mason hooks already installed in $HOOKS_DIR"
   echo "Global config already exists at ~/.memory-mason/config.json"
-  echo "  Re-run with --force to overwrite: bash hooks/install.sh --force"
+  echo "  Re-run with --force to overwrite: bash scripts/install/claude-code.sh --force"
   echo ""
   echo "Nothing to do. Hooks are already in place."
   exit 0

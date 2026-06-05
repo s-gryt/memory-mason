@@ -83,8 +83,8 @@ avoids duplicate content in the knowledge base.
 ### Claude Code
 
 ```bash
-bash hooks/install.sh               # macOS / Linux
-powershell -File hooks\install.ps1   # Windows
+bash scripts/install/claude-code.sh               # macOS / Linux
+powershell -File scripts\install\claude-code.ps1   # Windows
 ```
 
 Copies runtime to `~/.claude/hooks/memory-mason/`, wires 6 events in `~/.claude/settings.json`, creates `~/.memory-mason/config.json`.
@@ -92,8 +92,8 @@ Copies runtime to `~/.claude/hooks/memory-mason/`, wires 6 events in `~/.claude/
 ### GitHub Copilot
 
 ```bash
-bash hooks/install-copilot-hooks.sh               # macOS / Linux
-powershell -File hooks\install-copilot-hooks.ps1   # Windows
+bash scripts/install/copilot.sh               # macOS / Linux
+powershell -File scripts\install\copilot.ps1   # Windows
 ```
 
 Writes 6 workspace hook files: `session-start.json`, `user-prompt-submit.json`, `post-tool-use.json`, `pre-compact.json`, `stop.json`, `session-end.json`.
@@ -108,8 +108,8 @@ bash install.sh --agent all
 ### Codex
 
 ```bash
-bash hooks/install-codex-hooks.sh               # macOS / Linux
-powershell -File hooks\install-codex-hooks.ps1   # Windows
+bash scripts/install/codex.sh               # macOS / Linux
+powershell -File scripts\install\codex.ps1   # Windows
 ```
 
 Or: `bash install.sh --agent codex`

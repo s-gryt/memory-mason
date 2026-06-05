@@ -12,8 +12,7 @@ const {
   EVENT_TYPE_EXPLORATION,
   EVENT_TYPE_META,
   EVENT_TYPE_NOISE,
-  EVENT_TYPE_ERROR,
-  EVENT_TYPE_TEST_RESULT,
+  EVENT_TYPE_DECISION,
   HOOK_WARNING_TAG_LIMIT_PREFIX,
   HOOK_WARNING_SENSITIVE_SKIP_PREFIX,
   MAX_TAG_STRIP_COUNT,
@@ -215,7 +214,7 @@ const shouldSkipToolPayload = (payload, captureMode) => {
   }
 
   if (captureMode === CAPTURE_MODE_LITE) {
-    return classification !== EVENT_TYPE_ERROR && classification !== EVENT_TYPE_TEST_RESULT;
+    return classification !== EVENT_TYPE_DECISION;
   }
 
   return false;

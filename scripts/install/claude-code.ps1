@@ -1,17 +1,17 @@
 # Memory Mason - one-command hook installer for Claude Code
-# Usage: powershell -ExecutionPolicy Bypass -File hooks\install.ps1
-#   or:  powershell -ExecutionPolicy Bypass -File hooks\install.ps1 -Force
-#   or:  irm https://raw.githubusercontent.com/s-gryt/memory-mason/main/hooks/install.ps1 | iex
+# Usage: powershell -ExecutionPolicy Bypass -File scripts\install\claude-code.ps1
+#   or:  powershell -ExecutionPolicy Bypass -File scripts\install\claude-code.ps1 -Force
+#   or:  irm https://raw.githubusercontent.com/s-gryt/memory-mason/main/scripts/install/claude-code.ps1 | iex
 param(
     [switch]$Force
 )
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-. "$ScriptDir\install-common.ps1"
+. "$ScriptDir\_common.ps1"
 
 if ((-not (Get-Command Test-AbsolutePath -CommandType Function -ErrorAction SilentlyContinue)) -or (-not (Get-Command Test-LocalSourcesAvailable -CommandType Function -ErrorAction SilentlyContinue))) {
     $FallbackCommonPath = Join-Path ([System.IO.Path]::GetTempPath()) "memory-mason-install-common.ps1"
-    Invoke-WebRequest -Uri "https://raw.githubusercontent.com/s-gryt/memory-mason/main/hooks/install-common.ps1" -OutFile $FallbackCommonPath -UseBasicParsing
+  Invoke-WebRequest -Uri "https://raw.githubusercontent.com/s-gryt/memory-mason/main/scripts/install/_common.ps1" -OutFile $FallbackCommonPath -UseBasicParsing
     . $FallbackCommonPath
 }
 
@@ -95,7 +95,7 @@ function Copy-OrDownloadFile {
         New-Item -ItemType Directory -Path $destinationDir -Force | Out-Null
     }
 
-    $localSource = if ($ScriptDir) { Join-Path $ScriptDir $RelativePath } else { $null }
+    $localSource = if ($HooksSourceDir) { Join-Path $HooksSourceDir $RelativePath } else { $null }
 
     if ($localSource -and (Test-Path $localSource)) {
         Copy-Item $localSource $DestinationPath -Force
@@ -113,7 +113,7 @@ $ConfigPresent = Test-Path $GlobalConfigPath
 if (-not $Force -and $AllFilesPresent -and $HooksWired -and $ConfigPresent) {
     Write-Host "Memory Mason hooks already installed in $HooksDir"
     Write-Host "Global config already exists at ~/.memory-mason/config.json"
-    Write-Host "  Re-run with -Force to overwrite: powershell -ExecutionPolicy Bypass -File hooks\install.ps1 -Force"
+  Write-Host "  Re-run with -Force to overwrite: powershell -ExecutionPolicy Bypass -File scripts\install\claude-code.ps1 -Force"
     Write-Host ""
     Write-Host "Nothing to do. Hooks are already in place."
     exit 0

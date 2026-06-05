@@ -2,15 +2,17 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [ -f "${SCRIPT_DIR}/install-common.sh" ]; then
-  source "${SCRIPT_DIR}/install-common.sh"
+if [ -f "${SCRIPT_DIR}/_common.sh" ]; then
+  source "${SCRIPT_DIR}/_common.sh"
 else
-  if ! command -v curl >/dev/null 2>&1; then
-    echo "ERROR: 'curl' is required when local source files are not available."
+  if command -v curl >/dev/null 2>&1; then
+    source /dev/stdin <<<"$(curl -fsSL "https://raw.githubusercontent.com/s-gryt/memory-mason/main/scripts/install/_common.sh")"
+  elif command -v wget >/dev/null 2>&1; then
+    source /dev/stdin <<<"$(wget -qO- "https://raw.githubusercontent.com/s-gryt/memory-mason/main/scripts/install/_common.sh")"
+  else
+    echo "ERROR: remote install requires curl or wget"
     exit 1
   fi
-
-  source /dev/stdin <<<"$(curl -fsSL "https://raw.githubusercontent.com/s-gryt/memory-mason/main/hooks/install-common.sh")"
 fi
 
 FORCE=0
@@ -30,6 +32,10 @@ while [ "$#" -gt 0 ]; do
       FORCE=1
       shift
       ;;
+    --help|-h)
+      echo "Usage: bash scripts/install/codex.sh [--workspace /path/to/project] [--force]"
+      exit 0
+      ;;
     *)
       echo "ERROR: unknown argument: $1"
       exit 1
@@ -38,22 +44,21 @@ while [ "$#" -gt 0 ]; do
 done
 
 if ! command -v node >/dev/null 2>&1; then
-  echo "ERROR: 'node' is required to install Memory Mason Copilot hooks."
+  echo "ERROR: 'node' is required to install Memory Mason Codex hooks."
   echo "       Install Node.js from https://nodejs.org and re-run this script."
   exit 1
 fi
 
-COPILOT_DIR="${COPILOT_CONFIG_DIR:-$HOME/.copilot}"
-HOOKS_DIR="$COPILOT_DIR/hooks/memory-mason"
+CODEX_DIR="${CODEX_CONFIG_DIR:-$HOME/.codex}"
+HOOKS_DIR="$CODEX_DIR/hooks/memory-mason"
 GLOBAL_CONFIG_DIR="$HOME/.memory-mason"
 GLOBAL_CONFIG_PATH="$GLOBAL_CONFIG_DIR/config.json"
 REPO_URL="https://raw.githubusercontent.com/s-gryt/memory-mason/main/hooks"
 
 HOOK_RUNTIME_FILES=("session-start.js" "user-prompt-submit.js" "post-tool-use.js" "pre-compact.js" "session-end.js")
 LIB_FILES=("config.js" "writer.js" "vault.js" "prompt.js" "transcript.js" "capture-state.js" "assert.js" "constants.js" "json-state.js" "hook-runtime.js" "cli.js" "chunk-writer.js" "state.js" "migrate-daily.js")
-HOOK_JSON_FILES=("session-start.json" "user-prompt-submit.json" "post-tool-use.json" "pre-compact.json" "stop.json" "session-end.json")
 
-all_runtime_files_present() {
+runtime_files_present() {
   for runtime_file in "${HOOK_RUNTIME_FILES[@]}"; do
     if [ ! -f "$HOOKS_DIR/$runtime_file" ]; then
       return 1
@@ -73,16 +78,41 @@ all_runtime_files_present() {
   return 0
 }
 
-all_workspace_hook_files_present() {
-  local workspace_hooks_dir="$1"
+workspace_hooks_present() {
+  local workspace_hooks_file="$1"
+  local workspace_config_file="$2"
 
-  for hook_json_file in "${HOOK_JSON_FILES[@]}"; do
-    if [ ! -f "$workspace_hooks_dir/$hook_json_file" ]; then
-      return 1
-    fi
-  done
+  if [ ! -f "$workspace_hooks_file" ]; then
+    return 1
+  fi
+
+  if [ ! -f "$workspace_config_file" ]; then
+    return 1
+  fi
+
+  if ! grep -Eq '^[[:space:]]*codex_hooks[[:space:]]*=[[:space:]]*true([[:space:]]*)$' "$workspace_config_file"; then
+    return 1
+  fi
 
   return 0
+}
+
+download_file() {
+  local url="$1"
+  local destination_path="$2"
+
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$url" -o "$destination_path"
+    return
+  fi
+
+  if command -v wget >/dev/null 2>&1; then
+    wget -qO "$destination_path" "$url"
+    return
+  fi
+
+  echo "ERROR: remote install requires curl or wget"
+  exit 1
 }
 
 copy_or_download_file() {
@@ -93,29 +123,37 @@ copy_or_download_file() {
   mkdir -p "$(dirname "$destination_path")"
 
   if [ "$source_mode" = "local" ]; then
-    cp "$SCRIPT_DIR/$relative_path" "$destination_path"
+    cp "$HOOKS_SOURCE_DIR/$relative_path" "$destination_path"
   else
-    if ! command -v curl >/dev/null 2>&1; then
-      echo "ERROR: 'curl' is required when local source files are not available."
-      exit 1
-    fi
-
-    curl -fsSL "$REPO_URL/$relative_path" -o "$destination_path"
+    download_file "$REPO_URL/$relative_path" "$destination_path"
   fi
 
   echo "  Installed: $destination_path"
 }
 
-TARGET_WORKSPACE="$(resolve_workspace_dir "$WORKSPACE_ARG")"
-if [ ! -d "$TARGET_WORKSPACE" ]; then
-  echo "ERROR: workspace directory does not exist: $TARGET_WORKSPACE"
+WORKSPACE_ROOT="$(resolve_workspace_dir "$WORKSPACE_ARG")"
+if [ ! -d "$WORKSPACE_ROOT" ]; then
+  echo "ERROR: workspace directory does not exist: $WORKSPACE_ROOT"
   exit 1
 fi
 
-WORKSPACE_HOOKS_DIR="$TARGET_WORKSPACE/.github/hooks"
+WORKSPACE_CODEX_DIR="$WORKSPACE_ROOT/.codex"
+WORKSPACE_HOOKS_FILE="$WORKSPACE_CODEX_DIR/hooks.json"
+WORKSPACE_CONFIG_FILE="$WORKSPACE_CODEX_DIR/config.toml"
+
 SOURCE_MODE="remote"
 if has_local_sources; then
   SOURCE_MODE="local"
+fi
+
+RUNTIME_PRESENT=0
+if runtime_files_present; then
+  RUNTIME_PRESENT=1
+fi
+
+WORKSPACE_PRESENT=0
+if workspace_hooks_present "$WORKSPACE_HOOKS_FILE" "$WORKSPACE_CONFIG_FILE"; then
+  WORKSPACE_PRESENT=1
 fi
 
 CONFIG_PRESENT=0
@@ -123,32 +161,22 @@ if [ -f "$GLOBAL_CONFIG_PATH" ]; then
   CONFIG_PRESENT=1
 fi
 
-RUNTIME_PRESENT=0
-if all_runtime_files_present; then
-  RUNTIME_PRESENT=1
-fi
-
-WORKSPACE_HOOKS_PRESENT=0
-if all_workspace_hook_files_present "$WORKSPACE_HOOKS_DIR"; then
-  WORKSPACE_HOOKS_PRESENT=1
-fi
-
-if [ "$FORCE" -eq 0 ] && [ "$RUNTIME_PRESENT" -eq 1 ] && [ "$WORKSPACE_HOOKS_PRESENT" -eq 1 ] && [ "$CONFIG_PRESENT" -eq 1 ]; then
-  echo "Memory Mason Copilot hooks already installed."
+if [ "$FORCE" -eq 0 ] && [ "$RUNTIME_PRESENT" -eq 1 ] && [ "$WORKSPACE_PRESENT" -eq 1 ] && [ "$CONFIG_PRESENT" -eq 1 ]; then
+  echo "Memory Mason Codex hooks already installed."
   echo "  Hook runtime: $HOOKS_DIR"
-  echo "  Workspace hooks: $WORKSPACE_HOOKS_DIR"
-  echo "  Config: $GLOBAL_CONFIG_PATH"
+  echo "  Workspace config: $WORKSPACE_CODEX_DIR"
+  echo "  Global config: $GLOBAL_CONFIG_PATH"
   echo "  Re-run with --force to reinstall."
   exit 0
 fi
 
 if [ "$FORCE" -eq 1 ]; then
-  echo "Reinstalling Memory Mason Copilot hooks (--force)..."
+  echo "Reinstalling Memory Mason Codex hooks (--force)..."
   if [ -d "$HOOKS_DIR" ]; then
     rm -rf "$HOOKS_DIR"
   fi
 else
-  echo "Installing Memory Mason Copilot hooks..."
+  echo "Installing Memory Mason Codex hooks..."
 fi
 
 echo "Source mode: $SOURCE_MODE"
@@ -224,50 +252,64 @@ else
   echo "Created global config at $GLOBAL_CONFIG_PATH"
 fi
 
-MEMORY_MASON_WORKSPACE_HOOKS_DIR="$WORKSPACE_HOOKS_DIR" \
+MEMORY_MASON_WORKSPACE_HOOKS_FILE="$WORKSPACE_HOOKS_FILE" \
 MEMORY_MASON_HOOKS_DIR="$HOOKS_DIR" \
 node -e "
   const fs = require('fs');
   const path = require('path');
-  const workspaceHooksDir = process.env.MEMORY_MASON_WORKSPACE_HOOKS_DIR;
+  const hooksFile = process.env.MEMORY_MASON_WORKSPACE_HOOKS_FILE;
   const hooksDir = process.env.MEMORY_MASON_HOOKS_DIR;
-  if (!workspaceHooksDir) {
-    throw new Error('workspaceHooksDir is required');
+  if (!hooksFile) {
+    throw new Error('hooksFile is required');
   }
   if (!hooksDir) {
     throw new Error('hooksDir is required');
   }
 
   const normalizedHooksDir = hooksDir.replace(/\\\\/g, '/');
-  const definitions = [
-    { fileName: 'session-start.json', eventName: 'SessionStart', scriptName: 'session-start.js', timeout: 10 },
-    { fileName: 'user-prompt-submit.json', eventName: 'UserPromptSubmit', scriptName: 'user-prompt-submit.js', timeout: 5 },
-    { fileName: 'post-tool-use.json', eventName: 'PostToolUse', scriptName: 'post-tool-use.js', timeout: 5 },
-    { fileName: 'pre-compact.json', eventName: 'PreCompact', scriptName: 'pre-compact.js', timeout: 15 },
-    { fileName: 'stop.json', eventName: 'Stop', scriptName: 'session-end.js', timeout: 15 },
-    { fileName: 'session-end.json', eventName: 'SessionEnd', scriptName: 'session-end.js', timeout: 15 }
-  ];
+  const commandFor = (fileName) => 'node \"' + normalizedHooksDir + '/' + fileName + '\"';
+  const payload = {
+    hooks: {
+      SessionStart: [{ hooks: [{ type: 'command', command: commandFor('session-start.js'), timeout: 10 }] }],
+      UserPromptSubmit: [{ hooks: [{ type: 'command', command: commandFor('user-prompt-submit.js'), timeout: 5 }] }],
+      PostToolUse: [{ hooks: [{ type: 'command', command: commandFor('post-tool-use.js'), timeout: 5 }] }],
+      Stop: [{ hooks: [{ type: 'command', command: commandFor('session-end.js'), timeout: 15 }] }]
+    }
+  };
 
-  fs.mkdirSync(workspaceHooksDir, { recursive: true });
-  definitions.forEach((definition) => {
-    const payload = {
-      hooks: {
-        [definition.eventName]: [
-          {
-            type: 'command',
-            command: 'node "' + normalizedHooksDir + '/' + definition.scriptName + '"',
-            timeout: definition.timeout
-          }
-        ]
-      }
-    };
-
-    fs.writeFileSync(path.join(workspaceHooksDir, definition.fileName), JSON.stringify(payload, null, 2) + '\\n');
-  });
+  fs.mkdirSync(path.dirname(hooksFile), { recursive: true });
+  fs.writeFileSync(hooksFile, JSON.stringify(payload, null, 2) + '\\n');
 "
+
+echo "  Installed: $WORKSPACE_HOOKS_FILE"
+
+MEMORY_MASON_CODEX_CONFIG_FILE="$WORKSPACE_CONFIG_FILE" \
+node -e "
+  const fs = require('fs');
+  const path = require('path');
+  const configFile = process.env.MEMORY_MASON_CODEX_CONFIG_FILE;
+  if (!configFile) {
+    throw new Error('configFile is required');
+  }
+
+  const current = fs.existsSync(configFile) ? fs.readFileSync(configFile, 'utf8') : '';
+  let next = current;
+
+  if (/^\\s*codex_hooks\\s*=.*$/m.test(next)) {
+    next = next.replace(/^\\s*codex_hooks\\s*=.*$/m, 'codex_hooks = true');
+  } else {
+    const trimmed = next.trimEnd();
+    next = trimmed === '' ? 'codex_hooks = true\\n' : trimmed + '\\n\\ncodex_hooks = true\\n';
+  }
+
+  fs.mkdirSync(path.dirname(configFile), { recursive: true });
+  fs.writeFileSync(configFile, next);
+"
+
+echo "  Updated: $WORKSPACE_CONFIG_FILE"
 
 echo ""
 echo "Done!"
 echo "  Hook runtime: $HOOKS_DIR"
-echo "  Workspace hooks: $WORKSPACE_HOOKS_DIR"
-echo "  Config: $GLOBAL_CONFIG_PATH"
+echo "  Workspace config: $WORKSPACE_CODEX_DIR"
+echo "  Global config: $GLOBAL_CONFIG_PATH"
