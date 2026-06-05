@@ -126,6 +126,8 @@ Use these paths:
 - Count wikilinks like `[[concepts/foo]]`, `[[atlas/foo]]`, `[[synthesis/foo]]`, or `[[_raw/...]]` that lack the `{subfolder}/` prefix across knowledge articles and the root `index.md` (missing subfolder prefix).
 - Count wikilinks that start with a subfolder prefix OTHER than `{subfolder}/` across knowledge articles and the root `index.md` (cross-project refs).
 
+7.5 Count concept page `status` field values from frontmatter across all concept pages in {vault}/{subfolder}/concepts/. Tally: seedling count, growing count, evergreen count. Treat missing or invalid status as seedling.
+
 ## Report Format
 
 Return status exactly like this:
@@ -156,6 +158,12 @@ Return status exactly like this:
 - Short-form wikilinks: {count}
 - Missing subfolder prefix: {count}
 - Cross-project refs: {count}
+
+## Maturity
+- Seedling: {seedling count}
+- Growing: {growing count}
+- Evergreen: {evergreen count}
+- Total concepts: {total}
 
 ## Recent Index (first 5 entries)
 {index preview}

@@ -67,12 +67,21 @@ Use these paths:
 - If the answer depends on source provenance or freshness, read {vault}/{subfolder}/_meta/manifest.json to see which `_raw/YYYY-MM-DD/` sources were compiled.
 - If needed, inspect specific `_raw/YYYY-MM-DD/NNN.md` chunks directly instead of assuming the vault is current.
 
-5. Synthesize a clear, thorough answer.
+5. Aggregate confidence from cited pages.
+- After reading concept pages, collect the `confidence` field from each cited concept's YAML frontmatter. Valid values: `high`, `medium`, `low`.
+- Apply lowest-wins semantics: if any cited concept is `low`, overall confidence is `low`; else if any is `medium`, overall confidence is `medium`; else `high`.
+- If any cited concept has `status: seedling` or contains a `[!gap]` callout, note it in the answer.
+- Append to the answer footer:
+  `Confidence: [high|medium|low] (based on N cited concept pages)`
+  If any seedling or gap concepts were cited, add: `Note: answer draws on N seedling/gap concept(s): [names].`
+- Apply only to cited concept pages. Do not aggregate from atlas or synthesis pages directly unless they themselves cite a concept that contributes to the answer.
+
+6. Synthesize a clear, thorough answer.
 - Cite supporting sources with [[wikilinks]] using the `{subfolder}/` prefix: [[{subfolder}/concepts/example-concept]], [[{subfolder}/synthesis/example-tag]], or [[{subfolder}/atlas/example-tag]].
 - Use `context.md` only as retrieval assistance. Do not cite `_meta/context.md` as authoritative when a durable page exists.
 - Mention raw chunk paths in prose only when you directly inspected them and no durable page exists yet.
 
-6. Handle missing knowledge honestly.
+7. Handle missing knowledge honestly.
 - If the knowledge base does not contain relevant information, say so clearly.
 - Suggest running `/mmc` if relevant information appears to exist in `_raw/` but is not compiled into durable pages yet.
 - Use {vault}/{subfolder}/_meta/log.md only to clarify recency or whether a compile happened. Do not treat the build log as a primary knowledge source.

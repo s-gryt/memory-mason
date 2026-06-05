@@ -182,6 +182,12 @@ MOC generation rule:
 - One tag = one MOC file.
 - Do not create a tag MOC for fewer than 5 concepts.
 
+Sparse MOC rule:
+- If 2-4 concept pages share the same normalized tag, create or update {vault}/{subfolder}/atlas/{tag-slug}-sparse.md.
+- Use the same atlas page format as a regular MOC page but set `status: sparse` in the frontmatter.
+- Do not create a sparse MOC when a regular MOC already exists for the same tag.
+- Sparse MOCs are upgraded to regular MOCs automatically when the tag reaches 5 concepts; at that point, rename the file from `{tag-slug}-sparse.md` to `{tag-slug}.md` and remove the `status: sparse` field.
+
 Atlas page format:
 
 ```markdown
@@ -445,7 +451,7 @@ updated: 2026-05-04
 
 - Report the fold action in `/mmc` output whenever auto-archive runs.
 
-- Overwrite {vault}/{subfolder}/_meta/context.md on every successful compile.
+- If the newly compiled context body (excluding YAML frontmatter) is fewer than 80 words, append the new content below the existing context.md body rather than replacing it. Still update the `updated` timestamp in frontmatter. When appending, add a horizontal rule separator. When the new content is 80 words or more, overwrite as normal.
 - Keep the body under 300 words.
 - `context.md` must summarize only current focus, open decisions, and active threads that are still relevant after this compile.
 - Do not append old context verbatim. Carry forward only unresolved threads that are still grounded in the latest compiled knowledge.

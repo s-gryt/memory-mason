@@ -83,31 +83,31 @@ Skip this step if hooks are already wired (plugin install or shell installer alr
 
 Claude Code:
 ```bash
-bash hooks/install.sh
+bash scripts/install/claude-code.sh
 # Windows:
-powershell -File hooks\install.ps1
+powershell -File scripts\install\claude-code.ps1
 ```
 Or if no local clone:
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/s-gryt/memory-mason/main/hooks/install.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/s-gryt/memory-mason/main/scripts/install/claude-code.sh)
 ```
 
 GitHub Copilot:
 ```bash
-bash hooks/install-copilot-hooks.sh
+bash scripts/install/copilot.sh
 # Windows:
-powershell -File hooks\install-copilot-hooks.ps1
+powershell -File scripts\install\copilot.ps1
 ```
 Or remote:
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/s-gryt/memory-mason/main/hooks/install-copilot-hooks.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/s-gryt/memory-mason/main/scripts/install/copilot.sh)
 ```
 
 Codex:
 ```bash
-bash hooks/install-codex-hooks.sh
+bash scripts/install/codex.sh
 # Windows:
-powershell -File hooks\install-codex-hooks.ps1
+powershell -File scripts\install\codex.ps1
 ```
 
 Skills-only hosts (Cursor, Windsurf, Cline): no hook system available. Inform user that automatic session capture is not supported on this platform. Knowledge base commands (`/mmc`, `/mmq`, `/mml`, `/mms`, `/mma`) work once vault is configured.
@@ -183,13 +183,13 @@ Report what was found and ask user to confirm removal.
 
 For Claude Code (shell install):
 ```bash
-bash hooks/uninstall.sh
+bash scripts/uninstall/claude-code.sh
 # Windows:
-powershell -File hooks\uninstall.ps1
+powershell -File scripts\uninstall\claude-code.ps1
 ```
 Or if no local clone:
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/s-gryt/memory-mason/main/hooks/uninstall.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/s-gryt/memory-mason/main/scripts/uninstall/claude-code.sh)
 ```
 
 For Claude Code (plugin install):
