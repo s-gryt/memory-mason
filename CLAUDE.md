@@ -31,7 +31,7 @@ These are checked-in generated distribution surfaces synced from the source file
 
 | Path | Source |
 | ----- | ------ |
-| `.cursor/skills/*/SKILL.md` | `skills/*/SKILL.md` |
+| `.agents/skills/*/SKILL.md` | `skills/*/SKILL.md` |
 | `.windsurf/skills/*/SKILL.md` | `skills/*/SKILL.md` |
 | `plugins/memory-mason/skills/*/SKILL.md` | `skills/*/SKILL.md` |
 | `*.skill` | ZIP archives of corresponding `skills/*` directories |
@@ -40,7 +40,7 @@ These are checked-in generated distribution surfaces synced from the source file
 | `.windsurf/rules/memory-mason.md` | `rules/memory-mason.md` + Windsurf frontmatter |
 
 `skills/*` are product skills shipped by Memory Mason.
-`.cursor/skills/*` and `.windsurf/skills/*` are generated host-facing copies of root `skills/*`.
+`.agents/skills/*` (Cursor/Cline) and `.windsurf/skills/*` are generated host-facing copies of root `skills/*`.
 `plugins/memory-mason/skills/*` is generated plugin-packaged copy of root `skills/*`.
 `.claude-plugin/` is publishable Claude plugin surface.
 
