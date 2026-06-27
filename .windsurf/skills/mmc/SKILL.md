@@ -5,6 +5,8 @@ description: >
   structure. Runs a three-stage EXTRACT -> TRANSFORM -> LOAD pipeline that
   updates concepts, atlas MOCs, synthesis pages, the root index, build log,
   manifest, state, session bootstrap context, and auto-archive folds.
+  Triggers: "compile today", "/mmc", "compile YYYY-MM-DD", "--all" for batch.
+  Use /mmq instead to query the vault without modifying it.
 argument-hint: "[YYYY-MM-DD|raw-folder-path|--all]"
 allowed-tools: "Read Write Edit Glob Grep Bash(obsidian *)"
 ---
@@ -37,12 +39,7 @@ Do not claim config is missing until you have attempted all four locations above
 
 ## Project Isolation
 
-Each subfolder is a self-contained project boundary. Strict rules:
-
-1. **Read only from `{vault}/{subfolder}/`** — never glob, read, or reference files in sibling subfolders.
-2. **Link only within `{vault}/{subfolder}/`** — every wikilink in article bodies, index rows, and log entries must start with `{subfolder}/` so Obsidian resolves within the correct project regardless of vault-wide link settings.
-3. **Create pages only inside `{vault}/{subfolder}/`** — concepts, atlas, synthesis, index, and meta files all live under the configured subfolder.
-4. **Related section constraint** — only add `[[{subfolder}/concepts/slug]]` links to concepts that were confirmed to exist in `{vault}/{subfolder}/concepts/` during this compile. Never link to concepts you know exist in other subfolders.
+All reads, writes, and wikilinks are strictly scoped to `{vault}/{subfolder}/`. Never access, create, or link files in sibling subfolders; only add `[[{subfolder}/concepts/slug]]` links to concepts confirmed to exist in this subfolder during this compile.
 
 Use these paths for all operations:
 - Raw captures: {vault}/{subfolder}/_raw/
@@ -73,6 +70,7 @@ Use these paths for all operations:
 - Read chunk files matching `^[0-9]{3}\.md$` in numeric order: `001.md`, `002.md`, and so on.
 - Read `meta.json` if present for operational metadata only. Do not treat `meta.json` as narrative source text.
 - If the target folder does not exist, or no numeric chunk files exist, fail fast with an explicit error that names the path checked.
+- The `_raw/{YYYY-MM-DD}/_meta/` subfolder is a sibling artifact class. Do NOT concatenate its files into chunk text and do NOT include them in the `sourceKey` hash. They are processed separately in section 1.5.
 - Concatenate chunk contents in numeric order with a single blank line between chunks. Use this exact concatenation for parsing and hashing.
 - Compute a 16-character SHA-256 hex hash for the concatenated source text.
 - If {vault}/{subfolder}/_meta/manifest.json already contains `sourceKey` with the same hash, and the user did not explicitly request recompilation, stop and report `Already compiled (unchanged).`
@@ -169,6 +167,52 @@ Gap flagging for thin concepts:
 
 - Do not add gap callouts to concepts with `confidence: medium` or `high`.
 - Remove existing gap callouts when a concept is updated with sufficient evidence (3+ key points or confidence promoted to medium or higher).
+
+### 1.5 EXTRACT — coaching advisories
+
+Coaching advisories are deterministic, hook-emitted files describing workflow signals such as repeated prompts. They are NOT durable knowledge and must NOT become concept pages.
+
+- Source location: `{vault}/{subfolder}/_raw/{YYYY-MM-DD}/_meta/*.md`
+- Each file uses YAML frontmatter with required keys: `kind`, `hash`, `count`, `sessionId`, `iso`.
+- Supported `kind` values: `prompt-repeat`. Unknown `kind` values must be ignored, not compiled.
+
+Advisories must not enter concepts, taxonomy, or synthesis pages and must not be included in `sourceKey` hashing. Route each advisory exclusively to `{vault}/{subfolder}/atlas/workflow-coaching.md`.
+
+Atlas workflow-coaching page format:
+
+```markdown
+---
+title: "Workflow Coaching"
+type: moc
+tag: workflow-coaching
+created: 2026-06-26
+updated: 2026-06-26
+---
+
+# Workflow Coaching
+
+## Summary
+
+Repeated workflow signals captured deterministically by Memory Mason hooks. Each entry below corresponds to a unique prompt hash whose recurrence has crossed the nag threshold.
+
+## Active Advisories
+
+- **<hash16>** — kind: `prompt-repeat` — count: N — first: ISO — last: ISO — sessions: [s1, s2]
+- ...
+
+## Resolved Advisories
+
+- **<hash16>** — kind: `prompt-repeat` — count: N — resolved: ISO — note: [optional]
+```
+
+Advisory upsert rules:
+- For each advisory file under `_raw/{date}/_meta/`, parse its frontmatter.
+- If the hash already appears in `## Active Advisories`, update `count`, `last` (= advisory `iso`), append `sessionId` to its sessions list deduplicated.
+- If the hash is new, append a new row to `## Active Advisories`.
+- Never delete advisory rows automatically. Movement from `## Active Advisories` to `## Resolved Advisories` is a manual user action; only honor it when an advisory already appears under `## Resolved Advisories` in the existing page content.
+- Sort `## Active Advisories` by `count` descending, then by `last` descending.
+
+After upserting, update `updated` in the page frontmatter to today's date.
 
 ### 2. TRANSFORM
 
@@ -305,6 +349,8 @@ updated: 2026-05-04
 
 ### 3. LOAD
 
+#### Index
+
 - Update {vault}/{subfolder}/index.md.
 - The index lives at the vault root, not under a `knowledge/` folder.
 - Maintain one row per page for concepts, synthesis pages, and MOCs.
@@ -323,30 +369,19 @@ Index format:
 | moc | [[{subfolder}/atlas/example-tag]] | One-line summary. | 2026-05-04 |
 ```
 
+#### State
+
 - Read {vault}/{subfolder}/_meta/state.json if it exists. Otherwise start with:
 
 ```json
 {
   "ingested": {},
   "last_compile": null,
-  "last_lint": null,
-  "capture_metrics": {
-    "capture_count": 0,
-    "total_raw_chars": 0,
-    "total_stored_chars": 0,
-    "total_raw_tokens": 0,
-    "total_stored_tokens": 0,
-    "total_savings_chars": 0,
-    "total_savings_tokens": 0,
-    "total_savings_percent": 0,
-    "last_capture_at": null,
-    "last_capture": null
-  }
+  "last_lint": null
 }
 ```
 
-- If `state.json` already exists, preserve existing keys you are not actively updating,
-  including `capture_metrics` and `total_cost_usd`.
+Preserve all other existing keys (including `capture_metrics` and `total_cost_usd`) when updating an existing `state.json`.
 
 - Set `ingested[sourceKey]` to:
 
@@ -360,6 +395,8 @@ Index format:
 
 - Set `last_compile` to the current ISO-8601 timestamp.
 - Write {vault}/{subfolder}/_meta/state.json with 2-space JSON indentation.
+
+#### Manifest
 
 - Read {vault}/{subfolder}/_meta/manifest.json if it exists. Otherwise start with:
 
@@ -396,6 +433,8 @@ Index format:
 - Preserve all other manifest entries.
 - Write {vault}/{subfolder}/_meta/manifest.json with 2-space JSON indentation.
 
+#### Taxonomy
+
 - Update {vault}/{subfolder}/_meta/taxonomy.md on every successful compile.
 - Glob all concept pages in {vault}/{subfolder}/concepts/. Collect every unique tag from frontmatter `tags:` arrays.
 - If taxonomy.md does not exist, create it with all collected tags.
@@ -417,6 +456,8 @@ updated: 2026-05-04
 ```
 
 - When a concept uses a tag that resembles an existing tag (plural/singular, hyphenation variant), normalize it to the existing canonical form instead of creating a duplicate. Update the concept's frontmatter to use the canonical tag.
+
+#### Log
 
 - Append one build entry to {vault}/{subfolder}/_meta/log.md using this format:
 
@@ -450,6 +491,8 @@ updated: 2026-05-04
 ```
 
 - Report the fold action in `/mmc` output whenever auto-archive runs.
+
+#### Context
 
 - If the newly compiled context body (excluding YAML frontmatter) is fewer than 80 words, append the new content below the existing context.md body rather than replacing it. Still update the `updated` timestamp in frontmatter. When appending, add a horizontal rule separator. When the new content is 80 words or more, overwrite as normal.
 - Keep the body under 300 words.
@@ -502,7 +545,3 @@ Every `[[wikilink]]` in article bodies must include the `{subfolder}/` prefix fo
 | Meta fold | `[[{subfolder}/_meta/folds/fold-id]]` | `[[_meta/folds/fold-id]]` |
 
 - YAML `sources:` arrays use plain string paths like `"_raw/2026-05-04/001.md"`, not wikilink brackets. These do not need the subfolder prefix.
-- Always prepend `{subfolder}/` to every wikilink. Without it, Obsidian may resolve links to pages in sibling subfolders that share the same slug.
-- The same slug can exist in multiple content directories and in multiple subfolders. The `{subfolder}/` prefix plus explicit directory makes every link unambiguous.
-- The `## Related` section in concept pages must link to `[[{subfolder}/concepts/slug]]`, not `[[concepts/slug]]` or `[[slug]]`.
-- Index table rows must use `[[{subfolder}/concepts/slug]]`, `[[{subfolder}/synthesis/slug]]`, and `[[{subfolder}/atlas/slug]]`.

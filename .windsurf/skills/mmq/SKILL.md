@@ -5,8 +5,9 @@ description: >
   then relevant atlas, concept, and synthesis pages, and synthesizes a clear
   answer with [[wikilink]] citations. Use when you want to ask about past
   decisions, patterns, lessons, or technical knowledge captured in previous
-  AI conversations.
-argument-hint: "[question]"
+  AI conversations. Use the `insights` argument to surface workflow-coaching
+  advisories from hook-generated data.
+argument-hint: "[question | insights]"
 allowed-tools: "Read Glob Grep"
 ---
 
@@ -24,17 +25,7 @@ Before any other reasoning, resolve vault config in this priority order:
 3. Global `~/.memory-mason/.env`
 4. Global `~/.memory-mason/config.json`
 
-Resolve:
-- {vault}: absolute path to the Obsidian vault
-- {subfolder}: plugin-managed subfolder inside the vault
-
-Use the source that provides the vault path.
-
-Subfolder rules:
-- If the vault path comes from an `.env` file, use `MEMORY_MASON_SUBFOLDER` from that same file when present, otherwise default to `ai-knowledge`.
-- If the vault path comes from `memory-mason.json` or `~/.memory-mason/config.json`, use its `subfolder`.
-
-Do not claim config is missing until you have attempted all four locations above. If none provide a vault path, state that the knowledge base is not initialized because no supported Memory Mason config source was found.
+Resolve `{vault}` (absolute path) and `{subfolder}` from the matched source; `.env` sources use `MEMORY_MASON_SUBFOLDER` (default: `ai-knowledge`), JSON sources use `subfolder`. If none provide a vault path, state the knowledge base is not initialized.
 
 Use these paths:
 - Session context: {vault}/{subfolder}/_meta/context.md
@@ -86,14 +77,21 @@ Use these paths:
 - Suggest running `/mmc` if relevant information appears to exist in `_raw/` but is not compiled into durable pages yet.
 - Use {vault}/{subfolder}/_meta/log.md only to clarify recency or whether a compile happened. Do not treat the build log as a primary knowledge source.
 
-## Filing Behavior
+## Predefined arguments
 
-- Vault Architecture v2 does not define a dedicated filed Q&A location.
-- Do not create a filed-answer page unless the user explicitly provides a destination path outside this skill.
+Some arguments map to predefined retrieval flows instead of free-form questions. When the argument exactly matches one of these tokens (case-insensitive, whitespace-trimmed), follow the flow defined here. Otherwise treat the argument as a free-form question and run the default `## Steps` flow.
 
-## Answering Guidelines
+### `insights`
 
-- Prefer precision over broad speculation.
-- Keep the final answer directly tied to cited durable pages.
-- Use `_meta/context.md` to accelerate retrieval, not to skip article reads when the answer requires durable citations.
-- Use concise, clear language and explicit reasoning.
+Surface current workflow-coaching advisories from the hook-generated knowledge.
+
+Steps:
+1. Read `{vault}/{subfolder}/atlas/workflow-coaching.md`. If the file is missing or empty, respond with: `No workflow-coaching advisories yet. Hooks have not crossed the nag threshold.` and stop.
+2. Parse the `## Active Advisories` section.
+3. List up to the top 5 entries by `count` descending, then by most recent `last` descending.
+4. For each surfaced advisory, render one bullet:
+   - `**<count>x** \`<hash16>\` (kind: <kind>) — first: <iso>, last: <iso>` followed by a one-line note describing the workflow signal.
+5. Append a footer: `See [[{subfolder}/atlas/workflow-coaching]] for the full list.`
+6. Do NOT write back to the vault. This is a read-only retrieval.
+
+Confidence aggregation does NOT apply to `insights` because advisories are not concept pages. Skip the `Confidence:` footer.

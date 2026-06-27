@@ -1,11 +1,10 @@
 ---
 name: mma
 description: >
-  Archive old build log entries from _meta/log.md into compact summary pages
-  in _meta/folds/. Prevents log.md from growing unbounded. Extractive only —
-  no invented facts, additive only — never removes source entries until confirmed.
-  Use when _meta/log.md exceeds 200 entries or feels unwieldy.
-argument-hint: "[--dry-run] [--k <batch-exponent>]"
+  Archive log entries when they exceed 32 entries, using batches of 2^k for
+  compact storage. Extractive only — no invented facts. Run whenever
+  _meta/log.md grows unwieldy.
+argument-hint: "[--dry-run | --commit] [--k <n>]"
 allowed-tools: "Read Write Edit Glob"
 ---
 
@@ -15,10 +14,6 @@ Fold the oldest 2^k entries from _meta/log.md into a single summary page, reduci
 
 This command is operational only. Do not write `/mma`, `/memory-mason:mma`, or their execution chatter back into the vault.
 
-## Auto-Trigger
-
-Routine archival runs automatically when mmc appends a build log entry that brings `_meta/log.md` to 32 or more entries. mmc folds the oldest 16 entries (k=4) into `_meta/folds/` without requiring a manual `/mma` call.
-
 Use `/mma` for:
 - Manual runs outside the compile flow
 - Custom batch sizes (`--k 5` folds 32 entries at once)
@@ -26,30 +21,15 @@ Use `/mma` for:
 
 ## Path Resolution
 
-Before any other reasoning, resolve vault config in this priority order:
-1. Project `./.env`
-2. Project `./memory-mason.json`
-3. Global `~/.memory-mason/.env`
-4. Global `~/.memory-mason/config.json`
+Resolve vault config in priority order: `./.env` → `./memory-mason.json` → `~/.memory-mason/.env` → `~/.memory-mason/config.json`.
 
-Resolve:
-- {vault}: absolute path to the Obsidian vault
-- {subfolder}: plugin-managed subfolder inside the vault
-
-Use the source that provides the vault path.
-
-Subfolder rules:
-- If the vault path comes from an `.env` file, use `MEMORY_MASON_SUBFOLDER` from that same file when present, otherwise default to `ai-knowledge`.
-- If the vault path comes from `memory-mason.json` or `~/.memory-mason/config.json`, use its `subfolder`.
-
-Do not claim config is missing until you have attempted all four locations above. If none provide a vault path, fail fast with an explicit error that names every location checked.
+- `{vault}`: absolute path to the Obsidian vault.
+- `{subfolder}`: `MEMORY_MASON_SUBFOLDER` (`.env` source) or `subfolder` field (JSON source); default `ai-knowledge`.
+- Attempt all four locations before reporting missing config. Fail fast with an explicit error naming every location checked.
 
 ## Parameters
 
-- `--dry-run`: Show what would be folded without writing anything. Default behavior.
-- `--k <n>`: Batch exponent. Fold 2^n entries at once. Default: k=4 (16 entries).
-
-Always dry-run first. Only write when user confirms or `--commit` is passed.
+Run with `--dry-run` (default) to preview, `--commit` to write, `--k N` to batch 2^N entries (default k=4, 16 entries).
 
 ## Steps
 
@@ -72,27 +52,17 @@ Always dry-run first. Only write when user confirms or `--commit` is passed.
 
 ```markdown
 ---
-title: "Fold: {EARLIEST-DATE} to {LATEST-DATE}"
 fold_id: "{fold-id}"
 entries_folded: {COUNT}
 source: "_meta/log.md"
 created: {ISO-date}
 ---
-
 # Build Log Fold: {EARLIEST-DATE} to {LATEST-DATE}
 
-{COUNT} entries from {EARLIEST-DATE} to {LATEST-DATE}.
-
-## Summary
-
-- Compiles run: {count}
-- Articles created: {count} ({list key ones with wikilinks})
-- Articles updated: {count}
-- Queries answered: {count}
+{COUNT} entries. Compiles: {n} | Created: {n} ([[wikilinks]]) | Updated: {n} | Queries: {n}
 
 ## Source Entries
-
-{verbatim copy of the folded entries}
+{verbatim copy of folded entries}
 ```
 
 5. Write the fold page to _meta/folds/{fold-id}.md.

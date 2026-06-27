@@ -1,9 +1,10 @@
 ---
 name: mmsetup
 description: >
-  Set up or remove Memory Mason. Configures vault path, installs hooks if missing,
+  Set up, reconfigure, or remove Memory Mason. Configures vault path, installs hooks if missing,
   or uninstalls everything. Use when the user says "set up memory mason",
-  "install hooks", "configure memory mason", "uninstall memory mason",
+  "install hooks", "configure memory mason", "reconfigure memory mason",
+  "get memory mason running", "my hooks aren't working", "uninstall memory mason",
   "remove memory mason", or runs /mmsetup.
 ---
 
@@ -16,12 +17,6 @@ This command is operational only. Do not write `/mmsetup`, `/memory-mason:mmsetu
 **Platform detection:** Check the OS before running any scripts. Use `bash` / `.sh` scripts on macOS and Linux. Use `powershell` / `.ps1` scripts on Windows. Never ask the user which OS they're on — detect it from the environment.
 
 If the user says "uninstall", "remove", or "clean up" → skip to **Uninstall** section below.
-
-## When is this needed?
-
-- **Plugin install** (Claude Code, Codex): hooks auto-wired but vault path not configured yet. Run `/mmsetup` to set vault path.
-- **`npx skills add` only** (Cursor, Windsurf, Cline, Copilot): skills installed but no hooks and no vault config. Run `/mmsetup` to configure vault path AND install hooks for capture.
-- **Shell installer** (`install.sh` / `install.ps1`): prompts for vault path during install. `/mmsetup` not needed unless reconfiguring.
 
 ---
 
@@ -60,22 +55,7 @@ If none found, ask user and create global config:
 { "vaultPath": "<input>", "subfolder": "<input>" }
 ```
 
-Alternatively, user can create a `.env` in their project root:
-```env
-MEMORY_MASON_VAULT_PATH=/path/to/vault
-MEMORY_MASON_SUBFOLDER=ai-knowledge
-```
-
-Or a `~/.memory-mason/.env` file:
-```env
-MEMORY_MASON_VAULT_PATH=/path/to/vault
-MEMORY_MASON_SUBFOLDER=ai-knowledge
-```
-
-Or a `memory-mason.json` in project root:
-```json
-{ "vaultPath": "/path/to/vault", "subfolder": "ai-knowledge" }
-```
+See config priority order above; JSON and `.env` formats both accepted.
 
 ### Step 4: Install Hooks (if missing)
 
@@ -114,43 +94,7 @@ Skills-only hosts (Cursor, Windsurf, Cline): no hook system available. Inform us
 
 ### Step 5: Configure Obsidian Graph View (optional)
 
-If the vault has an `.obsidian/` directory (indicating Obsidian is used), create or update `.obsidian/graph.json` with knowledge-base-optimized settings. Replace `{subfolder}` with the actual configured subfolder name (e.g., `ai-knowledge`):
-
-```json
-{
-  "collapse-filter": false,
-  "search": "path:{subfolder} -path:{subfolder}/_raw -path:{subfolder}/_meta",
-  "showTags": false,
-  "showAttachments": false,
-  "hideUnresolved": true,
-  "showOrphans": false,
-  "collapse-color-groups": false,
-  "colorGroups": [
-    { "query": "path:{subfolder}/concepts", "color": { "a": 1, "rgb": 5227007 } },
-    { "query": "path:{subfolder}/synthesis", "color": { "a": 1, "rgb": 13724009 } },
-    { "query": "path:{subfolder}/atlas", "color": { "a": 1, "rgb": 12945088 } },
-    { "query": "path:{subfolder}", "color": { "a": 1, "rgb": 4473924 } }
-  ],
-  "collapse-display": true,
-  "showArrow": true,
-  "textFadeMultiplier": -1,
-  "nodeSizeMultiplier": 2,
-  "lineSizeMultiplier": 0.8,
-  "collapse-forces": false,
-  "centerStrength": 0.25,
-  "repelStrength": 20,
-  "linkStrength": 1,
-  "linkDistance": 80
-}
-```
-
-Color scheme: concepts = green (5227007), synthesis = orange (13724009), atlas = blue (12945088), fallback = dark grey (4473924). All RGB values from the proven claude-obsidian palette. Hidden: orphan nodes, unresolved links, tags, attachments. Sidebar sections expanded (collapse = false) so user can see and adjust filters, colors, and physics. Physics tuned for readability with strong node repulsion.
-
-The `search` field filters the graph to only show content inside the subfolder while explicitly excluding `{subfolder}/_raw` and `{subfolder}/_meta`. Each `colorGroups` entry must include the subfolder prefix in its query path. The last entry is a catch-all fallback.
-
-Path quoting rule (Obsidian search syntax): bare `path:folder` works for single-word or hyphenated names (e.g. `path:ai-knowledge`). If the subfolder name contains spaces, wrap in double quotes: `path:"my vault"`. Apply the same quoting rule to all `path:` values in both `search` and `colorGroups` entries.
-
-If `.obsidian/graph.json` already exists, merge the `colorGroups` and force settings without overwriting user customizations to other fields. If `.obsidian/` does not exist, skip this step silently.
+Write `.obsidian/graph.json` — see `references/obsidian-graph.md` for template and field explanations.
 
 ### Step 6: Verify
 
