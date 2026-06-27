@@ -43,6 +43,13 @@ const {
   PLACEHOLDER_NO_SESSION_CONTEXT,
 } = require("./lib/vault/markdown-labels");
 const { HOOK_ENTRY_SESSION_START } = require("./lib/hook/hook-events");
+const { loadCaptureState } = require("./lib/capture/capture-state");
+const {
+  selectTopCoachingInsights,
+  formatCoachingAdditionalContext,
+} = require("./lib/coaching/insights");
+
+const COACHING_INSIGHT_LIMIT = 3;
 
 function readFileOrEmpty(filePath) {
   try {
@@ -130,11 +137,21 @@ function resolvePrimaryContext(resolvedConfig) {
   };
 }
 
+function buildCoachingAdditionalText(resolvedConfig) {
+  try {
+    const state = loadCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder);
+    const insights = selectTopCoachingInsights(state, COACHING_INSIGHT_LIMIT);
+    return formatCoachingAdditionalContext(insights);
+  } catch (_error) {
+    return "";
+  }
+}
+
 function buildSessionAdditionalContext(resolvedConfig) {
   const { primaryText, maxChars, primarySectionHeading, primaryPlaceholderText } =
     resolvePrimaryContext(resolvedConfig);
   const recentLogText = readRecentDailyLog(resolvedConfig.vaultPath, resolvedConfig.subfolder);
-  return truncateContext(
+  const baseContext = truncateContext(
     buildAdditionalContext(
       primaryText,
       recentLogText,
@@ -143,6 +160,12 @@ function buildSessionAdditionalContext(resolvedConfig) {
     ),
     maxChars,
   );
+
+  const coachingText = buildCoachingAdditionalText(resolvedConfig);
+  if (coachingText === "") {
+    return baseContext;
+  }
+  return `${baseContext}\n\n${coachingText}`;
 }
 
 function buildSessionStartStdout(additionalContext) {

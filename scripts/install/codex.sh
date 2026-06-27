@@ -56,7 +56,42 @@ GLOBAL_CONFIG_PATH="$GLOBAL_CONFIG_DIR/config.json"
 REPO_URL="https://raw.githubusercontent.com/s-gryt/memory-mason/main/hooks"
 
 HOOK_RUNTIME_FILES=("session-start.js" "user-prompt-submit.js" "post-tool-use.js" "pre-compact.js" "session-end.js")
-LIB_FILES=("config.js" "writer.js" "vault.js" "prompt.js" "transcript.js" "capture-state.js" "assert.js" "constants.js" "json-state.js" "hook-runtime.js" "cli.js" "chunk-writer.js" "state.js" "migrate-daily.js")
+LIB_FILES=(
+  "capture/capture-state.js"
+  "capture/coaching-emit.js"
+  "capture/constants.js"
+  "capture/transcript-labels.js"
+  "capture/transcript.js"
+  "cli/cli.js"
+  "coaching/insights.js"
+  "config/config.js"
+  "config/constants.js"
+  "config/platforms.js"
+  "economics/compress.js"
+  "economics/constants.js"
+  "economics/token-economics.js"
+  "filter/classifier.js"
+  "filter/constants.js"
+  "filter/sensitive-guard.js"
+  "filter/tag-stripper.js"
+  "hook/capture-ops.js"
+  "hook/constants.js"
+  "hook/hook-events.js"
+  "hook/hook-ops.js"
+  "hook/hook-runtime.js"
+  "migration/migrate-daily.js"
+  "prompt/prompt.js"
+  "shared/assert.js"
+  "shared/constants.js"
+  "state/json-state.js"
+  "state/state.js"
+  "vault/chunk-writer.js"
+  "vault/constants.js"
+  "vault/markdown-labels.js"
+  "vault/vault-paths.js"
+  "vault/vault.js"
+  "vault/writer.js"
+)
 
 runtime_files_present() {
   for runtime_file in "${HOOK_RUNTIME_FILES[@]}"; do
@@ -90,7 +125,7 @@ workspace_hooks_present() {
     return 1
   fi
 
-  if ! grep -Eq '^[[:space:]]*codex_hooks[[:space:]]*=[[:space:]]*true([[:space:]]*)$' "$workspace_config_file"; then
+  if ! grep -Eq '^[[:space:]]*hooks[[:space:]]*=[[:space:]]*true([[:space:]]*)$' "$workspace_config_file"; then
     return 1
   fi
 
@@ -273,6 +308,7 @@ node -e "
       SessionStart: [{ hooks: [{ type: 'command', command: commandFor('session-start.js'), timeout: 10 }] }],
       UserPromptSubmit: [{ hooks: [{ type: 'command', command: commandFor('user-prompt-submit.js'), timeout: 5 }] }],
       PostToolUse: [{ hooks: [{ type: 'command', command: commandFor('post-tool-use.js'), timeout: 5 }] }],
+      PreCompact: [{ hooks: [{ type: 'command', command: commandFor('pre-compact.js'), timeout: 10 }] }],
       Stop: [{ hooks: [{ type: 'command', command: commandFor('session-end.js'), timeout: 15 }] }]
     }
   };
@@ -295,11 +331,11 @@ node -e "
   const current = fs.existsSync(configFile) ? fs.readFileSync(configFile, 'utf8') : '';
   let next = current;
 
-  if (/^\\s*codex_hooks\\s*=.*$/m.test(next)) {
-    next = next.replace(/^\\s*codex_hooks\\s*=.*$/m, 'codex_hooks = true');
+  if (/^\\s*hooks\\s*=.*$/m.test(next)) {
+    next = next.replace(/^\\s*hooks\\s*=.*$/m, 'hooks = true');
   } else {
     const trimmed = next.trimEnd();
-    next = trimmed === '' ? 'codex_hooks = true\\n' : trimmed + '\\n\\ncodex_hooks = true\\n';
+    next = trimmed === '' ? 'hooks = true\\n' : trimmed + '\\n\\nhooks = true\\n';
   }
 
   fs.mkdirSync(path.dirname(configFile), { recursive: true });

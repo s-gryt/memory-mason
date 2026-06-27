@@ -2,20 +2,5 @@
   "name": "memory-mason",
   "description": "Sync AI conversations into an Obsidian knowledge base and expose Memory Mason knowledge base skills.",
   "version": "0.3.15",
-  "contextFileName": "GEMINI.md",
-  "keywords": [
-    "obsidian",
-    "knowledge-base",
-    "knowledge-management",
-    "second-brain",
-    "wiki",
-    "llm",
-    "ai",
-    "notes",
-    "memory",
-    "session-capture",
-    "vault",
-    "ai-coding",
-    "annotations"
-  ]
+  "contextFileName": "GEMINI.md"
 }

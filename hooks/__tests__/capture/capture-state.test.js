@@ -5,6 +5,9 @@ const path = require("node:path");
 const {
   CAPTURE_HASH_PREFIX_LENGTH,
   DUPLICATE_CAPTURE_WINDOW_MS,
+  COACHING_NAG_THRESHOLD,
+  COACHING_NAG_SESSION_MEMORY,
+  COACHING_HASH_COUNTS_MAX,
 } = require("../../lib/capture/constants");
 const { UTF8_ENCODING } = require("../../lib/shared/constants");
 const {
@@ -25,6 +28,11 @@ const {
   setTranscriptTurnCount,
   getMmSuppressed,
   setMmSuppressed,
+  normalizeCoachingPromptText,
+  hashCoachingPrompt,
+  recordCoachingHit,
+  shouldEmitCoachingNag,
+  markCoachingNagged,
 } = require("../../lib/capture/capture-state");
 
 const { createTempVaultPath, cleanupTempVaultPaths } =
@@ -51,6 +59,7 @@ describe("defaultCaptureState", () => {
     expect(defaultCaptureState()).toEqual({
       lastCapture: null,
       mmSuppressed: false,
+      coachingState: { promptHashCounts: {} },
     });
   });
 
@@ -78,6 +87,7 @@ describe("capture state file I/O", () => {
         TIMESTAMP_BASE_MS,
       ),
       mmSuppressed: false,
+      coachingState: { promptHashCounts: {} },
     };
 
     saveCaptureState(vaultPath, DEFAULT_SUBFOLDER, state);
@@ -342,6 +352,7 @@ describe("capture-state.js helpers", () => {
     expect(setTranscriptTurnCount(null, TEST_DEFAULT_SESSION_ID, TRANSCRIPT_COUNT_TWO)).toEqual({
       lastCapture: null,
       mmSuppressed: false,
+      coachingState: { promptHashCounts: {} },
       transcriptTurnCounts: {
         [TEST_DEFAULT_SESSION_ID]: TRANSCRIPT_COUNT_TWO,
       },
@@ -371,6 +382,7 @@ describe("capture-state.js helpers", () => {
     expect(loadCaptureState(vaultPath, DEFAULT_SUBFOLDER)).toEqual({
       lastCapture: null,
       mmSuppressed: false,
+      coachingState: { promptHashCounts: {} },
       transcriptTurnCounts: {
         [TEST_DEFAULT_SESSION_ID]: TRANSCRIPT_COUNT_THREE,
       },
@@ -453,6 +465,167 @@ describe("setMmSuppressed", () => {
   });
 });
 
+describe("normalizeCoachingPromptText", () => {
+  it("lowercases and collapses whitespace", () => {
+    expect(normalizeCoachingPromptText("  Fix    Auth   Bug  ")).toBe("fix auth bug");
+  });
+
+  it("throws on non-string", () => {
+    expect(() => normalizeCoachingPromptText(TEST_NON_STRING_VALUE)).toThrow();
+  });
+
+  it("throws when blank after normalization", () => {
+    expect(() => normalizeCoachingPromptText("   ")).toThrow();
+  });
+});
+
+describe("hashCoachingPrompt", () => {
+  it("returns identical hash for whitespace/case variants", () => {
+    expect(hashCoachingPrompt("  Fix    Auth   Bug  ")).toBe(hashCoachingPrompt("fix auth bug"));
+  });
+
+  it("returns 16-hex prefix", () => {
+    expect(hashCoachingPrompt("hello world")).toMatch(/^[0-9a-f]{16}$/);
+  });
+});
+
+describe("recordCoachingHit", () => {
+  const ISO_A = "2026-06-26T10:00:00.000Z";
+  const ISO_B = "2026-06-26T11:00:00.000Z";
+  const SESSION_A = "session-a";
+  const HASH_A = "abcdef0123456789";
+
+  it("creates entry on first hit", () => {
+    const next = recordCoachingHit(defaultCaptureState(), HASH_A, SESSION_A, ISO_A);
+    expect(next.coachingState.promptHashCounts[HASH_A]).toEqual({
+      count: 1,
+      firstSeenIso: ISO_A,
+      lastSeenIso: ISO_A,
+      nagSessions: [],
+    });
+  });
+
+  it("increments count and updates lastSeenIso on repeat", () => {
+    const first = recordCoachingHit(defaultCaptureState(), HASH_A, SESSION_A, ISO_A);
+    const second = recordCoachingHit(first, HASH_A, SESSION_A, ISO_B);
+    expect(second.coachingState.promptHashCounts[HASH_A].count).toBe(2);
+    expect(second.coachingState.promptHashCounts[HASH_A].lastSeenIso).toBe(ISO_B);
+    expect(second.coachingState.promptHashCounts[HASH_A].firstSeenIso).toBe(ISO_A);
+  });
+
+  it("does not mutate input state", () => {
+    const input = defaultCaptureState();
+    recordCoachingHit(input, HASH_A, SESSION_A, ISO_A);
+    expect(input.coachingState.promptHashCounts).toEqual({});
+  });
+
+  it("evicts low-count entries when above cap", () => {
+    const HASH_PAD_WIDTH = 15;
+    const overflow = COACHING_HASH_COUNTS_MAX + 1;
+    const seeded = Array.from({ length: overflow }, (_, i) => i).reduce((acc, i) => {
+      const hash = `h${String(i).padStart(HASH_PAD_WIDTH, "0")}`;
+      return recordCoachingHit(acc, hash, SESSION_A, ISO_A);
+    }, defaultCaptureState());
+    expect(Object.keys(seeded.coachingState.promptHashCounts).length).toBeLessThanOrEqual(
+      COACHING_HASH_COUNTS_MAX,
+    );
+  });
+
+  it("throws on invalid inputs", () => {
+    expect(() => recordCoachingHit(defaultCaptureState(), "", SESSION_A, ISO_A)).toThrow();
+    expect(() => recordCoachingHit(defaultCaptureState(), HASH_A, "", ISO_A)).toThrow();
+    expect(() => recordCoachingHit(defaultCaptureState(), HASH_A, SESSION_A, "")).toThrow();
+  });
+});
+
+describe("shouldEmitCoachingNag", () => {
+  const ISO_A = "2026-06-26T10:00:00.000Z";
+  const SESSION_A = "session-a";
+  const SESSION_B = "session-b";
+  const HASH_A = "abcdef0123456789";
+
+  const seedHits = (count) => {
+    let state = defaultCaptureState();
+    for (let i = 0; i < count; i++) {
+      state = recordCoachingHit(state, HASH_A, SESSION_A, ISO_A);
+    }
+    return state;
+  };
+
+  it("returns false when entry missing", () => {
+    expect(shouldEmitCoachingNag(defaultCaptureState(), HASH_A, SESSION_A)).toBe(false);
+  });
+
+  it("returns false below threshold", () => {
+    const state = seedHits(COACHING_NAG_THRESHOLD - 1);
+    expect(shouldEmitCoachingNag(state, HASH_A, SESSION_A)).toBe(false);
+  });
+
+  it("returns true at threshold and no prior nag for session", () => {
+    const state = seedHits(COACHING_NAG_THRESHOLD);
+    expect(shouldEmitCoachingNag(state, HASH_A, SESSION_A)).toBe(true);
+  });
+
+  it("returns false when session already nagged", () => {
+    const state = markCoachingNagged(seedHits(COACHING_NAG_THRESHOLD), HASH_A, SESSION_A);
+    expect(shouldEmitCoachingNag(state, HASH_A, SESSION_A)).toBe(false);
+  });
+
+  it("returns true for a different session even after nagging another", () => {
+    const state = markCoachingNagged(seedHits(COACHING_NAG_THRESHOLD), HASH_A, SESSION_A);
+    expect(shouldEmitCoachingNag(state, HASH_A, SESSION_B)).toBe(true);
+  });
+});
+
+describe("markCoachingNagged", () => {
+  const ISO_A = "2026-06-26T10:00:00.000Z";
+  const HASH_A = "abcdef0123456789";
+  const HASH_MISSING = "00000000deadbeef";
+
+  it("prepends sessionId and trims to memory cap", () => {
+    let state = recordCoachingHit(defaultCaptureState(), HASH_A, "s1", ISO_A);
+    state = markCoachingNagged(state, HASH_A, "s1");
+    state = markCoachingNagged(state, HASH_A, "s2");
+    state = markCoachingNagged(state, HASH_A, "s3");
+    state = markCoachingNagged(state, HASH_A, "s4");
+    expect(state.coachingState.promptHashCounts[HASH_A].nagSessions).toEqual(["s4", "s3", "s2"]);
+    expect(state.coachingState.promptHashCounts[HASH_A].nagSessions.length).toBe(
+      COACHING_NAG_SESSION_MEMORY,
+    );
+  });
+
+  it("throws when entry does not exist", () => {
+    expect(() => markCoachingNagged(defaultCaptureState(), HASH_MISSING, "s1")).toThrow();
+  });
+});
+
+describe("capture state persistence with coachingState", () => {
+  it("round-trips coachingState through save/load", () => {
+    const vaultPath = createTempVaultPath();
+    const initial = recordCoachingHit(
+      defaultCaptureState(),
+      "abcdef0123456789",
+      "session-a",
+      "2026-06-26T10:00:00.000Z",
+    );
+    saveCaptureState(vaultPath, DEFAULT_SUBFOLDER, initial);
+    const loaded = loadCaptureState(vaultPath, DEFAULT_SUBFOLDER);
+    expect(loaded.coachingState.promptHashCounts.abcdef0123456789).toEqual({
+      count: 1,
+      firstSeenIso: "2026-06-26T10:00:00.000Z",
+      lastSeenIso: "2026-06-26T10:00:00.000Z",
+      nagSessions: [],
+    });
+  });
+
+  it("returns empty coachingState when file missing", () => {
+    const vaultPath = createTempVaultPath();
+    expect(loadCaptureState(vaultPath, DEFAULT_SUBFOLDER).coachingState).toEqual({
+      promptHashCounts: {},
+    });
+  });
+});
+
 describe("mergeWithDefaults - mmSuppressed", () => {
   it("preserves true when state.mmSuppressed is true", () => {
     const vaultPath = createTempVaultPath();
@@ -471,6 +644,7 @@ describe("mergeWithDefaults - mmSuppressed", () => {
     expect(loadCaptureState(vaultPath, DEFAULT_SUBFOLDER)).toEqual({
       lastCapture: null,
       mmSuppressed: true,
+      coachingState: { promptHashCounts: {} },
     });
   });
 
@@ -491,6 +665,7 @@ describe("mergeWithDefaults - mmSuppressed", () => {
     expect(loadCaptureState(vaultPath, DEFAULT_SUBFOLDER)).toEqual({
       lastCapture: null,
       mmSuppressed: false,
+      coachingState: { promptHashCounts: {} },
     });
   });
 
@@ -510,6 +685,7 @@ describe("mergeWithDefaults - mmSuppressed", () => {
     expect(loadCaptureState(vaultPath, DEFAULT_SUBFOLDER)).toEqual({
       lastCapture: null,
       mmSuppressed: false,
+      coachingState: { promptHashCounts: {} },
     });
   });
 
@@ -530,6 +706,7 @@ describe("mergeWithDefaults - mmSuppressed", () => {
     expect(loadCaptureState(vaultPath, DEFAULT_SUBFOLDER)).toEqual({
       lastCapture: null,
       mmSuppressed: false,
+      coachingState: { promptHashCounts: {} },
     });
   });
 });

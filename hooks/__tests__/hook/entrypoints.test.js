@@ -1871,6 +1871,7 @@ describe("capture-state.js helpers", () => {
     expect(setTranscriptTurnCount(null, TEST_DEFAULT_SESSION_ID, 2)).toEqual({
       lastCapture: null,
       mmSuppressed: false,
+      coachingState: { promptHashCounts: {} },
       transcriptTurnCounts: {
         [TEST_DEFAULT_SESSION_ID]: 2,
       },
@@ -1898,6 +1899,7 @@ describe("capture-state.js helpers", () => {
     expect(loadCaptureState(vaultPath, DEFAULT_SUBFOLDER)).toEqual({
       lastCapture: null,
       mmSuppressed: false,
+      coachingState: { promptHashCounts: {} },
       transcriptTurnCounts: {
         [TEST_DEFAULT_SESSION_ID]: 3,
       },

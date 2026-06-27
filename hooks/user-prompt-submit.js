@@ -32,7 +32,12 @@ const {
   setTranscriptTurnCount,
   getMmSuppressed,
   setMmSuppressed,
+  hashCoachingPrompt,
+  recordCoachingHit,
+  shouldEmitCoachingNag,
+  markCoachingNagged,
 } = require("./lib/capture/capture-state");
+const { emitCoachingAdvisory } = require("./lib/capture/coaching-emit");
 const { UTF8_ENCODING } = require("./lib/shared/constants");
 const { HOOK_EVENT_USER_PROMPT_SUBMIT_KEBAB } = require("./lib/hook/hook-events");
 
@@ -112,6 +117,42 @@ function persistPromptSubmission(plan, resolvedConfig) {
   );
 }
 
+const COACHING_PROMPT_REPEAT_KIND = "prompt-repeat";
+
+function tryHashCoachingPrompt(text) {
+  try {
+    return hashCoachingPrompt(text);
+  } catch (_error) {
+    return "";
+  }
+}
+
+function applyCoachingToState(state, plan, resolvedConfig) {
+  if (plan.sessionId === "") {
+    return state;
+  }
+  const hash = tryHashCoachingPrompt(plan.promptEntry.text);
+  if (hash === "") {
+    return state;
+  }
+
+  const updatedState = recordCoachingHit(state, hash, plan.sessionId, plan.iso);
+
+  if (!shouldEmitCoachingNag(updatedState, hash, plan.sessionId)) {
+    return updatedState;
+  }
+
+  const entry = updatedState.coachingState.promptHashCounts[hash];
+  emitCoachingAdvisory(resolvedConfig.vaultPath, resolvedConfig.subfolder, plan.today, {
+    kind: COACHING_PROMPT_REPEAT_KIND,
+    hash,
+    count: entry.count,
+    sessionId: plan.sessionId,
+    iso: plan.iso,
+  });
+  return markCoachingNagged(updatedState, hash, plan.sessionId);
+}
+
 function toCommandErrorResult(error) {
   return buildCommandErrorResult(error);
 }
@@ -131,7 +172,6 @@ function run(rawStdin, runtime = {}) {
     }
 
     const captureState = loadCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder);
-    const mmSuppressed = getMmSuppressed(captureState);
 
     if (isMmCommand(plan.promptEntry.text)) {
       const suppressedState = setMmSuppressed(captureState, true);
@@ -139,10 +179,11 @@ function run(rawStdin, runtime = {}) {
       return buildSuccessResult();
     }
 
-    if (mmSuppressed) {
-      const unsuppressedState = setMmSuppressed(captureState, false);
-      saveCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder, unsuppressedState);
-    }
+    const unsuppressedState = getMmSuppressed(captureState)
+      ? setMmSuppressed(captureState, false)
+      : captureState;
+    const coachedState = applyCoachingToState(unsuppressedState, plan, resolvedConfig);
+    saveCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder, coachedState);
 
     persistPromptSubmission(plan, resolvedConfig);
     return buildSuccessResult();

@@ -31,7 +31,42 @@ $GlobalConfigPath = Join-Path $GlobalConfigDir "config.json"
 $RepoUrl = "https://raw.githubusercontent.com/s-gryt/memory-mason/main/hooks"
 
 $HookRuntimeFiles = @("session-start.js", "user-prompt-submit.js", "post-tool-use.js", "pre-compact.js", "session-end.js")
-$LibFiles = @("config.js", "writer.js", "vault.js", "prompt.js", "transcript.js", "capture-state.js", "assert.js", "constants.js", "json-state.js", "hook-runtime.js", "cli.js", "chunk-writer.js", "state.js", "migrate-daily.js")
+$LibFiles = @(
+    "capture/capture-state.js",
+    "capture/coaching-emit.js",
+    "capture/constants.js",
+    "capture/transcript-labels.js",
+    "capture/transcript.js",
+    "cli/cli.js",
+    "coaching/insights.js",
+    "config/config.js",
+    "config/constants.js",
+    "config/platforms.js",
+    "economics/compress.js",
+    "economics/constants.js",
+    "economics/token-economics.js",
+    "filter/classifier.js",
+    "filter/constants.js",
+    "filter/sensitive-guard.js",
+    "filter/tag-stripper.js",
+    "hook/capture-ops.js",
+    "hook/constants.js",
+    "hook/hook-events.js",
+    "hook/hook-ops.js",
+    "hook/hook-runtime.js",
+    "migration/migrate-daily.js",
+    "prompt/prompt.js",
+    "shared/assert.js",
+    "shared/constants.js",
+    "state/json-state.js",
+    "state/state.js",
+    "vault/chunk-writer.js",
+    "vault/constants.js",
+    "vault/markdown-labels.js",
+    "vault/vault-paths.js",
+    "vault/vault.js",
+    "vault/writer.js"
+)
 
 function Test-AllFilesPresent {
     foreach ($runtimeFile in $HookRuntimeFiles) {
