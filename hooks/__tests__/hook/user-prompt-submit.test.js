@@ -886,3 +886,66 @@ describe("user-prompt-submit.js runtime fallback branches", () => {
     expect(result.status).toBe(0);
   });
 });
+
+describe("run - coaching state branch coverage", () => {
+  const captureStatePath = require.resolve("../../lib/capture/capture-state");
+  const upsPath = require.resolve("../../user-prompt-submit");
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    delete require.cache[captureStatePath];
+    delete require.cache[upsPath];
+  });
+
+  it("skips coaching update when hash computation fails", () => {
+    delete require.cache[captureStatePath];
+    delete require.cache[upsPath];
+
+    const freshCaptureState = require("../../lib/capture/capture-state");
+    vi.spyOn(freshCaptureState, "hashCoachingPrompt").mockImplementation(() => {
+      throw new Error("hash error");
+    });
+
+    const isolatedUPS = require("../../user-prompt-submit");
+
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const env = buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath });
+
+    const result = runHookEntrypoint(isolatedUPS, {
+      payload: {
+        hookEventName: HOOK_EVENT_USER_PROMPT_SUBMIT_KEBAB,
+        cwd: hooksRoot,
+        prompt: "valid prompt text",
+        session_id: "session-hash-fail",
+      },
+      env,
+    });
+
+    expect(result.status).toBe(0);
+  });
+
+  it("emits coaching advisory after reaching nag threshold", () => {
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const { COACHING_NAG_THRESHOLD } = require("../../lib/capture/constants");
+    const REPEATED_PROMPT = "fix the auth bug please";
+    const SESSION = "session-coaching-nag";
+
+    for (let i = 0; i < COACHING_NAG_THRESHOLD; i++) {
+      runHookEntrypoint(ENTRYPOINT, {
+        payload: {
+          hookEventName: HOOK_EVENT_USER_PROMPT_SUBMIT_KEBAB,
+          cwd: hooksRoot,
+          prompt: REPEATED_PROMPT,
+          session_id: SESSION,
+        },
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
+      });
+    }
+
+    const metaDir = path.join(vaultPath, DEFAULT_SUBFOLDER, "_raw", today(), "_meta");
+    expect(fs.existsSync(metaDir)).toBe(true);
+    expect(fs.readdirSync(metaDir).some((f) => f.endsWith(".md"))).toBe(true);
+  });
+});

@@ -8,6 +8,7 @@ const {
   COACHING_NAG_THRESHOLD,
   COACHING_NAG_SESSION_MEMORY,
   COACHING_HASH_COUNTS_MAX,
+  COACHING_LRU_LOW_USE_FLOOR,
 } = require("../../lib/capture/constants");
 const { UTF8_ENCODING } = require("../../lib/shared/constants");
 const {
@@ -536,6 +537,49 @@ describe("recordCoachingHit", () => {
     expect(() => recordCoachingHit(defaultCaptureState(), HASH_A, "", ISO_A)).toThrow();
     expect(() => recordCoachingHit(defaultCaptureState(), HASH_A, SESSION_A, "")).toThrow();
   });
+
+  it("evicts low-use entries first when mixed use frequencies cause overflow", () => {
+    const HASH_PAD_WIDTH = 15;
+    const ISO_A = "2026-06-27T00:00:00.000Z";
+    const HASH_HIGH = "hhigh00000000000";
+    let state = defaultCaptureState();
+    for (let i = 0; i < COACHING_HASH_COUNTS_MAX - 2; i++) {
+      state = recordCoachingHit(
+        state,
+        `h${String(i).padStart(HASH_PAD_WIDTH, "0")}`,
+        SESSION_A,
+        ISO_A,
+      );
+    }
+    for (let i = 0; i < COACHING_LRU_LOW_USE_FLOOR; i++) {
+      state = recordCoachingHit(state, HASH_HIGH, SESSION_A, ISO_A);
+    }
+    state = recordCoachingHit(state, "hnew0000000000000", SESSION_A, ISO_A);
+    state = recordCoachingHit(state, "hnew0000000000001", SESSION_A, ISO_A);
+    expect(Object.keys(state.coachingState.promptHashCounts).length).toBeLessThanOrEqual(
+      COACHING_HASH_COUNTS_MAX,
+    );
+    expect(state.coachingState.promptHashCounts[HASH_HIGH]).toBeDefined();
+  });
+
+  it("evicts by oldest lastSeenIso when entries have different timestamps", () => {
+    const HASH_PAD_WIDTH = 15;
+    const ISO_OLD = "2026-01-01T00:00:00.000Z";
+    const ISO_NEW = "2026-06-27T00:00:00.000Z";
+    let state = defaultCaptureState();
+    for (let i = 0; i < COACHING_HASH_COUNTS_MAX + 1; i++) {
+      const iso = i % 2 === 0 ? ISO_OLD : ISO_NEW;
+      state = recordCoachingHit(
+        state,
+        `h${String(i).padStart(HASH_PAD_WIDTH, "0")}`,
+        SESSION_A,
+        iso,
+      );
+    }
+    expect(Object.keys(state.coachingState.promptHashCounts).length).toBeLessThanOrEqual(
+      COACHING_HASH_COUNTS_MAX,
+    );
+  });
 });
 
 describe("shouldEmitCoachingNag", () => {
@@ -575,6 +619,25 @@ describe("shouldEmitCoachingNag", () => {
     const state = markCoachingNagged(seedHits(COACHING_NAG_THRESHOLD), HASH_A, SESSION_A);
     expect(shouldEmitCoachingNag(state, HASH_A, SESSION_B)).toBe(true);
   });
+
+  it("returns true when nagSessions is not an array", () => {
+    const state = {
+      coachingState: {
+        promptHashCounts: {
+          [HASH_A]: {
+            count: COACHING_NAG_THRESHOLD,
+            firstSeenIso: ISO_A,
+            lastSeenIso: ISO_A,
+          },
+        },
+      },
+    };
+    expect(shouldEmitCoachingNag(state, HASH_A, SESSION_A)).toBe(true);
+  });
+
+  it("returns false when state has no coachingState", () => {
+    expect(shouldEmitCoachingNag({ lastCapture: null }, HASH_A, SESSION_A)).toBe(false);
+  });
 });
 
 describe("markCoachingNagged", () => {
@@ -596,6 +659,18 @@ describe("markCoachingNagged", () => {
 
   it("throws when entry does not exist", () => {
     expect(() => markCoachingNagged(defaultCaptureState(), HASH_MISSING, "s1")).toThrow();
+  });
+
+  it("uses empty nagSessions when entry.nagSessions is missing", () => {
+    const state = {
+      coachingState: {
+        promptHashCounts: {
+          [HASH_A]: { count: 1, firstSeenIso: ISO_A, lastSeenIso: ISO_A },
+        },
+      },
+    };
+    const next = markCoachingNagged(state, HASH_A, "s1");
+    expect(next.coachingState.promptHashCounts[HASH_A].nagSessions).toEqual(["s1"]);
   });
 });
 
@@ -623,6 +698,68 @@ describe("capture state persistence with coachingState", () => {
     expect(loadCaptureState(vaultPath, DEFAULT_SUBFOLDER).coachingState).toEqual({
       promptHashCounts: {},
     });
+  });
+
+  it("returns empty promptHashCounts when coachingState.promptHashCounts is not an object", () => {
+    const vaultPath = createTempVaultPath();
+    const statePath = resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER);
+    fs.mkdirSync(path.dirname(statePath), { recursive: true });
+    fs.writeFileSync(
+      statePath,
+      JSON.stringify({ lastCapture: null, coachingState: { promptHashCounts: null } }),
+      UTF8_ENCODING,
+    );
+    expect(loadCaptureState(vaultPath, DEFAULT_SUBFOLDER).coachingState).toEqual({
+      promptHashCounts: {},
+    });
+  });
+
+  it("filters out malformed coaching entries with various invalid fields", () => {
+    const vaultPath = createTempVaultPath();
+    const statePath = resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER);
+    const ISO = "2026-06-27T00:00:00.000Z";
+    fs.mkdirSync(path.dirname(statePath), { recursive: true });
+    fs.writeFileSync(
+      statePath,
+      JSON.stringify({
+        lastCapture: null,
+        coachingState: {
+          promptHashCounts: {
+            e_null: null,
+            e_non_integer_count: {
+              count: 1.5,
+              firstSeenIso: ISO,
+              lastSeenIso: ISO,
+              nagSessions: [],
+            },
+            e_zero_count: { count: 0, firstSeenIso: ISO, lastSeenIso: ISO, nagSessions: [] },
+            e_non_string_first_iso: {
+              count: 1,
+              firstSeenIso: 123,
+              lastSeenIso: ISO,
+              nagSessions: [],
+            },
+            e_invalid_first_iso: {
+              count: 1,
+              firstSeenIso: "not-a-date",
+              lastSeenIso: ISO,
+              nagSessions: [],
+            },
+            e_invalid_last_iso: {
+              count: 1,
+              firstSeenIso: ISO,
+              lastSeenIso: "not-a-date",
+              nagSessions: [],
+            },
+            e_no_nag_array: { count: 1, firstSeenIso: ISO, lastSeenIso: ISO, nagSessions: "bad" },
+            valid_entry: { count: 1, firstSeenIso: ISO, lastSeenIso: ISO, nagSessions: [] },
+          },
+        },
+      }),
+      UTF8_ENCODING,
+    );
+    const loaded = loadCaptureState(vaultPath, DEFAULT_SUBFOLDER);
+    expect(Object.keys(loaded.coachingState.promptHashCounts)).toEqual(["valid_entry"]);
   });
 });
 

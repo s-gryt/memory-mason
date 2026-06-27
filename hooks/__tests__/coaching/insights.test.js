@@ -96,6 +96,35 @@ describe("selectTopCoachingInsights", () => {
     const NEGATIVE = -1;
     expect(() => selectTopCoachingInsights({}, NEGATIVE)).toThrow();
   });
+
+  it("filters out non-object entries and maps valid ones only", () => {
+    const state = buildState({
+      hash_null: null,
+      hash_string: "invalid",
+      abcdef0123456789: buildEntry(HIGH_COUNT, ISO_EARLY, ISO_LATE),
+    });
+    const result = selectTopCoachingInsights(state, LIMIT_THREE);
+    expect(result.length).toBe(1);
+    expect(result[0].hash).toBe("abcdef0123456789");
+  });
+
+  it("covers sort return 1: newer entry inserted first sorts before older", () => {
+    const state = buildState({
+      h_new: buildEntry(HIGH_COUNT, ISO_EARLY, ISO_LATE),
+      h_old: buildEntry(HIGH_COUNT, ISO_EARLY, ISO_MID),
+    });
+    const result = selectTopCoachingInsights(state, LIMIT_THREE);
+    expect(result.map((r) => r.hash)).toEqual(["h_new", "h_old"]);
+  });
+
+  it("preserves both entries when count and lastSeenIso are equal", () => {
+    const state = buildState({
+      h_a: buildEntry(HIGH_COUNT, ISO_EARLY, ISO_MID),
+      h_b: buildEntry(HIGH_COUNT, ISO_EARLY, ISO_MID),
+    });
+    const result = selectTopCoachingInsights(state, LIMIT_THREE);
+    expect(result.length).toBe(2);
+  });
 });
 
 describe("formatCoachingAdditionalContext", () => {

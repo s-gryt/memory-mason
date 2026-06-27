@@ -36,6 +36,7 @@ const {
   buildSessionContextPath,
   buildDailyFolderPath,
 } = require("../../lib/vault/vault");
+const { resolveCaptureStatePath } = require("../../lib/capture/capture-state");
 const sessionStart = require("../../session-start");
 const {
   createTempDir,
@@ -556,6 +557,70 @@ describe("session-start.js", () => {
 
     expect(result.status).toBe(0);
     expect(result.stderr).toContain("invalid JSON in stdin: {not-json");
+  });
+
+  it("appends coaching advisory to additionalContext when capture state has repeated prompts above threshold", () => {
+    const cwd = createTempDir(TEST_CWD_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+
+    writeText(
+      path.join(cwd, PROJECT_CONFIG_FILE_NAME),
+      JSON.stringify({ vaultPath, subfolder: DEFAULT_SUBFOLDER }),
+    );
+
+    const statePath = resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER);
+    fs.mkdirSync(path.dirname(statePath), { recursive: true });
+    fs.writeFileSync(
+      statePath,
+      JSON.stringify({
+        lastCapture: null,
+        mmSuppressed: false,
+        coachingState: {
+          promptHashCounts: {
+            abcdef0123456789: {
+              count: 5,
+              firstSeenIso: "2026-06-01T10:00:00.000Z",
+              lastSeenIso: "2026-06-26T10:00:00.000Z",
+              nagSessions: [],
+            },
+          },
+        },
+      }),
+      UTF8_ENCODING,
+    );
+
+    const result = runHookEntrypoint(ENTRYPOINT_FILE, {
+      payload: { cwd },
+      cwd,
+      env: buildEnv(cwd),
+    });
+    const parsed = JSON.parse(result.stdout);
+
+    expect(result.status).toBe(0);
+    expect(parsed.hookSpecificOutput.additionalContext).toContain("Workflow Coaching");
+  });
+
+  it("omits coaching advisory when capture state path is unreadable", () => {
+    const cwd = createTempDir(TEST_CWD_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+
+    writeText(
+      path.join(cwd, PROJECT_CONFIG_FILE_NAME),
+      JSON.stringify({ vaultPath, subfolder: DEFAULT_SUBFOLDER }),
+    );
+
+    const statePath = resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER);
+    fs.mkdirSync(statePath, { recursive: true });
+
+    const result = runHookEntrypoint(ENTRYPOINT_FILE, {
+      payload: { cwd },
+      cwd,
+      env: buildEnv(cwd),
+    });
+    const parsed = JSON.parse(result.stdout);
+
+    expect(result.status).toBe(0);
+    expect(parsed.hookSpecificOutput.additionalContext).not.toContain("Workflow Coaching");
   });
 });
 
