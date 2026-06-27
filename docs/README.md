@@ -144,6 +144,15 @@ Run `/mmq` with a question. Memory Mason checks `_meta/context.md` first for rec
 /mmq "How does X work?" ──> _meta/context.md ──> concepts/ + atlas/ + synthesis/ ──> answer with [[citations]]
 ```
 
+### Coaching Advisories
+
+Memory Mason tracks repeated user prompts across sessions. When the same prompt hash exceeds the configured threshold, `user-prompt-submit.js` emits a YAML-frontmatter advisory to `_meta/NNN.md` (sequentially numbered). At the start of each session, `session-start.js` reads the top 3 unacknowledged advisories and injects them into the context preamble, surfacing workflow patterns that may benefit from a different approach.
+
+```text
+UserPromptSubmit ──> hash + count ──> threshold crossed ──> _meta/NNN.md (advisory)
+SessionStart     ──> top-3 advisories ──> injected into context preamble
+```
+
 ## Vault Layout
 
 ```text
@@ -160,6 +169,7 @@ Run `/mmq` with a question. Memory Mason checks `_meta/context.md` first for rec
 │   ├── log.md
 │   ├── context.md           # LLM session bootstrap context
 │   ├── taxonomy.md
+│   ├── NNN.md               # Coaching advisories (auto-generated on repeat-prompt threshold)
 │   └── folds/               # Archived log folds
 ├── atlas/                   # MOCs — graph visible
 │   ├── home.md
@@ -177,7 +187,7 @@ Run `/mmq` with a question. Memory Mason checks `_meta/context.md` first for rec
 | UserPromptSubmit | Y | Y | Y |
 | UserPromptExpansion | — | — | — |
 | PostToolUse | Y | Y | Y |
-| PreCompact | Y | Y | — |
+| PreCompact | Y | Y | Y |
 | Stop | Y | Y | Y |
 | SessionEnd | Y | Y | — |
 
