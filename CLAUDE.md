@@ -31,7 +31,6 @@ These are checked-in generated distribution surfaces synced from the source file
 
 | Path | Source |
 | ----- | ------ |
-| `.agents/skills/*/SKILL.md` | `skills/*/SKILL.md` |
 | `.windsurf/skills/*/SKILL.md` | `skills/*/SKILL.md` |
 | `plugins/memory-mason/skills/*/SKILL.md` | `skills/*/SKILL.md` |
 | `*.skill` | ZIP archives of corresponding `skills/*` directories |
@@ -40,7 +39,7 @@ These are checked-in generated distribution surfaces synced from the source file
 | `.windsurf/rules/memory-mason.md` | `rules/memory-mason.md` + Windsurf frontmatter |
 
 `skills/*` are product skills shipped by Memory Mason.
-`.agents/skills/*` (Cursor/Cline) and `.windsurf/skills/*` are generated host-facing copies of root `skills/*`.
+`.windsurf/skills/*` is the generated host-facing copy of root `skills/*` present in this repo.
 `plugins/memory-mason/skills/*` is generated plugin-packaged copy of root `skills/*`.
 `.claude-plugin/` is publishable Claude plugin surface.
 
@@ -55,6 +54,8 @@ These are checked-in generated distribution surfaces synced from the source file
 - Do not commit a real `memory-mason.json`. Keep only `memory-mason.example.json` in git.
 - Versioning policy: bump patch for fixes/refactors, minor for backward-compatible features, and major for breaking changes.
 - Keep repo/product naming aligned to `Memory Mason` and `https://github.com/s-gryt/memory-mason`.
+- `minimize` toggle (default `false`) enables deterministic lossless compression (whitespace and punctuation normalization, no word/phrase dropping) of assistant narrative before vault writes; key `minimize` in JSON config, `MEMORY_MASON_MINIMIZE` in `.env` / process env; process env takes highest precedence. `/mms` token-savings metrics reflect raw-vs-stored capture deltas on every event, so sanitize-only changes still count even when minimize is off.
+- Session-scoped raw layout: `_raw/YYYY-MM-DD/{HHMMSS}-{sid8}-{NNN}.md` (session start time, 8-char session-id prefix, 3-digit chunk index). meta.json schemaVersion 2 includes `sessionId` per chunk. Old daily layout (`001.md`, `002.md`, …) remains readable; no migration needed.
 
 ## Validation
 

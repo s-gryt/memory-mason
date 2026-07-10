@@ -36,7 +36,7 @@ Use these paths:
 
 ### Thresholds
 
-- **Large capture:** raw capture folder total exceeds 500KB (524288 bytes).
+- **Large capture:** raw capture folder total exceeds 500KB (512000 bytes).
 - **Very large capture:** raw capture folder total exceeds 2MB.
 - **Raw directory:** total `_raw/` size exceeds 2MB — flag the entire directory.
 
@@ -50,8 +50,10 @@ Use these paths:
 - {vault}/{subfolder}/concepts/*.md -> concept count
 - {vault}/{subfolder}/synthesis/*.md -> synthesis count
 - {vault}/{subfolder}/atlas/*.md -> MOC count, including `home.md`
+- {vault}/{subfolder}/sessions/*.md -> session note count
+- {vault}/{subfolder}/atlas/bases/*.base -> bases file list (record each filename present)
 - Count raw capture entries: glob immediate subdirectories in {vault}/{subfolder}/_raw/. Each date folder = 1 raw capture entry.
-- For each raw capture entry, sum sizes of numeric chunk files (`001.md`, `002.md`, …); ignore `meta.json`. Record `{YYYY-MM-DD}/` plus total size. Flag entries exceeding the large-capture threshold.
+- For each raw capture entry, sum sizes of all chunk files (both legacy numeric `001.md` files and session-scoped `HHMMSS-{sid8}-NNN.md` files); ignore `meta.json`. Record `{YYYY-MM-DD}/` plus total size. Flag entries exceeding the large-capture threshold.
 
 3. Token Economics Decision — From `state.json`, read `total_cost_usd`, `ingested` entries with `compiled_at` timestamps, and `capture_metrics` (fields: `capture_count`, `total_raw_tokens`, `total_stored_tokens`, `total_savings_tokens`, `total_savings_percent`, `last_capture_at`, `last_capture.source`, `last_capture.raw_tokens`, `last_capture.stored_tokens`, `last_capture.savings_tokens`, `last_capture.savings_percent`). If `capture_metrics` is missing, invalid, or `capture_count` is 0, report token economics as `not tracked yet` with zero totals and `never` for last capture; otherwise report cumulative totals.
 
@@ -78,7 +80,7 @@ Use these paths:
 - Missing-prefix (`[[concepts/foo]]` etc. without `{subfolder}/`): count links missing the subfolder prefix — they resolve only within the same vault subfolder.
 - Cross-project (`[[other-subfolder/...]]`): count links starting with a subfolder prefix other than `{subfolder}/` — they reference a different project's vault.
 
-7.5 Count concept page `status` field values from frontmatter across all concept pages in {vault}/{subfolder}/concepts/. Tally: seedling count, growing count, evergreen count. Treat missing or invalid status as seedling.
+7.5 Count concept page `status` field values from frontmatter across all concept pages in {vault}/{subfolder}/concepts/. Tally: seedling count, growing count, evergreen count, superseded count (concepts with a `superseded_by` frontmatter field, regardless of their `status` value). Treat missing or invalid status as seedling. A superseded concept is counted in both its status bucket (seedling/growing) and the superseded tally.
 
 ## Report Format
 
@@ -88,7 +90,7 @@ Return status exactly like this:
 ## Knowledge Base Status
 
 **Vault:** {vaultPath}/{subfolder}
-**Articles:** {concept count} concepts, {synthesis count} synthesis, {moc count} MOCs
+**Articles:** {concept count} concepts, {synthesis count} synthesis, {moc count} MOCs, {session count} sessions
 **Raw captures:** {total} total, {uncompiled} uncompiled
 **Last compiled:** {ISO timestamp or "never"}
 **Manifest:** {present/missing} ({tracked source count} sources)
@@ -101,6 +103,7 @@ Return status exactly like this:
 - Savings: {total savings percent or 0}% ({total savings tokens or 0} tokens)
 - Last capture: {last capture source or "never"} ({last capture timestamp or "never"})
 - Last capture savings: {last capture savings percent or 0}% ({last capture raw tokens or 0} -> {last capture stored tokens or 0} tokens)
+- Note: token savings are tracked on every capture from raw-vs-stored deltas (sanitize-only changes count even with `minimize` off, default: off). Enabling `minimize` adds prose compression on top, increasing savings further.
 
 ## Knowledge Graph
 - Avg wikilinks per concept: {N.N}
@@ -115,6 +118,10 @@ Return status exactly like this:
 - Seedling: {seedling count}
 - Growing: {growing count}
 - Evergreen: {evergreen count}
+- Superseded: {superseded count}
+
+## Bases
+{List each atlas/bases/*.base filename present, one per line, or "none (run /mmc to generate)" if directory is empty or absent}
 
 ## Recent Index (first 5 entries)
 {index preview}
@@ -124,7 +131,7 @@ Return status exactly like this:
 
 ## Raw Capture Sizes
 {table: folder | size | status}
-- status: "OK" if under 500KB, "LARGE" if over 500KB, "⚠ VERY LARGE" if over 2MB
+- status: "OK" if under 500KB, "LARGE" if over 500KB (512000 bytes), "⚠ VERY LARGE" if over 2MB
 
 **Total _raw/:** {total size in MB}
 {If any capture is LARGE: "Tip: Run /mmc on recent captures to keep the vault current."}

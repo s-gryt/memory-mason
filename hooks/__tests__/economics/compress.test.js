@@ -7,16 +7,19 @@ const HEADING_MATCH_PATTERN = /^#{1,6}\s/gm;
 const BULLET_MATCH_PATTERN = /^\s*[-*+]\s|^\s*\d+\.\s/gm;
 
 const runWithForcedStructureMismatch = (input, targetPattern) => {
-  const compressed = compressNarrativeText(input);
   const originalMatch = String.prototype.match;
+  let targetCallCount = 0;
   const matchSpy = vi.spyOn(String.prototype, "match").mockImplementation(function (pattern) {
     const isTargetPattern =
       pattern instanceof RegExp &&
       pattern.source === targetPattern.source &&
       pattern.flags === targetPattern.flags;
 
-    if (isTargetPattern && String(this) === compressed) {
-      return null;
+    if (isTargetPattern) {
+      targetCallCount += 1;
+      if (targetCallCount === 2) {
+        return null;
+      }
     }
 
     return originalMatch.call(this, pattern);
@@ -30,30 +33,32 @@ const runWithForcedStructureMismatch = (input, targetPattern) => {
 };
 
 describe("compressNarrativeText", () => {
-  it("removes filler word 'just' from prose", () => {
-    expect(compressNarrativeText("This is just a test")).toBe("This is a test");
+  it("preserves filler word 'just' from prose", () => {
+    expect(compressNarrativeText("This is just a test")).toBe("This is just a test");
   });
 
-  it("removes filler word 'really'", () => {
-    expect(compressNarrativeText("This is really important")).toBe("This is important");
+  it("preserves filler word 'really'", () => {
+    expect(compressNarrativeText("This is really important")).toBe("This is really important");
   });
 
-  it("removes phrase 'please note'", () => {
+  it("preserves phrase 'please note'", () => {
     const result = compressNarrativeText("Please note that this matters");
-    expect(result).not.toContain("Please note");
-    expect(result).toContain("that this matters");
+    expect(result).toBe("Please note that this matters");
   });
 
-  it("removes phrase 'of course'", () => {
+  it("preserves phrase 'of course'", () => {
     const result = compressNarrativeText("Of course this works");
-    expect(result).not.toContain("Of course");
+    expect(result).toBe("Of course this works");
   });
 
-  it("removes multiple filler items", () => {
+  it("respects phrase boundaries and does not corrupt larger words", () => {
+    const result = compressNarrativeText("The coefficient of coursework stayed unchanged");
+    expect(result).toBe("The coefficient of coursework stayed unchanged");
+  });
+
+  it("preserves multiple filler items and 'make sure to'", () => {
     const result = compressNarrativeText("Just really make sure to do this");
-    expect(result.toLowerCase()).not.toContain("just");
-    expect(result.toLowerCase()).not.toContain("really");
-    expect(result.toLowerCase()).not.toContain("make sure to");
+    expect(result).toBe("Just really make sure to do this");
   });
 
   it("preserves fenced code block byte-for-byte", () => {
@@ -76,8 +81,8 @@ describe("compressNarrativeText", () => {
 
   it("preserves markdown heading structure", () => {
     const result = compressNarrativeText("## Just a heading\nSome really long text");
-    expect(result).toContain("## a heading");
-    expect(result).not.toContain("really");
+    expect(result).toContain("## Just a heading");
+    expect(result).toContain("really");
   });
 
   it("preserves markdown list bullets", () => {
@@ -85,19 +90,42 @@ describe("compressNarrativeText", () => {
     expect(result).toContain("- ");
   });
 
+  it("preserves nested markdown list indentation", () => {
+    const input = "- top\n  - nested";
+
+    expect(compressNarrativeText(input)).toBe(input);
+  });
+
+  it("collapses multi-space indentation on non-structured prose lines to a single space", () => {
+    expect(compressNarrativeText("a\n  plain text")).toBe("a\n plain text");
+  });
+
+  it("preserves filler words and punctuation", () => {
+    expect(compressNarrativeText("This is just a simple test, actually.")).toBe(
+      "This is just a simple test, actually.",
+    );
+  });
+
   it("throws TypeError on non-string input", () => {
     expect(() => compressNarrativeText(NON_STRING_INPUT)).toThrow(TypeError);
     expect(() => compressNarrativeText(null)).toThrow(TypeError);
   });
 
-  it("normalizes multiple spaces after removal", () => {
+  it("preserves markdown hard line breaks (two trailing spaces) while collapsing internal spaces", () => {
+    const input = "Keep this   line here  \nSecond line";
+    const result = compressNarrativeText(input);
+    const firstLine = result.split("\n")[0];
+    expect(firstLine).toBe("Keep this line here  ");
+  });
+
+  it("normalizes multiple spaces", () => {
     const result = compressNarrativeText("This   has  extra   spaces");
     expect(result).not.toMatch(/ {2}/);
   });
 
-  it("is case-insensitive for filler words", () => {
+  it("preserves uppercase filler words", () => {
     const result = compressNarrativeText("JUST do it");
-    expect(result.toLowerCase()).not.toContain("just");
+    expect(result).toBe("JUST do it");
   });
 
   it("respects word boundary - does not remove 'just' from 'justification'", () => {
@@ -108,6 +136,36 @@ describe("compressNarrativeText", () => {
   it("preserves double-quoted strings", () => {
     const result = compressNarrativeText('The value is "just really important"');
     expect(result).toContain('"just really important"');
+  });
+
+  it("preserves nested protected segments inside quoted strings", () => {
+    const input = 'He said "run `npm i` first" then stop.';
+
+    expect(compressNarrativeText(input)).toBe(input);
+  });
+
+  it("preserves quoted URLs without falling back to a validation error", () => {
+    const input = 'docs at "https://example.com" now';
+
+    expect(compressNarrativeText(input)).toBe(input);
+  });
+
+  it("preserves 'be sure to' guidance", () => {
+    const input = "Please note: be sure to run the migration first.";
+
+    expect(compressNarrativeText(input)).toContain("be sure to run the migration first.");
+  });
+
+  it("does not let quote protection span across newlines", () => {
+    const input = '"just\nreally" make sure to deploy';
+
+    expect(compressNarrativeText(input)).toBe(input);
+  });
+
+  it("does not remove filler words from hyphenated compounds", () => {
+    const input = "just-in-time and sure-fire";
+
+    expect(compressNarrativeText(input)).toBe(input);
   });
 
   it("preserves heading count after compression", () => {
@@ -136,15 +194,15 @@ describe("compressNarrativeText", () => {
 
   it("throws validation error when protected segment check fails", () => {
     const codeBlock = "```\nsome just code\n```";
-    const originalIncludes = String.prototype.includes;
-    const includesSpy = vi.spyOn(String.prototype, "includes").mockImplementation(function (
+    const originalIndexOf = String.prototype.indexOf;
+    const indexOfSpy = vi.spyOn(String.prototype, "indexOf").mockImplementation(function (
       searchValue,
       ...rest
     ) {
       if (searchValue === codeBlock) {
-        return false;
+        return -1;
       }
-      return originalIncludes.call(this, searchValue, ...rest);
+      return originalIndexOf.call(this, searchValue, ...rest);
     });
 
     try {
@@ -152,8 +210,32 @@ describe("compressNarrativeText", () => {
         "compress validation failed: protected segment altered",
       );
     } finally {
-      includesSpy.mockRestore();
+      indexOfSpy.mockRestore();
     }
+  });
+
+  it("preserves exact indentation of fenced and 4-space indented code blocks after compression", () => {
+    const fenced = "```js\nconst x = 1;\n    const y = 2;\n```";
+    const indented = "    const z = 3;\n    const w = 4;";
+    const input = `Some just prose\n${fenced}\nMore really text\n${indented}`;
+    const result = compressNarrativeText(input);
+    expect(result).toContain(fenced);
+    expect(result).toContain(indented);
+  });
+
+  it("preserves indented code lines that start with punctuation", () => {
+    const indented = "    ; sql-comment\n    .then(run)";
+    const input = `Some just prose\n${indented}\nMore really text`;
+
+    expect(compressNarrativeText(input)).toContain(indented);
+  });
+
+  it("validates occurrence count so duplicate protected segments are not silently dropped", () => {
+    const url = "https://example.com/path";
+    const input = `See ${url} and also ${url} for details`;
+    const result = compressNarrativeText(input);
+    const occurrences = result.split(url).length - 1;
+    expect(occurrences).toBe(2);
   });
 
   it("throws validation error when heading count changes", () => {
@@ -170,5 +252,23 @@ describe("compressNarrativeText", () => {
     expect(() => runWithForcedStructureMismatch(input, BULLET_MATCH_PATTERN)).toThrow(
       "compress validation failed: bullet count outside tolerance",
     );
+  });
+
+  it("collapses ', .' sequence to '.' and retains surrounding words", () => {
+    const result = compressNarrativeText("Hello, . world");
+    expect(result).toBe("Hello. world");
+  });
+
+  it("strips leading whitespace before a comma and preserves the following word", () => {
+    const result = compressNarrativeText("text\n , more");
+    expect(result).toBe("text\n, more");
+  });
+
+  it("leaves fenced code block byte-for-byte intact when prose contains ', .' and leading-space punctuation", () => {
+    const codeBlock = "```js\nconst x = 1, . y;\n```";
+    const input = `intro\n${codeBlock}\n , end`;
+    const result = compressNarrativeText(input);
+    expect(result).toContain(codeBlock);
+    expect(result).toContain(", end");
   });
 });

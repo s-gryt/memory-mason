@@ -9,6 +9,10 @@ const {
   COACHING_NAG_SESSION_MEMORY,
   COACHING_HASH_COUNTS_MAX,
   COACHING_LRU_LOW_USE_FLOOR,
+  COACHING_DECAY_MS,
+  COACHING_DECAY_NAGGED_WINDOW_MS,
+  COACHING_KIND_PROMPT_REPEAT,
+  COACHING_KIND_ERROR_REPEAT,
 } = require("../../lib/capture/constants");
 const { UTF8_ENCODING } = require("../../lib/shared/constants");
 const {
@@ -31,10 +35,18 @@ const {
   setMmSuppressed,
   normalizeCoachingPromptText,
   hashCoachingPrompt,
+  normalizeCoachingErrorText,
+  hashCoachingError,
+  buildCoachingSnippet,
+  compareCoachingEntriesForEviction,
   recordCoachingHit,
   shouldEmitCoachingNag,
   markCoachingNagged,
+  isExchangeOpen,
+  openExchange,
+  closeExchange,
 } = require("../../lib/capture/capture-state");
+const { EXCHANGE_STALE_OPEN_MS } = require("../../lib/capture/constants");
 
 const { createTempVaultPath, cleanupTempVaultPaths } =
   createTempVaultFixture("capture-state-test-");
@@ -43,6 +55,7 @@ const TEST_NON_STRING_VALUE = 123;
 const TIMESTAMP_BASE_MS = 1714230000000;
 const TIMESTAMP_WITHIN_WINDOW_MS = 1714230005000;
 const TIMESTAMP_OUTSIDE_WINDOW_MS = 1714230065001;
+const ONE_SECOND_MS = 1000;
 const TRANSCRIPT_COUNT_TWO = 2;
 const TRANSCRIPT_COUNT_THREE = 3;
 const TRANSCRIPT_COUNT_FOUR = 4;
@@ -50,6 +63,8 @@ const TRANSCRIPT_COUNT_FIVE = 5;
 const TRANSCRIPT_COUNT_SIX = 6;
 const INVALID_NEGATIVE_COUNT = -1;
 const INVALID_FRACTIONAL_COUNT = 1.5;
+const LONG_COACHING_PROMPT_REPEAT_COUNT = 40;
+const COACHING_SNIPPET_LENGTH_CAP = 80;
 
 afterEach(() => {
   cleanupTempVaultPaths();
@@ -94,6 +109,51 @@ describe("capture state file I/O", () => {
     saveCaptureState(vaultPath, DEFAULT_SUBFOLDER, state);
 
     expect(loadCaptureState(vaultPath, DEFAULT_SUBFOLDER)).toEqual(state);
+  });
+
+  it("sweeps stale exchange entries on save while preserving active exchanges", () => {
+    const vaultPath = createTempVaultPath();
+    const staleIso = new Date(Date.now() - EXCHANGE_STALE_OPEN_MS - ONE_SECOND_MS).toISOString();
+    const activeIso = new Date(Date.now() - ONE_SECOND_MS).toISOString();
+    const state = {
+      ...defaultCaptureState(),
+      exchanges: {
+        stale: { open: true, openedAtIso: staleIso },
+        active: { open: true, openedAtIso: activeIso },
+      },
+    };
+
+    saveCaptureState(vaultPath, DEFAULT_SUBFOLDER, state);
+
+    expect(loadCaptureState(vaultPath, DEFAULT_SUBFOLDER)).toEqual({
+      ...defaultCaptureState(),
+      exchanges: {
+        active: { open: true, openedAtIso: activeIso },
+      },
+    });
+  });
+
+  it("drops invalid exchange entries on save", () => {
+    const vaultPath = createTempVaultPath();
+    const activeIso = new Date(Date.now() - ONE_SECOND_MS).toISOString();
+    const state = {
+      ...defaultCaptureState(),
+      exchanges: {
+        invalidShape: null,
+        closed: { open: false, openedAtIso: activeIso },
+        invalidDate: { open: true, openedAtIso: 123 },
+        active: { open: true, openedAtIso: activeIso },
+      },
+    };
+
+    saveCaptureState(vaultPath, DEFAULT_SUBFOLDER, state);
+
+    expect(loadCaptureState(vaultPath, DEFAULT_SUBFOLDER)).toEqual({
+      ...defaultCaptureState(),
+      exchanges: {
+        active: { open: true, openedAtIso: activeIso },
+      },
+    });
   });
 
   it("returns default state when capture state file contains invalid JSON", () => {
@@ -490,6 +550,73 @@ describe("hashCoachingPrompt", () => {
   });
 });
 
+describe("normalizeCoachingErrorText", () => {
+  it("uses the most relevant error line and normalizes digits", () => {
+    expect(normalizeCoachingErrorText("info line\nSomething failed 42\nignored")).toBe(
+      "something failed #",
+    );
+  });
+
+  it("throws when text is blank after normalization", () => {
+    expect(() => normalizeCoachingErrorText("   \n  ")).toThrow();
+  });
+
+  it("throws when text is not a string", () => {
+    expect(() => normalizeCoachingErrorText(TEST_NON_STRING_VALUE)).toThrow(
+      "text must be a string",
+    );
+  });
+});
+
+describe("hashCoachingError", () => {
+  it("returns identical hash for equivalent error variants", () => {
+    expect(hashCoachingError("FAIL 123")).toBe(hashCoachingError("fail 999"));
+  });
+
+  it("returns 16-hex prefix", () => {
+    expect(hashCoachingError("something failed")).toMatch(/^[0-9a-f]{16}$/);
+  });
+});
+
+describe("buildCoachingSnippet", () => {
+  it("truncates a long normalized prompt to the snippet length cap", () => {
+    const longText = "fix ".repeat(LONG_COACHING_PROMPT_REPEAT_COUNT);
+    const snippet = buildCoachingSnippet(COACHING_KIND_PROMPT_REPEAT, longText);
+    expect(snippet.length).toBeLessThanOrEqual(COACHING_SNIPPET_LENGTH_CAP);
+    expect(snippet).toBe(
+      normalizeCoachingPromptText(longText).slice(0, COACHING_SNIPPET_LENGTH_CAP),
+    );
+  });
+
+  it("builds from the error normalization for error-repeat kind", () => {
+    const snippet = buildCoachingSnippet(COACHING_KIND_ERROR_REPEAT, "Error: build failed at 42");
+    expect(snippet).toBe(
+      normalizeCoachingErrorText("Error: build failed at 42").slice(0, COACHING_SNIPPET_LENGTH_CAP),
+    );
+  });
+
+  it("throws when the underlying text normalizes to blank", () => {
+    expect(() => buildCoachingSnippet(COACHING_KIND_PROMPT_REPEAT, "   ")).toThrow();
+  });
+});
+
+describe("compareCoachingEntriesForEviction", () => {
+  it("orders older entries first when counts have the same eviction bucket", () => {
+    expect(
+      compareCoachingEntriesForEviction(
+        ["a", { count: 1, lastSeenIso: "2026-06-26T10:00:00.000Z" }],
+        ["b", { count: 1, lastSeenIso: "2026-06-26T11:00:00.000Z" }],
+      ),
+    ).toBe(-1);
+    expect(
+      compareCoachingEntriesForEviction(
+        ["a", { count: 1, lastSeenIso: "2026-06-26T11:00:00.000Z" }],
+        ["b", { count: 1, lastSeenIso: "2026-06-26T10:00:00.000Z" }],
+      ),
+    ).toBe(1);
+  });
+});
+
 describe("recordCoachingHit", () => {
   const ISO_A = "2026-06-26T10:00:00.000Z";
   const ISO_B = "2026-06-26T11:00:00.000Z";
@@ -503,6 +630,7 @@ describe("recordCoachingHit", () => {
       firstSeenIso: ISO_A,
       lastSeenIso: ISO_A,
       nagSessions: [],
+      kind: COACHING_KIND_PROMPT_REPEAT,
     });
   });
 
@@ -518,6 +646,43 @@ describe("recordCoachingHit", () => {
     const input = defaultCaptureState();
     recordCoachingHit(input, HASH_A, SESSION_A, ISO_A);
     expect(input.coachingState.promptHashCounts).toEqual({});
+  });
+
+  it("stores the snippet when provided", () => {
+    const next = recordCoachingHit(
+      defaultCaptureState(),
+      HASH_A,
+      SESSION_A,
+      ISO_A,
+      COACHING_KIND_PROMPT_REPEAT,
+      "fix auth bug",
+    );
+    expect(next.coachingState.promptHashCounts[HASH_A].snippet).toBe("fix auth bug");
+  });
+
+  it("replaces the stored snippet with the newest one on repeat", () => {
+    const first = recordCoachingHit(
+      defaultCaptureState(),
+      HASH_A,
+      SESSION_A,
+      ISO_A,
+      COACHING_KIND_PROMPT_REPEAT,
+      "fix auth bug",
+    );
+    const second = recordCoachingHit(
+      first,
+      HASH_A,
+      SESSION_A,
+      ISO_B,
+      COACHING_KIND_PROMPT_REPEAT,
+      "fix auth bug again",
+    );
+    expect(second.coachingState.promptHashCounts[HASH_A].snippet).toBe("fix auth bug again");
+  });
+
+  it("omits snippet entirely when not provided", () => {
+    const next = recordCoachingHit(defaultCaptureState(), HASH_A, SESSION_A, ISO_A);
+    expect(next.coachingState.promptHashCounts[HASH_A]).not.toHaveProperty("snippet");
   });
 
   it("evicts low-count entries when above cap", () => {
@@ -578,6 +743,235 @@ describe("recordCoachingHit", () => {
     }
     expect(Object.keys(state.coachingState.promptHashCounts).length).toBeLessThanOrEqual(
       COACHING_HASH_COUNTS_MAX,
+    );
+  });
+
+  it("defaults to prompt-repeat and decays stale low-count entries", () => {
+    const NOW_ISO = "2026-07-01T00:00:00.000Z";
+    const STALE_ISO = new Date(
+      Date.parse(NOW_ISO) - COACHING_DECAY_MS - ONE_SECOND_MS,
+    ).toISOString();
+    const HASH_STALE = "fedcba9876543210";
+    const HASH_RETAINED = "0123456789abcdef";
+    const initial = {
+      coachingState: {
+        promptHashCounts: {
+          [HASH_STALE]: {
+            count: 1,
+            firstSeenIso: STALE_ISO,
+            lastSeenIso: STALE_ISO,
+            nagSessions: [],
+            kind: COACHING_KIND_PROMPT_REPEAT,
+          },
+          [HASH_RETAINED]: {
+            count: COACHING_NAG_THRESHOLD,
+            firstSeenIso: STALE_ISO,
+            lastSeenIso: STALE_ISO,
+            nagSessions: [],
+            kind: COACHING_KIND_PROMPT_REPEAT,
+          },
+        },
+      },
+    };
+
+    const next = recordCoachingHit(initial, HASH_A, SESSION_A, NOW_ISO, COACHING_KIND_ERROR_REPEAT);
+
+    expect(next.coachingState.promptHashCounts[HASH_A]).toEqual({
+      count: 1,
+      firstSeenIso: NOW_ISO,
+      lastSeenIso: NOW_ISO,
+      nagSessions: [],
+      kind: COACHING_KIND_ERROR_REPEAT,
+    });
+    expect(next.coachingState.promptHashCounts[HASH_STALE]).toBeUndefined();
+    expect(next.coachingState.promptHashCounts[HASH_RETAINED]).toBeDefined();
+  });
+
+  it("decays nag-threshold coaching entries after 90 days", () => {
+    const NOW_ISO = "2026-07-01T00:00:00.000Z";
+    const STALE_NAGGED_ISO = new Date(
+      Date.parse(NOW_ISO) - COACHING_DECAY_NAGGED_WINDOW_MS - ONE_SECOND_MS,
+    ).toISOString();
+    const HASH_STALE_NAGGED = "1111111111111111";
+    const next = recordCoachingHit(
+      {
+        coachingState: {
+          promptHashCounts: {
+            [HASH_STALE_NAGGED]: {
+              count: COACHING_NAG_THRESHOLD,
+              firstSeenIso: STALE_NAGGED_ISO,
+              lastSeenIso: STALE_NAGGED_ISO,
+              nagSessions: [],
+              kind: COACHING_KIND_PROMPT_REPEAT,
+            },
+          },
+        },
+      },
+      HASH_A,
+      SESSION_A,
+      NOW_ISO,
+    );
+
+    expect(next.coachingState.promptHashCounts[HASH_STALE_NAGGED]).toBeUndefined();
+  });
+
+  it("retains nag-threshold coaching entries inside the 90-day decay window", () => {
+    const NOW_ISO = "2026-07-01T00:00:00.000Z";
+    const RETAINED_NAGGED_ISO = new Date(
+      Date.parse(NOW_ISO) - COACHING_DECAY_NAGGED_WINDOW_MS + ONE_SECOND_MS,
+    ).toISOString();
+    const HASH_RETAINED_NAGGED = "2222222222222222";
+    const next = recordCoachingHit(
+      {
+        coachingState: {
+          promptHashCounts: {
+            [HASH_RETAINED_NAGGED]: {
+              count: COACHING_NAG_THRESHOLD,
+              firstSeenIso: RETAINED_NAGGED_ISO,
+              lastSeenIso: RETAINED_NAGGED_ISO,
+              nagSessions: [],
+              kind: COACHING_KIND_PROMPT_REPEAT,
+            },
+          },
+        },
+      },
+      HASH_A,
+      SESSION_A,
+      NOW_ISO,
+    );
+
+    expect(next.coachingState.promptHashCounts[HASH_RETAINED_NAGGED]).toBeDefined();
+  });
+
+  it("falls back to the current call's kind when an existing entry has no kind", () => {
+    const next = recordCoachingHit(
+      {
+        coachingState: {
+          promptHashCounts: {
+            [HASH_A]: {
+              count: 1,
+              firstSeenIso: ISO_A,
+              lastSeenIso: ISO_A,
+              nagSessions: [],
+            },
+          },
+        },
+      },
+      HASH_A,
+      SESSION_A,
+      ISO_B,
+      COACHING_KIND_ERROR_REPEAT,
+    );
+
+    expect(next.coachingState.promptHashCounts[HASH_A].kind).toBe(COACHING_KIND_ERROR_REPEAT);
+  });
+
+  it("drops low-count entries with invalid lastSeenIso during decay", () => {
+    const next = recordCoachingHit(
+      {
+        coachingState: {
+          promptHashCounts: {
+            deadbeefdeadbeef: {
+              count: 1,
+              firstSeenIso: "2026-06-26T10:00:00.000Z",
+              lastSeenIso: "not-an-iso",
+              nagSessions: [],
+              kind: COACHING_KIND_PROMPT_REPEAT,
+            },
+          },
+        },
+      },
+      HASH_A,
+      SESSION_A,
+      "2026-07-01T00:00:00.000Z",
+    );
+
+    expect(next.coachingState.promptHashCounts.deadbeefdeadbeef).toBeUndefined();
+  });
+
+  it("throws when nowIso is not a valid timestamp", () => {
+    expect(() =>
+      recordCoachingHit(
+        {
+          coachingState: {
+            promptHashCounts: {
+              deadbeefdeadbeef: {
+                count: 1,
+                firstSeenIso: "2026-06-26T10:00:00.000Z",
+                lastSeenIso: "2026-06-26T10:00:00.000Z",
+                nagSessions: [],
+                kind: COACHING_KIND_PROMPT_REPEAT,
+              },
+            },
+          },
+        },
+        HASH_A,
+        SESSION_A,
+        "not-a-date",
+      ),
+    ).toThrow("nowIso must be a valid ISO timestamp");
+  });
+
+  it("preserves existing entry kind on a repeat hit", () => {
+    const first = recordCoachingHit(
+      defaultCaptureState(),
+      HASH_A,
+      SESSION_A,
+      ISO_A,
+      COACHING_KIND_ERROR_REPEAT,
+    );
+    const second = recordCoachingHit(first, HASH_A, SESSION_A, ISO_B, COACHING_KIND_PROMPT_REPEAT);
+    expect(second.coachingState.promptHashCounts[HASH_A].kind).toBe(COACHING_KIND_ERROR_REPEAT);
+  });
+
+  it("falls back to passed kind when existing entry has an empty-string kind", () => {
+    const next = recordCoachingHit(
+      {
+        coachingState: {
+          promptHashCounts: {
+            [HASH_A]: {
+              count: 1,
+              firstSeenIso: ISO_A,
+              lastSeenIso: ISO_A,
+              nagSessions: [],
+              kind: "",
+            },
+          },
+        },
+      },
+      HASH_A,
+      SESSION_A,
+      ISO_B,
+      COACHING_KIND_ERROR_REPEAT,
+    );
+    expect(next.coachingState.promptHashCounts[HASH_A].kind).toBe(COACHING_KIND_ERROR_REPEAT);
+  });
+});
+
+describe("assertIsoTimestamp (via openExchange and recordCoachingHit)", () => {
+  it("accepts timezone-less local form", () => {
+    expect(() => openExchange(defaultCaptureState(), "s1", "2026-07-09T10:00:00")).not.toThrow();
+  });
+
+  it("accepts full millisecond UTC form", () => {
+    expect(() =>
+      openExchange(defaultCaptureState(), "s1", "2026-07-09T10:00:00.123Z"),
+    ).not.toThrow();
+  });
+
+  it("accepts bare-Z UTC form", () => {
+    expect(() => openExchange(defaultCaptureState(), "s1", "2026-07-09T10:00:00Z")).not.toThrow();
+  });
+
+  it("rejects a non-date string", () => {
+    expect(() => openExchange(defaultCaptureState(), "s1", "not-a-date")).toThrow(
+      "nowIso must be a valid ISO timestamp",
+    );
+  });
+
+  it("rejects out-of-range date parts", () => {
+    expect(() => openExchange(defaultCaptureState(), "s1", "2026-13-40T99:99:99")).toThrow(
+      "nowIso must be a valid ISO timestamp",
     );
   });
 });
@@ -690,6 +1084,7 @@ describe("capture state persistence with coachingState", () => {
       firstSeenIso: "2026-06-26T10:00:00.000Z",
       lastSeenIso: "2026-06-26T10:00:00.000Z",
       nagSessions: [],
+      kind: COACHING_KIND_PROMPT_REPEAT,
     });
   });
 
@@ -844,6 +1239,167 @@ describe("mergeWithDefaults - mmSuppressed", () => {
       lastCapture: null,
       mmSuppressed: false,
       coachingState: { promptHashCounts: {} },
+    });
+  });
+});
+
+describe("exchange state management", () => {
+  const SESSION_A = "session-a";
+  const SESSION_B = "session-b";
+  const ISO_NOW = new Date().toISOString();
+  const ISO_STALE = new Date(Date.now() - EXCHANGE_STALE_OPEN_MS - ONE_SECOND_MS).toISOString();
+
+  describe("isExchangeOpen", () => {
+    it("returns false when state has no exchanges", () => {
+      expect(isExchangeOpen(defaultCaptureState(), SESSION_A)).toBe(false);
+    });
+
+    it("returns false when session has no exchange entry", () => {
+      const state = openExchange(defaultCaptureState(), SESSION_A, ISO_NOW);
+      expect(isExchangeOpen(state, SESSION_B)).toBe(false);
+    });
+
+    it("returns true when exchange is open and not stale", () => {
+      const state = openExchange(defaultCaptureState(), SESSION_A, ISO_NOW);
+      expect(isExchangeOpen(state, SESSION_A)).toBe(true);
+    });
+
+    it("returns false when exchange is closed", () => {
+      const opened = openExchange(defaultCaptureState(), SESSION_A, ISO_NOW);
+      const closed = closeExchange(opened, SESSION_A);
+      expect(isExchangeOpen(closed, SESSION_A)).toBe(false);
+    });
+
+    it("returns false when openedAtIso is older than EXCHANGE_STALE_OPEN_MS (24h stale-open)", () => {
+      const state = openExchange(defaultCaptureState(), SESSION_A, ISO_STALE);
+      expect(isExchangeOpen(state, SESSION_A)).toBe(false);
+    });
+
+    it("returns false when openedAtIso is not a valid date", () => {
+      const state = {
+        ...defaultCaptureState(),
+        exchanges: { [SESSION_A]: { open: true, openedAtIso: "not-a-date" } },
+      };
+      expect(isExchangeOpen(state, SESSION_A)).toBe(false);
+    });
+
+    it("returns false when openedAtIso is not a string", () => {
+      const state = {
+        ...defaultCaptureState(),
+        exchanges: { [SESSION_A]: { open: true, openedAtIso: 123 } },
+      };
+      expect(isExchangeOpen(state, SESSION_A)).toBe(false);
+    });
+
+    it("throws when state is not a plain object", () => {
+      expect(() => isExchangeOpen(null, SESSION_A)).toThrow("state must be an object");
+    });
+
+    it("throws when sessionId is empty", () => {
+      expect(() => isExchangeOpen(defaultCaptureState(), "")).toThrow(
+        "sessionId must be a non-empty string",
+      );
+    });
+
+    it("returns false when injected nowMs makes a fresh exchange appear stale", () => {
+      const state = openExchange(defaultCaptureState(), SESSION_A, ISO_NOW);
+      const farFutureMs = Date.now() + EXCHANGE_STALE_OPEN_MS + ONE_SECOND_MS;
+      expect(isExchangeOpen(state, SESSION_A, farFutureMs)).toBe(false);
+    });
+  });
+
+  describe("openExchange", () => {
+    it("sets exchange open=true and stores openedAtIso", () => {
+      const state = openExchange(defaultCaptureState(), SESSION_A, ISO_NOW);
+      expect(state.exchanges[SESSION_A]).toEqual({ open: true, openedAtIso: ISO_NOW });
+    });
+
+    it("does not mutate original state", () => {
+      const original = defaultCaptureState();
+      openExchange(original, SESSION_A, ISO_NOW);
+      expect(original.exchanges).toBeUndefined();
+    });
+
+    it("preserves other session exchanges", () => {
+      const withA = openExchange(defaultCaptureState(), SESSION_A, ISO_NOW);
+      const withAB = openExchange(withA, SESSION_B, ISO_NOW);
+      expect(withAB.exchanges[SESSION_A]).toBeDefined();
+      expect(withAB.exchanges[SESSION_B]).toBeDefined();
+    });
+
+    it("overwrites existing exchange for same session", () => {
+      const first = openExchange(defaultCaptureState(), SESSION_A, "2026-01-01T00:00:00.000Z");
+      const second = openExchange(first, SESSION_A, ISO_NOW);
+      expect(second.exchanges[SESSION_A].openedAtIso).toBe(ISO_NOW);
+    });
+
+    it("throws when state is not a plain object", () => {
+      expect(() => openExchange(null, SESSION_A, ISO_NOW)).toThrow("state must be an object");
+    });
+
+    it("throws when sessionId is empty", () => {
+      expect(() => openExchange(defaultCaptureState(), "", ISO_NOW)).toThrow(
+        "sessionId must be a non-empty string",
+      );
+    });
+
+    it("throws when nowIso is empty", () => {
+      expect(() => openExchange(defaultCaptureState(), SESSION_A, "")).toThrow(
+        "nowIso must be a non-empty string",
+      );
+    });
+
+    it("throws when nowIso is not a valid timestamp", () => {
+      expect(() => openExchange(defaultCaptureState(), SESSION_A, "not-a-date")).toThrow(
+        "nowIso must be a valid ISO timestamp",
+      );
+    });
+
+    it("throws when nowIso is parseable but not ISO-shaped", () => {
+      expect(() => openExchange(defaultCaptureState(), SESSION_A, "July 9, 2026")).toThrow(
+        "nowIso must be a valid ISO timestamp",
+      );
+    });
+  });
+
+  describe("closeExchange", () => {
+    it("removes the exchange entry so closed sessions do not accumulate", () => {
+      const opened = openExchange(defaultCaptureState(), SESSION_A, ISO_NOW);
+      const closed = closeExchange(opened, SESSION_A);
+      expect(closed.exchanges).not.toHaveProperty(SESSION_A);
+    });
+
+    it("returns unchanged state when no exchange entry exists for session", () => {
+      const state = defaultCaptureState();
+      const result = closeExchange(state, SESSION_A);
+      expect(result).toStrictEqual(state);
+    });
+
+    it("does not mutate original state", () => {
+      const opened = openExchange(defaultCaptureState(), SESSION_A, ISO_NOW);
+      const snapshot = JSON.stringify(opened);
+      closeExchange(opened, SESSION_A);
+      expect(JSON.stringify(opened)).toBe(snapshot);
+    });
+
+    it("preserves other session exchanges", () => {
+      const withAB = openExchange(
+        openExchange(defaultCaptureState(), SESSION_A, ISO_NOW),
+        SESSION_B,
+        ISO_NOW,
+      );
+      const closed = closeExchange(withAB, SESSION_A);
+      expect(closed.exchanges[SESSION_B]).toEqual({ open: true, openedAtIso: ISO_NOW });
+    });
+
+    it("throws when state is not a plain object", () => {
+      expect(() => closeExchange(null, SESSION_A)).toThrow("state must be an object");
+    });
+
+    it("throws when sessionId is empty", () => {
+      expect(() => closeExchange(defaultCaptureState(), "")).toThrow(
+        "sessionId must be a non-empty string",
+      );
     });
   });
 });

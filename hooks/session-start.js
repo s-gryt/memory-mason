@@ -66,6 +66,35 @@ function assertNonEmptyStringValue(name, value) {
   return value;
 }
 
+function isExistingDirectory(folderPath, fsApi) {
+  try {
+    return fsApi.existsSync(folderPath) && fsApi.statSync(folderPath).isDirectory();
+  } catch (_error) {
+    return false;
+  }
+}
+
+function pickMostRecentChunkFile(folderPath, chunkFiles, fsApi) {
+  const sortedByName = [...chunkFiles].sort();
+  const withMtime = sortedByName.map((fileName) => {
+    try {
+      const stats = fsApi.statSync(path.join(folderPath, fileName));
+      const mtimeMs = typeof stats.mtimeMs === "number" ? stats.mtimeMs : NaN;
+      return { fileName, mtimeMs };
+    } catch (_error) {
+      return { fileName, mtimeMs: NaN };
+    }
+  });
+
+  const validEntries = withMtime.filter((entry) => !Number.isNaN(entry.mtimeMs));
+  if (validEntries.length === 0) {
+    return sortedByName[sortedByName.length - 1];
+  }
+
+  return validEntries.reduce((latest, entry) => (entry.mtimeMs > latest.mtimeMs ? entry : latest))
+    .fileName;
+}
+
 function readDailyLogText(vaultPath, subfolder, dateIso, fsApi = fs) {
   const safeVaultPath = assertNonEmptyStringValue("vaultPath", vaultPath);
   const safeSubfolder = assertNonEmptyStringValue("subfolder", subfolder);
@@ -74,15 +103,17 @@ function readDailyLogText(vaultPath, subfolder, dateIso, fsApi = fs) {
   const folderPath = buildDailyFolderPath(safeVaultPath, safeSubfolder, safeDateIso);
   const flatPath = buildDailyFilePath(safeVaultPath, safeSubfolder, safeDateIso);
 
-  if (fsApi.existsSync(folderPath) && fsApi.statSync(folderPath).isDirectory()) {
+  if (isExistingDirectory(folderPath, fsApi)) {
     const entries = fsApi.readdirSync(folderPath);
-    const chunkFiles = entries.filter((fileName) => /^\d{3}\.md$/.test(fileName)).sort();
+    const chunkFiles = entries.filter(
+      (fileName) => /^\d{3}\.md$/.test(fileName) || /^\d{6}-[a-z0-9]+-\d{3}\.md$/.test(fileName),
+    );
 
     if (chunkFiles.length === 0) {
       return "";
     }
 
-    const lastChunk = chunkFiles[chunkFiles.length - 1];
+    const lastChunk = pickMostRecentChunkFile(folderPath, chunkFiles, fsApi);
     return fsApi.readFileSync(path.join(folderPath, lastChunk), UTF8_ENCODING);
   }
 
@@ -137,9 +168,19 @@ function resolvePrimaryContext(resolvedConfig) {
   };
 }
 
-function buildCoachingAdditionalText(resolvedConfig) {
+function loadSessionStartState(resolvedConfig) {
   try {
-    const state = loadCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder);
+    return loadCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder);
+  } catch (_error) {
+    return null;
+  }
+}
+
+function buildCoachingAdditionalText(state) {
+  if (state === null) {
+    return "";
+  }
+  try {
     const insights = selectTopCoachingInsights(state, COACHING_INSIGHT_LIMIT);
     return formatCoachingAdditionalContext(insights);
   } catch (_error) {
@@ -147,25 +188,42 @@ function buildCoachingAdditionalText(resolvedConfig) {
   }
 }
 
-function buildSessionAdditionalContext(resolvedConfig) {
+function buildSharedStreamWarning(state, cwd) {
+  if (typeof cwd !== "string" || cwd === "") {
+    return "";
+  }
+  if (state === null) {
+    return "";
+  }
+  const lastProjectPath = typeof state.lastProjectPath === "string" ? state.lastProjectPath : "";
+  if (lastProjectPath === "" || lastProjectPath === cwd) {
+    return "";
+  }
+  return `> [!warning] Memory Mason: this subfolder was last written by another project (${lastProjectPath}). Multiple projects share one capture stream; set a per-project subfolder (MEMORY_MASON_SUBFOLDER) to isolate them.`;
+}
+
+function buildSessionAdditionalContext(resolvedConfig, cwd) {
   const { primaryText, maxChars, primarySectionHeading, primaryPlaceholderText } =
     resolvePrimaryContext(resolvedConfig);
   const recentLogText = readRecentDailyLog(resolvedConfig.vaultPath, resolvedConfig.subfolder);
-  const baseContext = truncateContext(
-    buildAdditionalContext(
-      primaryText,
-      recentLogText,
-      primarySectionHeading,
-      primaryPlaceholderText,
-    ),
-    maxChars,
+  const sessionState = loadSessionStartState(resolvedConfig);
+  const baseContext = buildAdditionalContext(
+    primaryText,
+    recentLogText,
+    primarySectionHeading,
+    primaryPlaceholderText,
   );
 
-  const coachingText = buildCoachingAdditionalText(resolvedConfig);
-  if (coachingText === "") {
-    return baseContext;
+  const additionalSections = [
+    buildCoachingAdditionalText(sessionState),
+    buildSharedStreamWarning(sessionState, cwd),
+  ].filter((section) => section !== "");
+
+  if (additionalSections.length === 0) {
+    return truncateContext(baseContext, maxChars);
   }
-  return `${baseContext}\n\n${coachingText}`;
+
+  return [...additionalSections, truncateContext(baseContext, maxChars)].join("\n\n");
 }
 
 function buildSessionStartStdout(additionalContext) {
@@ -198,7 +256,7 @@ function run(rawStdin, runtime = {}) {
       return buildSuccessResult("");
     }
 
-    const additionalContext = buildSessionAdditionalContext(resolvedConfig);
+    const additionalContext = buildSessionAdditionalContext(resolvedConfig, cwd);
     return buildSuccessResult(additionalContext);
   } catch (error) {
     const failure = buildCommandErrorResult(error);
@@ -217,6 +275,7 @@ module.exports = {
   readGlobalDotEnvText,
   readDailyLogText,
   readRecentDailyLog,
+  buildCoachingAdditionalText,
   resolveRuntimeConfig,
   run,
   main,

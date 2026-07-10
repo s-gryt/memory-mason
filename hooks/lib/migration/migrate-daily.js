@@ -241,7 +241,7 @@ const migrateFlatToChunked = (vaultPath, subfolder, dateIso, options = {}) => {
   const indexPath = buildDailyIndexPath(safeVaultPath, safeSubfolder, safeDateIso);
   safeFsApi.writeFileSync(
     indexPath,
-    buildChunkIndexContent(safeDateIso, entries.length),
+    buildChunkIndexContent(safeSubfolder, safeDateIso, entries),
     UTF8_ENCODING,
   );
 

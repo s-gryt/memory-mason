@@ -30,6 +30,10 @@ const resolveObsidianCommand = (args, platform) =>
         options: {},
       };
 
+const OBSIDIAN_CLI_FAILURE_PREFIX = "[memory-mason] obsidian CLI unavailable";
+
+let obsidianCliFailureWarned = false;
+
 const tryObsidianCli = (args, options) => {
   const safeOptions = options !== null && typeof options === "object" ? options : {};
   const {
@@ -47,20 +51,32 @@ const tryObsidianCli = (args, options) => {
       spawnOptions,
     ),
   );
-  return result.status === 0 && result.error == null;
+  const succeeded = result.status === 0 && result.error == null;
+  if (!succeeded && !obsidianCliFailureWarned) {
+    obsidianCliFailureWarned = true;
+    const reason = result.error != null ? result.error.message : `exit status ${result.status}`;
+    process.stderr.write(
+      `${OBSIDIAN_CLI_FAILURE_PREFIX} (${reason}), falling back to direct file writes\n`,
+    );
+  }
+  return succeeded;
 };
 
-const appendToDaily = (vaultPath, subfolder, today, content) => {
+const appendToDaily = (vaultPath, subfolder, today, content, options = {}) => {
   const safeVaultPath = assertNonEmptyString("vaultPath", vaultPath);
   const safeSubfolder = assertNonEmptyString("subfolder", subfolder);
   const safeToday = assertNonEmptyString("today", today);
   const safeContent = assertString("content", content);
 
+  if (options === null || typeof options !== "object" || Array.isArray(options)) {
+    throw new Error("options must be an object");
+  }
+
   const folderPath = buildDailyFolderPath(safeVaultPath, safeSubfolder, safeToday);
   const flatPath = buildDailyFilePath(safeVaultPath, safeSubfolder, safeToday);
 
   if (fs.existsSync(folderPath) && fs.statSync(folderPath).isDirectory()) {
-    appendToChunked(safeVaultPath, safeSubfolder, safeToday, safeContent);
+    appendToChunked(safeVaultPath, safeSubfolder, safeToday, safeContent, options);
     return;
   }
 
@@ -69,7 +85,7 @@ const appendToDaily = (vaultPath, subfolder, today, content) => {
     return;
   }
 
-  appendToChunked(safeVaultPath, safeSubfolder, safeToday, safeContent);
+  appendToChunked(safeVaultPath, safeSubfolder, safeToday, safeContent, options);
 };
 
 module.exports = {

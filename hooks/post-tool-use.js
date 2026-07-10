@@ -9,6 +9,7 @@ const { buildCommandErrorResult } = require("./lib/cli/cli");
 const { CAPTURE_MODE_LITE, ENV_KEY_INVOKED_BY } = require("./lib/config/constants");
 const {
   NOISY_TOOLS,
+  EVENT_TYPE_ERROR,
   EVENT_TYPE_EXPLORATION,
   EVENT_TYPE_META,
   EVENT_TYPE_NOISE,
@@ -17,6 +18,7 @@ const {
   HOOK_WARNING_SENSITIVE_SKIP_PREFIX,
   MAX_TAG_STRIP_COUNT,
 } = require("./lib/filter/constants");
+const { COACHING_KIND_ERROR_REPEAT } = require("./lib/capture/constants");
 const {
   PLATFORM_CLAUDE_CODE,
   PLATFORM_COPILOT_VSCODE,
@@ -24,14 +26,24 @@ const {
   PLATFORM_CODEX,
 } = require("./lib/config/platforms");
 const { TRANSCRIPT_BLOCK_TYPE_TEXT } = require("./lib/capture/transcript-labels");
-const { buildDailyEntry } = require("./lib/vault/vault");
+const { buildDailyEntry, buildSessionContext } = require("./lib/vault/vault");
 const { appendToDaily } = require("./lib/vault/writer");
+const { isExchangeOpen } = require("./lib/capture/capture-state");
 const { recordCaptureMetrics } = require("./lib/state/state");
-const { loadCaptureState, getMmSuppressed } = require("./lib/capture/capture-state");
+const {
+  loadCaptureState,
+  saveCaptureState,
+  getMmSuppressed,
+  hashCoachingError,
+  buildCoachingSnippet,
+  recordCoachingHit,
+  shouldEmitCoachingNag,
+  markCoachingNagged,
+} = require("./lib/capture/capture-state");
+const { emitRepeatedPlanCoachingNag } = require("./lib/capture/coaching-emit");
 const { stripMemoryTags, countMemoryTags } = require("./lib/filter/tag-stripper");
 const { classifyToolEvent } = require("./lib/filter/classifier");
 const { detectSensitiveContent } = require("./lib/filter/sensitive-guard");
-const { compressNarrativeText } = require("./lib/economics/compress");
 const { HOOK_EVENT_POST_TOOL_USE_KEBAB } = require("./lib/hook/hook-events");
 const { buildCaptureTimestamp } = require("./lib/hook/capture-ops");
 const { stripVTControlCharacters } = require("node:util");
@@ -186,7 +198,11 @@ function extractToolPayload(platform, input) {
   throw new Error(`unsupported platform: ${platform}`);
 }
 
-const shouldSkipToolPayload = (payload, captureMode) => {
+const shouldSkipToolPayload = (
+  payload,
+  captureMode,
+  classification = classifyEnrichedPayload(payload, captureMode),
+) => {
   if (payload.toolName === "") {
     return true;
   }
@@ -194,16 +210,6 @@ const shouldSkipToolPayload = (payload, captureMode) => {
   if (NOISY_TOOLS.has(payload.toolName)) {
     return true;
   }
-
-  const classification = classifyToolEvent({
-    toolName: payload.toolName,
-    exitCode: payload.exitCode,
-    output: payload.strippedResultText,
-    filePath: payload.filePath,
-    lineCount: payload.lineCount,
-    captureMode,
-    commandText: payload.commandText,
-  });
 
   if (
     classification === EVENT_TYPE_EXPLORATION ||
@@ -226,11 +232,15 @@ function buildRunPlan(rawStdin, runtime = {}) {
   const platform = detectPlatform(input);
   const payload = extractToolPayload(platform, input);
   const captureTimestamp = buildCaptureTimestamp();
+  const cwd = resolveInputCwd(input, fallbackCwd);
+  const sessionId = toStringOrEmpty(input.session_id) || toStringOrEmpty(input.sessionId);
 
   return {
     env,
     homedir,
-    cwd: resolveInputCwd(input, fallbackCwd),
+    cwd,
+    platform,
+    sessionId,
     payload,
     today: captureTimestamp.today,
     timestamp: captureTimestamp.timestamp,
@@ -238,15 +248,17 @@ function buildRunPlan(rawStdin, runtime = {}) {
   };
 }
 
-function persistToolUsage(plan, resolvedConfig) {
+function persistToolUsage(plan, resolvedConfig, captureState) {
   const vaultPath = resolvedConfig.vaultPath;
   const subfolder = resolvedConfig.subfolder;
+  const session = buildSessionContext(plan.sessionId, plan.platform, plan.cwd);
+  const exchangeOpen = plan.sessionId !== "" && isExchangeOpen(captureState, plan.sessionId);
   const dailyEntry = buildDailyEntry(
     plan.payload.toolName,
     plan.payload.resultText,
     plan.timestamp,
   );
-  appendToDaily(vaultPath, subfolder, plan.today, dailyEntry);
+  appendToDaily(vaultPath, subfolder, plan.today, dailyEntry, { session, exchangeOpen });
   recordCaptureMetrics(
     vaultPath,
     subfolder,
@@ -261,11 +273,74 @@ function loadCaptureStateForConfig(resolvedConfig) {
   return loadCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder);
 }
 
+function classifyEnrichedPayload(payload, captureMode) {
+  return classifyToolEvent({
+    toolName: payload.toolName,
+    exitCode: payload.exitCode,
+    output: payload.strippedResultText,
+    filePath: payload.filePath,
+    lineCount: payload.lineCount,
+    captureMode,
+    commandText: payload.commandText,
+  });
+}
+
+function tryHashCoachingError(text) {
+  try {
+    return hashCoachingError(text);
+  } catch (_error) {
+    return EMPTY_STRING;
+  }
+}
+
+function applyErrorCoachingToState(
+  captureState,
+  plan,
+  resolvedConfig,
+  enrichedPayload,
+  classification = classifyEnrichedPayload(enrichedPayload, resolvedConfig.captureMode),
+) {
+  if (plan.sessionId === EMPTY_STRING) {
+    return captureState;
+  }
+
+  if (classification !== EVENT_TYPE_ERROR) {
+    return captureState;
+  }
+
+  const hash = tryHashCoachingError(enrichedPayload.strippedResultText);
+  if (hash === EMPTY_STRING) {
+    return captureState;
+  }
+
+  const snippet = buildCoachingSnippet(
+    COACHING_KIND_ERROR_REPEAT,
+    enrichedPayload.strippedResultText,
+  );
+  const updatedState = recordCoachingHit(
+    captureState,
+    hash,
+    plan.sessionId,
+    plan.iso,
+    COACHING_KIND_ERROR_REPEAT,
+    snippet,
+  );
+
+  return emitRepeatedPlanCoachingNag({
+    state: updatedState,
+    hash,
+    plan,
+    resolvedConfig,
+    kind: COACHING_KIND_ERROR_REPEAT,
+    shouldEmitNag: shouldEmitCoachingNag,
+    markNagged: markCoachingNagged,
+  });
+}
+
 function enrichPayloadForCapture(payload) {
   const tagCount = countMemoryTags(payload.resultText);
-  const strippedResultText = compressNarrativeText(
-    stripVTControlCharacters(stripMemoryTags(payload.resultText)),
-  );
+  const baseText = stripVTControlCharacters(stripMemoryTags(payload.resultText));
+  const strippedResultText = baseText;
   const lineCount =
     strippedResultText === EMPTY_STRING ? ZERO : strippedResultText.split(/\r?\n/).length;
 
@@ -304,8 +379,18 @@ function run(rawStdin, runtime = {}) {
     }
 
     const payloadCaptureData = enrichPayloadForCapture(plan.payload);
+    const classification = classifyEnrichedPayload(
+      payloadCaptureData.enrichedPayload,
+      resolvedConfig.captureMode,
+    );
 
-    if (shouldSkipToolPayload(payloadCaptureData.enrichedPayload, resolvedConfig.captureMode)) {
+    if (
+      shouldSkipToolPayload(
+        payloadCaptureData.enrichedPayload,
+        resolvedConfig.captureMode,
+        classification,
+      )
+    ) {
       return buildSuccessResult();
     }
 
@@ -326,6 +411,17 @@ function run(rawStdin, runtime = {}) {
       };
     }
 
+    const coachedState = applyErrorCoachingToState(
+      captureState,
+      plan,
+      resolvedConfig,
+      payloadCaptureData.enrichedPayload,
+      classification,
+    );
+    if (coachedState !== captureState) {
+      saveCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder, coachedState);
+    }
+
     const tagWarning =
       payloadCaptureData.tagCount > MAX_TAG_STRIP_COUNT
         ? `${HOOK_WARNING_TAG_LIMIT_PREFIX}: ${payloadCaptureData.tagCount} tags found\n`
@@ -341,6 +437,7 @@ function run(rawStdin, runtime = {}) {
         },
       },
       resolvedConfig,
+      coachedState,
     );
 
     const result = buildSuccessResult();
@@ -360,6 +457,8 @@ module.exports = {
   readDotEnvText,
   readGlobalConfigText,
   readGlobalDotEnvText,
+  tryHashCoachingError,
+  applyErrorCoachingToState,
   run,
   main,
 };

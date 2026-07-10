@@ -8,10 +8,12 @@ const {
   CAPTURE_MODE_FULL,
   DEFAULT_CAPTURE_MODE,
   DEFAULT_SUBFOLDER,
+  DEFAULT_MINIMIZE,
   ENV_KEY_VAULT_PATH,
   ENV_KEY_SUBFOLDER,
   ENV_KEY_SYNC,
   ENV_KEY_CAPTURE_MODE,
+  ENV_KEY_MINIMIZE,
 } = require("./constants");
 const {
   PLATFORM_CLAUDE_CODE,
@@ -108,6 +110,20 @@ const parseSyncFieldFromConfigObject = (parsedConfig) => {
   throw new Error(`config sync must be a boolean, got: ${describeValueType(parsedConfig.sync)}`);
 };
 
+const parseMinimizeFromConfigObject = (parsedConfig) => {
+  if (!Object.hasOwn(parsedConfig, "minimize")) {
+    return null;
+  }
+
+  if (typeof parsedConfig.minimize === "boolean") {
+    return parsedConfig.minimize;
+  }
+
+  throw new Error(
+    `config minimize must be a boolean, got: ${describeValueType(parsedConfig.minimize)}`,
+  );
+};
+
 const VALID_CAPTURE_MODES = Object.freeze([CAPTURE_MODE_LITE, CAPTURE_MODE_FULL]);
 
 const parseCaptureModeFromConfigObject = (parsedConfig) => {
@@ -143,14 +159,34 @@ const parseConfigObjectOrNull = (configText) => {
   }
 };
 
-const parseConfigCaptureModeOrNull = (configText) => {
+const parseConfigFieldOrNull = (configText, parseField) => {
   const parsedConfig = parseConfigObjectOrNull(configText);
   if (parsedConfig === null) {
     return null;
   }
 
-  return parseCaptureModeFromConfigObject(parsedConfig);
+  return parseField(parsedConfig);
 };
+
+const parseConfigCaptureModeOrNull = (configText) =>
+  parseConfigFieldOrNull(configText, parseCaptureModeFromConfigObject);
+
+const parseConfigMinimizeOrNull = (configText) =>
+  parseConfigFieldOrNull(configText, parseMinimizeFromConfigObject);
+
+const parseConfigVaultPathOrNull = (configText) =>
+  parseConfigFieldOrNull(configText, (parsedConfig) =>
+    typeof parsedConfig.vaultPath === "string" && parsedConfig.vaultPath !== ""
+      ? parsedConfig.vaultPath
+      : null,
+  );
+
+const parseConfigSubfolderOrNull = (configText) =>
+  parseConfigFieldOrNull(configText, (parsedConfig) =>
+    typeof parsedConfig.subfolder === "string" && parsedConfig.subfolder !== ""
+      ? parsedConfig.subfolder
+      : null,
+  );
 
 const parseEnvSyncOrNull = (envSyncValue) => {
   if (typeof envSyncValue !== "string" || envSyncValue === "") {
@@ -180,6 +216,22 @@ const parseEnvCaptureModeOrNull = (envValue) => {
   throw new Error(
     `${ENV_KEY_CAPTURE_MODE} must be '${CAPTURE_MODE_LITE}' or '${CAPTURE_MODE_FULL}', got: ${envValue}`,
   );
+};
+
+const parseEnvMinimizeOrNull = (envValue) => {
+  if (typeof envValue !== "string" || envValue === "") {
+    return null;
+  }
+
+  if (envValue === "false") {
+    return false;
+  }
+
+  if (envValue === "true") {
+    return true;
+  }
+
+  throw new Error(`${ENV_KEY_MINIMIZE} must be 'true' or 'false', got: ${envValue}`);
 };
 
 const stripDotEnvComment = (valueText) => {
@@ -251,19 +303,13 @@ const pickFirstNonEmptyString = (values, fallbackValue) => {
 };
 
 const resolveFromConfigText = (resolutionInput) => {
-  if (resolutionInput.configText === "") {
+  if (resolutionInput.projectConfig.vaultPath === null) {
     return null;
   }
 
-  const parsedConfig = parseMemoryMasonConfig(resolutionInput.configText);
-  const resolvedConfig = {
-    vaultPath: expandHomePath(parsedConfig.vaultPath, resolutionInput.homedir),
-    subfolder: parsedConfig.subfolder,
+  return {
+    vaultPath: expandHomePath(resolutionInput.projectConfig.vaultPath, resolutionInput.homedir),
   };
-
-  return typeof parsedConfig.sync === "boolean"
-    ? { ...resolvedConfig, sync: parsedConfig.sync }
-    : resolvedConfig;
 };
 
 const resolveFromDotEnvVaultPath = (resolutionInput) => {
@@ -273,24 +319,17 @@ const resolveFromDotEnvVaultPath = (resolutionInput) => {
 
   return {
     vaultPath: expandHomePath(resolutionInput.dotEnvVaultPath, resolutionInput.homedir),
-    subfolder: pickFirstNonEmptyString([resolutionInput.dotEnvSubfolder], DEFAULT_SUBFOLDER),
   };
 };
 
 const resolveFromGlobalConfigText = (resolutionInput) => {
-  if (resolutionInput.globalConfigText === "") {
+  if (resolutionInput.globalConfig.vaultPath === null) {
     return null;
   }
 
-  const parsedGlobalConfig = parseMemoryMasonConfig(resolutionInput.globalConfigText);
-  const resolvedConfig = {
-    vaultPath: expandHomePath(parsedGlobalConfig.vaultPath, resolutionInput.homedir),
-    subfolder: parsedGlobalConfig.subfolder,
+  return {
+    vaultPath: expandHomePath(resolutionInput.globalConfig.vaultPath, resolutionInput.homedir),
   };
-
-  return typeof parsedGlobalConfig.sync === "boolean"
-    ? { ...resolvedConfig, sync: parsedGlobalConfig.sync }
-    : resolvedConfig;
 };
 
 const resolveFromGlobalDotEnv = (resolutionInput) => {
@@ -300,7 +339,6 @@ const resolveFromGlobalDotEnv = (resolutionInput) => {
 
   return {
     vaultPath: expandHomePath(resolutionInput.globalDotEnvVaultPath, resolutionInput.homedir),
-    subfolder: pickFirstNonEmptyString([resolutionInput.globalDotEnvSubfolder], DEFAULT_SUBFOLDER),
   };
 };
 
@@ -326,10 +364,13 @@ const resolveEnvOverrides = (env) => {
   const envSync = typeof safeEnv[ENV_KEY_SYNC] === "string" ? safeEnv[ENV_KEY_SYNC] : "";
   const envCaptureMode =
     typeof safeEnv[ENV_KEY_CAPTURE_MODE] === "string" ? safeEnv[ENV_KEY_CAPTURE_MODE] : "";
+  const envMinimize =
+    typeof safeEnv[ENV_KEY_MINIMIZE] === "string" ? safeEnv[ENV_KEY_MINIMIZE] : "";
 
   return {
     syncFromEnv: parseEnvSyncOrNull(envSync),
     captureModeFromEnv: parseEnvCaptureModeOrNull(envCaptureMode),
+    minimizeFromEnv: parseEnvMinimizeOrNull(envMinimize),
   };
 };
 
@@ -345,79 +386,44 @@ const parseDotEnvSource = (dotEnvText) => {
     typeof parsedDotEnv[ENV_KEY_CAPTURE_MODE] === "string"
       ? parsedDotEnv[ENV_KEY_CAPTURE_MODE]
       : "";
+  const minimizeValue =
+    typeof parsedDotEnv[ENV_KEY_MINIMIZE] === "string" ? parsedDotEnv[ENV_KEY_MINIMIZE] : "";
 
   return {
     vaultPath,
     subfolder,
     sync: parseEnvSyncOrNull(syncValue),
     captureMode: parseEnvCaptureModeOrNull(captureModeValue),
+    minimize: parseEnvMinimizeOrNull(minimizeValue),
   };
 };
 
 const resolveProjectConfigSource = (configText) => {
   return {
+    vaultPath: parseConfigVaultPathOrNull(configText),
+    subfolder: parseConfigSubfolderOrNull(configText),
+    sync: parseConfigFieldOrNull(configText, parseSyncFieldFromConfigObject),
     captureMode: parseConfigCaptureModeOrNull(configText),
+    minimize: parseConfigMinimizeOrNull(configText),
   };
 };
 
 const resolveGlobalConfigSource = (globalConfigText) => {
   return {
+    vaultPath: parseConfigVaultPathOrNull(globalConfigText),
+    subfolder: parseConfigSubfolderOrNull(globalConfigText),
+    sync: parseConfigFieldOrNull(globalConfigText, parseSyncFieldFromConfigObject),
     captureMode: parseConfigCaptureModeOrNull(globalConfigText),
+    minimize: parseConfigMinimizeOrNull(globalConfigText),
   };
 };
 
-const resolveConfigSync = (resolvedConfig, syncFromGlobalDotEnv, syncFromDotEnv, syncFromEnv) => {
-  let sync = true;
-
-  if (typeof resolvedConfig.sync === "boolean") {
-    sync = resolvedConfig.sync;
-  }
-
-  if (typeof syncFromGlobalDotEnv === "boolean") {
-    sync = syncFromGlobalDotEnv;
-  }
-
-  if (typeof syncFromDotEnv === "boolean") {
-    sync = syncFromDotEnv;
-  }
-
-  if (typeof syncFromEnv === "boolean") {
-    sync = syncFromEnv;
-  }
-
-  return sync;
-};
-
-const resolveConfigCaptureMode = (
-  globalConfigCaptureMode,
-  configCaptureMode,
-  captureModeFromGlobalDotEnv,
-  captureModeFromDotEnv,
-  envCaptureMode,
-) => {
-  let captureMode = DEFAULT_CAPTURE_MODE;
-
-  if (typeof globalConfigCaptureMode === "string") {
-    captureMode = globalConfigCaptureMode;
-  }
-
-  if (typeof configCaptureMode === "string") {
-    captureMode = configCaptureMode;
-  }
-
-  if (typeof captureModeFromGlobalDotEnv === "string") {
-    captureMode = captureModeFromGlobalDotEnv;
-  }
-
-  if (typeof captureModeFromDotEnv === "string") {
-    captureMode = captureModeFromDotEnv;
-  }
-
-  if (typeof envCaptureMode === "string") {
-    captureMode = envCaptureMode;
-  }
-
-  return captureMode;
+const resolveScalarByPrecedence = (values, fallbackValue) => {
+  const reversedValues = [...values].reverse();
+  const resolvedValue = reversedValues.find(
+    (value) => value !== null && typeof value !== "undefined",
+  );
+  return typeof resolvedValue === "undefined" ? fallbackValue : resolvedValue;
 };
 
 const resolveVaultConfig = (cwd, configText, homedir, options = {}) => {
@@ -437,12 +443,10 @@ const resolveVaultConfig = (cwd, configText, homedir, options = {}) => {
 
   const resolutionInput = {
     homedir: safeHomedir,
-    configText: safeConfigText,
+    projectConfig: projectConfigSource,
     dotEnvVaultPath: projectDotEnvSource.vaultPath,
-    dotEnvSubfolder: projectDotEnvSource.subfolder,
-    globalConfigText: safeGlobalConfigText,
+    globalConfig: globalConfigSource,
     globalDotEnvVaultPath: globalDotEnvSource.vaultPath,
-    globalDotEnvSubfolder: globalDotEnvSource.subfolder,
   };
 
   const resolvedConfig = resolveVaultConfigFromAlternatives(resolutionInput);
@@ -453,25 +457,52 @@ const resolveVaultConfig = (cwd, configText, homedir, options = {}) => {
     );
   }
 
-  const sync = resolveConfigSync(
-    resolvedConfig,
-    globalDotEnvSource.sync,
-    projectDotEnvSource.sync,
-    envSource.syncFromEnv,
+  const subfolder = pickFirstNonEmptyString(
+    [
+      projectDotEnvSource.subfolder,
+      projectConfigSource.subfolder,
+      globalDotEnvSource.subfolder,
+      globalConfigSource.subfolder,
+    ],
+    DEFAULT_SUBFOLDER,
   );
-  const captureMode = resolveConfigCaptureMode(
-    globalConfigSource.captureMode,
-    projectConfigSource.captureMode,
-    globalDotEnvSource.captureMode,
-    projectDotEnvSource.captureMode,
-    envSource.captureModeFromEnv,
+  const sync = resolveScalarByPrecedence(
+    [
+      globalConfigSource.sync,
+      globalDotEnvSource.sync,
+      projectConfigSource.sync,
+      projectDotEnvSource.sync,
+      envSource.syncFromEnv,
+    ],
+    true,
+  );
+  const captureMode = resolveScalarByPrecedence(
+    [
+      globalConfigSource.captureMode,
+      globalDotEnvSource.captureMode,
+      projectConfigSource.captureMode,
+      projectDotEnvSource.captureMode,
+      envSource.captureModeFromEnv,
+    ],
+    DEFAULT_CAPTURE_MODE,
+  );
+  const minimize = resolveScalarByPrecedence(
+    [
+      globalConfigSource.minimize,
+      globalDotEnvSource.minimize,
+      projectConfigSource.minimize,
+      projectDotEnvSource.minimize,
+      envSource.minimizeFromEnv,
+    ],
+    DEFAULT_MINIMIZE,
   );
 
   return {
     vaultPath: resolvedConfig.vaultPath,
-    subfolder: resolvedConfig.subfolder,
+    subfolder,
     sync,
     captureMode,
+    minimize,
   };
 };
 

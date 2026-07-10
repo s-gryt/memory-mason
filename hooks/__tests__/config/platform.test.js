@@ -7,6 +7,7 @@ const {
   ENV_KEY_VAULT_PATH,
   ENV_KEY_SYNC,
   ENV_KEY_CAPTURE_MODE,
+  ENV_KEY_MINIMIZE,
 } = require("../../lib/config/constants");
 const {
   detectPlatform,
@@ -167,6 +168,26 @@ describe("parseMemoryMasonConfig", () => {
     });
   });
 
+  it("includes sync in result when sync field is a boolean", () => {
+    expect(
+      parseMemoryMasonConfig(
+        `{"vaultPath":"~/vault","subfolder":"${DEFAULT_SUBFOLDER}","sync":true}`,
+      ),
+    ).toEqual({
+      vaultPath: "~/vault",
+      subfolder: DEFAULT_SUBFOLDER,
+      sync: true,
+    });
+  });
+
+  it("omits sync from result when sync field is absent", () => {
+    const result = parseMemoryMasonConfig(
+      `{"vaultPath":"~/vault","subfolder":"${DEFAULT_SUBFOLDER}"}`,
+    );
+    expect(result).toEqual({ vaultPath: "~/vault", subfolder: DEFAULT_SUBFOLDER });
+    expect(Object.hasOwn(result, "sync")).toBe(false);
+  });
+
   it("throws on invalid config JSON", () => {
     expect(() => parseMemoryMasonConfig("{not-json")).toThrow("invalid memory-mason config JSON");
   });
@@ -268,6 +289,7 @@ describe("resolveEnvOverrides", () => {
     expect(configModule.__resolveEnvOverrides(null)).toEqual({
       syncFromEnv: null,
       captureModeFromEnv: null,
+      minimizeFromEnv: null,
     });
   });
 });
@@ -320,12 +342,13 @@ describe("resolveVaultConfig", () => {
     }
   };
 
-  const expectLiteVaultConfig = (result, vaultPath, subfolder, sync = true) => {
+  const expectLiteVaultConfig = (result, vaultPath, subfolder, sync = true, minimize = false) => {
     expect(result).toEqual({
       vaultPath,
       subfolder,
       sync,
       captureMode: CAPTURE_MODE_LITE,
+      minimize,
     });
   };
 
@@ -402,6 +425,7 @@ describe("resolveVaultConfig", () => {
       subfolder: "from-dotenv",
       sync: true,
       captureMode: CAPTURE_MODE_LITE,
+      minimize: false,
     });
   });
 
@@ -415,6 +439,7 @@ describe("resolveVaultConfig", () => {
       subfolder: "from-env-file",
       sync: true,
       captureMode: CAPTURE_MODE_LITE,
+      minimize: false,
     });
   });
 
@@ -441,6 +466,7 @@ describe("resolveVaultConfig", () => {
       subfolder: "from-dotenv",
       sync: true,
       captureMode: CAPTURE_MODE_LITE,
+      minimize: false,
     });
   });
 
@@ -462,6 +488,7 @@ describe("resolveVaultConfig", () => {
       subfolder: TEST_DEFAULT_NOTES_PATH,
       sync: true,
       captureMode: CAPTURE_MODE_LITE,
+      minimize: false,
     });
   });
 
@@ -479,6 +506,7 @@ describe("resolveVaultConfig", () => {
       subfolder: "global-brain",
       sync: true,
       captureMode: CAPTURE_MODE_LITE,
+      minimize: false,
     });
   });
 
@@ -492,6 +520,7 @@ describe("resolveVaultConfig", () => {
       subfolder: "global-brain",
       sync: false,
       captureMode: CAPTURE_MODE_LITE,
+      minimize: false,
     });
   });
 
@@ -505,10 +534,11 @@ describe("resolveVaultConfig", () => {
       subfolder: DEFAULT_SUBFOLDER,
       sync: true,
       captureMode: CAPTURE_MODE_LITE,
+      minimize: false,
     });
   });
 
-  it("uses global config when .env is present but missing vault path", () => {
+  it("uses project .env subfolder when .env is present but missing vault path", () => {
     expect(
       resolveVaultConfig(TEST_DEFAULT_REPO_PATH, "", TEST_DEFAULT_HOME_PATH, {
         dotEnvText: "MEMORY_MASON_SUBFOLDER=dotenv-only-subfolder",
@@ -516,9 +546,63 @@ describe("resolveVaultConfig", () => {
       }),
     ).toEqual({
       vaultPath: "/home/tester/global-vault",
-      subfolder: "global-brain",
+      subfolder: "dotenv-only-subfolder",
       sync: true,
       captureMode: CAPTURE_MODE_LITE,
+      minimize: false,
+    });
+  });
+
+  it("uses project .env subfolder even when vault path comes from project JSON", () => {
+    expect(
+      resolveVaultConfig(
+        TEST_DEFAULT_REPO_PATH,
+        '{"vaultPath":"~/json-vault","subfolder":"json-sub"}',
+        TEST_DEFAULT_HOME_PATH,
+        {
+          dotEnvText: "MEMORY_MASON_SUBFOLDER=dotenv-sub",
+        },
+      ),
+    ).toEqual({
+      vaultPath: "/home/tester/json-vault",
+      subfolder: "dotenv-sub",
+      sync: true,
+      captureMode: CAPTURE_MODE_LITE,
+      minimize: false,
+    });
+  });
+
+  it("uses project JSON subfolder even when vault path comes from global .env", () => {
+    expect(
+      resolveVaultConfig(
+        TEST_DEFAULT_REPO_PATH,
+        '{"subfolder":"project-json-sub"}',
+        TEST_DEFAULT_HOME_PATH,
+        {
+          globalDotEnvText: "MEMORY_MASON_VAULT_PATH=~/global-env-vault",
+        },
+      ),
+    ).toEqual({
+      vaultPath: "/home/tester/global-env-vault",
+      subfolder: "project-json-sub",
+      sync: true,
+      captureMode: CAPTURE_MODE_LITE,
+      minimize: false,
+    });
+  });
+
+  it("uses global .env subfolder even when vault path comes from global JSON", () => {
+    expect(
+      resolveVaultConfig(TEST_DEFAULT_REPO_PATH, "", TEST_DEFAULT_HOME_PATH, {
+        globalConfigText: '{"vaultPath":"~/global-json-vault","subfolder":"global-json-sub"}',
+        globalDotEnvText: "MEMORY_MASON_SUBFOLDER=global-env-sub",
+      }),
+    ).toEqual({
+      vaultPath: "/home/tester/global-json-vault",
+      subfolder: "global-env-sub",
+      sync: true,
+      captureMode: CAPTURE_MODE_LITE,
+      minimize: false,
     });
   });
 
@@ -536,6 +620,7 @@ describe("resolveVaultConfig", () => {
       subfolder: DEFAULT_SUBFOLDER,
       sync: true,
       captureMode: CAPTURE_MODE_LITE,
+      minimize: false,
     });
   });
 
@@ -551,6 +636,7 @@ describe("resolveVaultConfig", () => {
       subfolder: "env-brain",
       sync: true,
       captureMode: CAPTURE_MODE_LITE,
+      minimize: false,
     });
   });
 
@@ -566,6 +652,7 @@ describe("resolveVaultConfig", () => {
           subfolder: DEFAULT_SUBFOLDER,
           sync: true,
           captureMode: CAPTURE_MODE_LITE,
+          minimize: false,
         });
       });
     });
@@ -581,6 +668,7 @@ describe("resolveVaultConfig", () => {
           subfolder: DEFAULT_SUBFOLDER,
           sync: false,
           captureMode: CAPTURE_MODE_LITE,
+          minimize: false,
         });
       });
     });
@@ -596,6 +684,7 @@ describe("resolveVaultConfig", () => {
           subfolder: DEFAULT_SUBFOLDER,
           sync: true,
           captureMode: CAPTURE_MODE_LITE,
+          minimize: false,
         });
       });
     });
@@ -611,9 +700,10 @@ describe("resolveVaultConfig", () => {
           ),
         ).toEqual({
           vaultPath: TEST_DEFAULT_VAULT_FULL_PATH,
-          subfolder: DEFAULT_SUBFOLDER,
+          subfolder: "my-brain",
           sync: false,
           captureMode: CAPTURE_MODE_LITE,
+          minimize: false,
         });
       });
     });
@@ -629,9 +719,10 @@ describe("resolveVaultConfig", () => {
           ),
         ).toEqual({
           vaultPath: TEST_DEFAULT_VAULT_FULL_PATH,
-          subfolder: DEFAULT_SUBFOLDER,
+          subfolder: "my-brain",
           sync: true,
           captureMode: CAPTURE_MODE_LITE,
+          minimize: false,
         });
       });
     });
@@ -659,6 +750,7 @@ describe("resolveVaultConfig", () => {
           subfolder: TEST_DEFAULT_NOTES_PATH,
           sync: false,
           captureMode: CAPTURE_MODE_LITE,
+          minimize: false,
         });
       });
     });
@@ -676,6 +768,7 @@ describe("resolveVaultConfig", () => {
           subfolder: TEST_DEFAULT_NOTES_PATH,
           sync: true,
           captureMode: CAPTURE_MODE_LITE,
+          minimize: false,
         });
       });
     });
@@ -703,9 +796,10 @@ describe("resolveVaultConfig", () => {
           ),
         ).toEqual({
           vaultPath: "/home/tester/env-vault",
-          subfolder: DEFAULT_SUBFOLDER,
+          subfolder: "config-subfolder",
           sync: false,
           captureMode: CAPTURE_MODE_LITE,
+          minimize: false,
         });
       });
     });
@@ -724,6 +818,7 @@ describe("resolveVaultConfig", () => {
           subfolder: "env-sub",
           sync: true,
           captureMode: CAPTURE_MODE_LITE,
+          minimize: false,
         });
       });
     });
@@ -739,6 +834,7 @@ describe("resolveVaultConfig", () => {
           subfolder: DEFAULT_SUBFOLDER,
           sync: false,
           captureMode: CAPTURE_MODE_LITE,
+          minimize: false,
         });
       });
     });
@@ -757,6 +853,41 @@ describe("resolveVaultConfig", () => {
           subfolder: TEST_DEFAULT_NOTES_PATH,
           sync: false,
           captureMode: CAPTURE_MODE_LITE,
+          minimize: false,
+        });
+      });
+    });
+
+    it("uses project JSON sync when vault path comes from project .env", () => {
+      withMemoryMasonSync(null, () => {
+        expect(
+          resolveVaultConfig(TEST_DEFAULT_REPO_PATH, '{"sync":false}', TEST_DEFAULT_HOME_PATH, {
+            dotEnvText: "MEMORY_MASON_VAULT_PATH=~/env-vault",
+          }),
+        ).toEqual({
+          vaultPath: "/home/tester/env-vault",
+          subfolder: DEFAULT_SUBFOLDER,
+          sync: false,
+          captureMode: CAPTURE_MODE_LITE,
+          minimize: false,
+        });
+      });
+    });
+
+    it("uses global JSON sync when vault path comes from project .env and closer sources omit sync", () => {
+      withMemoryMasonSync(null, () => {
+        expect(
+          resolveVaultConfig(TEST_DEFAULT_REPO_PATH, "", TEST_DEFAULT_HOME_PATH, {
+            dotEnvText: "MEMORY_MASON_VAULT_PATH=~/env-vault",
+            globalConfigText:
+              '{"vaultPath":"~/global-json-vault","subfolder":"global-json-sub","sync":false}',
+          }),
+        ).toEqual({
+          vaultPath: "/home/tester/env-vault",
+          subfolder: "global-json-sub",
+          sync: false,
+          captureMode: CAPTURE_MODE_LITE,
+          minimize: false,
         });
       });
     });
@@ -772,6 +903,7 @@ describe("resolveVaultConfig", () => {
           subfolder: DEFAULT_SUBFOLDER,
           sync: false,
           captureMode: CAPTURE_MODE_LITE,
+          minimize: false,
         });
       });
     });
@@ -788,6 +920,7 @@ describe("resolveVaultConfig", () => {
           subfolder: DEFAULT_SUBFOLDER,
           sync: true,
           captureMode: CAPTURE_MODE_LITE,
+          minimize: false,
         });
       });
     });
@@ -803,6 +936,7 @@ describe("resolveVaultConfig", () => {
           subfolder: DEFAULT_SUBFOLDER,
           sync: false,
           captureMode: CAPTURE_MODE_LITE,
+          minimize: false,
         });
       });
     });
@@ -819,6 +953,7 @@ describe("resolveVaultConfig", () => {
         subfolder: DEFAULT_SUBFOLDER,
         sync: true,
         captureMode: CAPTURE_MODE_LITE,
+        minimize: false,
       });
     });
 
@@ -834,6 +969,7 @@ describe("resolveVaultConfig", () => {
         subfolder: TEST_DEFAULT_NOTES_PATH,
         sync: true,
         captureMode: CAPTURE_MODE_LITE,
+        minimize: false,
       });
     });
 
@@ -849,6 +985,7 @@ describe("resolveVaultConfig", () => {
         subfolder: TEST_DEFAULT_NOTES_PATH,
         sync: true,
         captureMode: CAPTURE_MODE_FULL,
+        minimize: false,
       });
     });
 
@@ -865,6 +1002,7 @@ describe("resolveVaultConfig", () => {
           subfolder: TEST_DEFAULT_NOTES_PATH,
           sync: true,
           captureMode: CAPTURE_MODE_FULL,
+          minimize: false,
         });
       });
     });
@@ -882,6 +1020,7 @@ describe("resolveVaultConfig", () => {
           subfolder: TEST_DEFAULT_NOTES_PATH,
           sync: true,
           captureMode: CAPTURE_MODE_LITE,
+          minimize: false,
         });
       });
     });
@@ -927,6 +1066,7 @@ describe("resolveVaultConfig", () => {
         subfolder: TEST_DEFAULT_NOTES_PATH,
         sync: true,
         captureMode: CAPTURE_MODE_FULL,
+        minimize: false,
       });
     });
 
@@ -941,6 +1081,7 @@ describe("resolveVaultConfig", () => {
         subfolder: "global-brain",
         sync: true,
         captureMode: CAPTURE_MODE_FULL,
+        minimize: false,
       });
     });
 
@@ -954,6 +1095,7 @@ describe("resolveVaultConfig", () => {
         subfolder: "global-brain",
         sync: true,
         captureMode: CAPTURE_MODE_FULL,
+        minimize: false,
       });
     });
 
@@ -969,6 +1111,7 @@ describe("resolveVaultConfig", () => {
         subfolder: TEST_DEFAULT_NOTES_PATH,
         sync: true,
         captureMode: CAPTURE_MODE_LITE,
+        minimize: false,
       });
     });
 
@@ -993,7 +1136,185 @@ describe("resolveVaultConfig", () => {
           subfolder: TEST_DEFAULT_NOTES_PATH,
           sync: true,
           captureMode: CAPTURE_MODE_FULL,
+          minimize: false,
         });
+      });
+    });
+  });
+
+  describe("minimize resolution", () => {
+    const withMemoryMasonMinimize = (value, callback) => {
+      const hadMinimize = Object.hasOwn(process.env, ENV_KEY_MINIMIZE);
+      const previousMinimize = process.env[ENV_KEY_MINIMIZE];
+
+      if (typeof value === "string") {
+        process.env[ENV_KEY_MINIMIZE] = value;
+      } else {
+        delete process.env[ENV_KEY_MINIMIZE];
+      }
+
+      try {
+        return callback();
+      } finally {
+        if (hadMinimize && typeof previousMinimize === "string") {
+          process.env[ENV_KEY_MINIMIZE] = previousMinimize;
+        } else {
+          delete process.env[ENV_KEY_MINIMIZE];
+        }
+      }
+    };
+
+    it("defaults minimize to false when not configured", () => {
+      expect(
+        resolveVaultConfig(
+          TEST_DEFAULT_REPO_PATH,
+          `{"vaultPath":"~/vault","subfolder":"${TEST_DEFAULT_NOTES_PATH}"}`,
+          TEST_DEFAULT_HOME_PATH,
+        ),
+      ).toEqual({
+        vaultPath: TEST_DEFAULT_VAULT_FULL_PATH,
+        subfolder: TEST_DEFAULT_NOTES_PATH,
+        sync: true,
+        captureMode: CAPTURE_MODE_LITE,
+        minimize: false,
+      });
+    });
+
+    it("resolves minimize true from project JSON config", () => {
+      expect(
+        resolveVaultConfig(
+          TEST_DEFAULT_REPO_PATH,
+          `{"vaultPath":"~/vault","subfolder":"${TEST_DEFAULT_NOTES_PATH}","minimize":true}`,
+          TEST_DEFAULT_HOME_PATH,
+        ),
+      ).toEqual({
+        vaultPath: TEST_DEFAULT_VAULT_FULL_PATH,
+        subfolder: TEST_DEFAULT_NOTES_PATH,
+        sync: true,
+        captureMode: CAPTURE_MODE_LITE,
+        minimize: true,
+      });
+    });
+
+    it("resolves minimize false from project JSON config", () => {
+      expect(
+        resolveVaultConfig(
+          TEST_DEFAULT_REPO_PATH,
+          `{"vaultPath":"~/vault","subfolder":"${TEST_DEFAULT_NOTES_PATH}","minimize":false}`,
+          TEST_DEFAULT_HOME_PATH,
+        ),
+      ).toEqual({
+        vaultPath: TEST_DEFAULT_VAULT_FULL_PATH,
+        subfolder: TEST_DEFAULT_NOTES_PATH,
+        sync: true,
+        captureMode: CAPTURE_MODE_LITE,
+        minimize: false,
+      });
+    });
+
+    it("throws on invalid project JSON minimize type", () => {
+      expect(() =>
+        resolveVaultConfig(
+          TEST_DEFAULT_REPO_PATH,
+          `{"vaultPath":"~/vault","subfolder":"${TEST_DEFAULT_NOTES_PATH}","minimize":"yes"}`,
+          TEST_DEFAULT_HOME_PATH,
+        ),
+      ).toThrow("config minimize must be a boolean, got: string");
+    });
+
+    it("resolves minimize from project .env", () => {
+      expect(
+        resolveVaultConfig(TEST_DEFAULT_REPO_PATH, "", TEST_DEFAULT_HOME_PATH, {
+          dotEnvText:
+            "MEMORY_MASON_VAULT_PATH=~/vault\nMEMORY_MASON_SUBFOLDER=notes\nMEMORY_MASON_MINIMIZE=true",
+        }),
+      ).toEqual({
+        vaultPath: TEST_DEFAULT_VAULT_FULL_PATH,
+        subfolder: TEST_DEFAULT_NOTES_PATH,
+        sync: true,
+        captureMode: CAPTURE_MODE_LITE,
+        minimize: true,
+      });
+    });
+
+    it("resolves minimize from global .env", () => {
+      expect(
+        resolveVaultConfig(TEST_DEFAULT_REPO_PATH, "", TEST_DEFAULT_HOME_PATH, {
+          globalDotEnvText:
+            "MEMORY_MASON_VAULT_PATH=~/global-vault\nMEMORY_MASON_SUBFOLDER=global-brain\nMEMORY_MASON_MINIMIZE=true",
+        }),
+      ).toEqual({
+        vaultPath: "/home/tester/global-vault",
+        subfolder: "global-brain",
+        sync: true,
+        captureMode: CAPTURE_MODE_LITE,
+        minimize: true,
+      });
+    });
+
+    it("resolves minimize from global config", () => {
+      expect(
+        resolveVaultConfig(TEST_DEFAULT_REPO_PATH, "", TEST_DEFAULT_HOME_PATH, {
+          globalConfigText: `{"vaultPath":"~/global-vault","subfolder":"global-brain","minimize":true}`,
+        }),
+      ).toEqual({
+        vaultPath: "/home/tester/global-vault",
+        subfolder: "global-brain",
+        sync: true,
+        captureMode: CAPTURE_MODE_LITE,
+        minimize: true,
+      });
+    });
+
+    it("project .env minimize overrides global config minimize", () => {
+      expect(
+        resolveVaultConfig(TEST_DEFAULT_REPO_PATH, "", TEST_DEFAULT_HOME_PATH, {
+          dotEnvText:
+            "MEMORY_MASON_VAULT_PATH=~/vault\nMEMORY_MASON_SUBFOLDER=notes\nMEMORY_MASON_MINIMIZE=false",
+          globalConfigText: `{"vaultPath":"~/global-vault","subfolder":"global-brain","minimize":true}`,
+        }),
+      ).toEqual({
+        vaultPath: TEST_DEFAULT_VAULT_FULL_PATH,
+        subfolder: TEST_DEFAULT_NOTES_PATH,
+        sync: true,
+        captureMode: CAPTURE_MODE_LITE,
+        minimize: false,
+      });
+    });
+
+    it("env var minimize overrides project .env minimize", () => {
+      withMemoryMasonMinimize("true", () => {
+        expect(
+          resolveVaultConfig(TEST_DEFAULT_REPO_PATH, "", TEST_DEFAULT_HOME_PATH, {
+            dotEnvText:
+              "MEMORY_MASON_VAULT_PATH=~/vault\nMEMORY_MASON_SUBFOLDER=notes\nMEMORY_MASON_MINIMIZE=false",
+          }),
+        ).toEqual({
+          vaultPath: TEST_DEFAULT_VAULT_FULL_PATH,
+          subfolder: TEST_DEFAULT_NOTES_PATH,
+          sync: true,
+          captureMode: CAPTURE_MODE_LITE,
+          minimize: true,
+        });
+      });
+    });
+
+    it("throws on invalid project .env minimize", () => {
+      expect(() =>
+        resolveVaultConfig(TEST_DEFAULT_REPO_PATH, "", TEST_DEFAULT_HOME_PATH, {
+          dotEnvText:
+            "MEMORY_MASON_VAULT_PATH=~/vault\nMEMORY_MASON_SUBFOLDER=notes\nMEMORY_MASON_MINIMIZE=yes",
+        }),
+      ).toThrow("MEMORY_MASON_MINIMIZE must be 'true' or 'false', got: yes");
+    });
+
+    it("throws on invalid env var minimize", () => {
+      withMemoryMasonMinimize("yes", () => {
+        expect(() =>
+          resolveVaultConfig(TEST_DEFAULT_REPO_PATH, "", TEST_DEFAULT_HOME_PATH, {
+            dotEnvText: "MEMORY_MASON_VAULT_PATH=~/vault\nMEMORY_MASON_SUBFOLDER=notes",
+          }),
+        ).toThrow("MEMORY_MASON_MINIMIZE must be 'true' or 'false', got: yes");
       });
     });
   });

@@ -7,7 +7,7 @@ allowed-tools: "Read Glob Grep Bash(obsidian *)"
 
 ## Objective
 
-Run fourteen health checks on the knowledge base and report all findings by severity.
+Run eighteen health checks on the knowledge base and report all findings by severity.
 
 This command is operational only. Do not write `/mml`, `/memory-mason:mml`, or their execution chatter back into the vault.
 
@@ -49,7 +49,7 @@ See [detailed specifications](references/checks.md) for exact rules, report form
 4. **Stale articles** (warning) — report raw captures whose current hash differs from the compiled hash in `state.json`.
 5. **Missing backlinks** (suggestion) — flag A→B links where B does not link back to A.
 6. **Sparse articles** (suggestion) — report articles with fewer than 200 words (excluding frontmatter).
-7. **Large raw captures** (warning/error) — warn >500 KB, error >2 MB total chunk size per daily folder.
+7. **Large raw captures** (warning/error) — warn >500 KB, error >2 MB total chunk size per daily folder (sum all chunk files regardless of naming layout: legacy numeric `001.md` files and session-scoped `HHMMSS-{sid8}-NNN.md` files).
 8. **Manifest integrity** (error/warning/suggestion) — validate `_meta/manifest.json` structure, page references, and hash agreement with `state.json`.
 9. **Session context freshness** (warning/suggestion) — validate `_meta/context.md` exists, has required frontmatter, and is not older than `last_compile`.
 10. **Unresolved contradictions** (warning) — count `[!contradiction]` callouts in `concepts/` articles.
@@ -57,6 +57,10 @@ See [detailed specifications](references/checks.md) for exact rules, report form
 12. **Knowledge gaps** (suggestion) — count `[!gap]` callouts in `concepts/` articles.
 13. **Wikilink format convention** (error) — flag bare slugs and links missing the `{subfolder}/` prefix.
 14. **Cross-project references** (error) — flag links starting with a subfolder prefix other than `{subfolder}/`.
+15. **Session note coverage** (warning) — compiled date has sessions recorded in `_raw/{YYYY-MM-DD}/meta.json` (schemaVersion 2) but the corresponding `sessions/YYYY-MM-DD-{sid8}.md` file is missing.
+16. **Bases integrity** (suggestion) — `atlas/bases/*.base` files expected after at least one compile are absent or contain invalid YAML.
+17. **Supersede integrity** (error) — a `superseded_by` target wikilink does not resolve; a superseded concept (has `superseded_by`) has `status: evergreen`; or `has_contradiction` flag does not match callout presence.
+18. **Index session rows** (warning) — a session note exists in `sessions/` with no corresponding `session` row in `index.md`.
 
 ## Output Format
 

@@ -1,18 +1,17 @@
 #!/usr/bin/env node
-/**
- * This module handles user prompt submit logic.
- */
+// Handles the user prompt submit hook entrypoint.
 "use strict";
 
 const fs = require("node:fs");
-const { parseJsonInput, detectPlatform } = require("./lib/config/config");
-const { buildCommandErrorResult } = require("./lib/cli/cli");
-const { buildDailyEntry } = require("./lib/vault/vault");
+const config = require("./lib/config/config");
+const cli = require("./lib/cli/cli");
+const vault = require("./lib/vault/vault");
 const { appendToDaily } = require("./lib/vault/writer");
 const { extractPromptEntry, isMmCommand } = require("./lib/prompt/prompt");
 const { parseJsonlTranscript } = require("./lib/capture/transcript");
 const { recordCaptureMetrics } = require("./lib/state/state");
-const { buildCaptureTimestamp } = require("./lib/hook/capture-ops");
+const captureOps = require("./lib/hook/capture-ops");
+const { detectSensitiveContent } = require("./lib/filter/sensitive-guard");
 const {
   readStdin,
   toStringOrEmpty,
@@ -33,17 +32,23 @@ const {
   getMmSuppressed,
   setMmSuppressed,
   hashCoachingPrompt,
+  buildCoachingSnippet,
   recordCoachingHit,
   shouldEmitCoachingNag,
   markCoachingNagged,
+  isExchangeOpen,
+  openExchange,
+  closeExchange,
 } = require("./lib/capture/capture-state");
-const { emitCoachingAdvisory } = require("./lib/capture/coaching-emit");
+const { emitRepeatedPlanCoachingNag } = require("./lib/capture/coaching-emit");
+const { COACHING_KIND_PROMPT_REPEAT } = require("./lib/capture/constants");
 const { UTF8_ENCODING } = require("./lib/shared/constants");
 const { HOOK_EVENT_USER_PROMPT_SUBMIT_KEBAB } = require("./lib/hook/hook-events");
+const EMPTY_STRING = "";
 
 function resolvePromptPayload(rawStdin) {
-  const input = parseJsonInput(rawStdin);
-  const platform = detectPlatform(input);
+  const input = config.parseJsonInput(rawStdin);
+  const platform = config.detectPlatform(input);
   const promptEntry = extractPromptEntry(platform, input);
   return {
     input,
@@ -69,12 +74,14 @@ function buildRunPlan(rawStdin, runtime = {}) {
   const payload = resolvePromptPayload(rawStdin);
   const cwd = resolveInputCwd(payload.input, fallbackCwd);
   const anchors = buildPromptStateAnchors(payload.input);
-  const captureTimestamp = buildCaptureTimestamp();
+  const captureTimestamp = captureOps.buildCaptureTimestamp();
+  const platform = config.detectPlatform(payload.input);
   return {
     env,
     homedir,
     cwd,
     input: payload.input,
+    platform,
     promptEntry: payload.promptEntry,
     transcriptPath: anchors.transcriptPath,
     sessionId: anchors.sessionId,
@@ -88,36 +95,55 @@ function shouldUpdateTranscriptState(transcriptPath, sessionId) {
   return transcriptPath !== "" && sessionId !== "" && fs.existsSync(transcriptPath);
 }
 
-function updateTranscriptState(resolvedConfig, transcriptPath, sessionId) {
+function updateTranscriptState(captureState, transcriptPath, sessionId) {
   const transcriptContent = fs.readFileSync(transcriptPath, UTF8_ENCODING);
   const turns = parseJsonlTranscript(transcriptContent);
-  const captureState = loadCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder);
-  const updatedState = setTranscriptTurnCount(captureState, sessionId, turns.length);
-  saveCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder, updatedState);
+  return setTranscriptTurnCount(captureState, sessionId, turns.length);
 }
 
-function persistPromptSubmission(plan, resolvedConfig) {
-  if (shouldUpdateTranscriptState(plan.transcriptPath, plan.sessionId)) {
-    updateTranscriptState(resolvedConfig, plan.transcriptPath, plan.sessionId);
-  }
+function buildSessionContextForPlan(plan) {
+  return vault.buildSessionContext(plan.sessionId, plan.platform, plan.cwd);
+}
+
+function persistPromptSubmission(plan, resolvedConfig, captureState) {
+  const latestState = shouldUpdateTranscriptState(plan.transcriptPath, plan.sessionId)
+    ? updateTranscriptState(captureState, plan.transcriptPath, plan.sessionId)
+    : captureState;
 
   const vaultPath = resolvedConfig.vaultPath;
   const subfolder = resolvedConfig.subfolder;
   const promptText = plan.promptEntry.text;
+  const sensitivity = detectSensitiveContent(promptText);
+  const storedPromptText = sensitivity.isSensitive
+    ? `prompt withheld: ${sensitivity.reasons.join(", ")}`
+    : promptText;
+  const session = buildSessionContextForPlan(plan);
 
-  const dailyEntry = buildDailyEntry(plan.promptEntry.entryName, promptText, plan.timestamp);
-  appendToDaily(vaultPath, subfolder, plan.today, dailyEntry);
+  const exchangeWasOpen = plan.sessionId !== "" && isExchangeOpen(latestState, plan.sessionId);
+  let nextState = exchangeWasOpen ? closeExchange(latestState, plan.sessionId) : latestState;
+
+  const dailyEntry = vault.buildDailyEntry(
+    plan.promptEntry.entryName,
+    storedPromptText,
+    plan.timestamp,
+  );
+  appendToDaily(vaultPath, subfolder, plan.today, dailyEntry, { session });
+
+  if (plan.sessionId !== "") {
+    nextState = openExchange(nextState, plan.sessionId, plan.iso);
+  }
+
   recordCaptureMetrics(
     vaultPath,
     subfolder,
     HOOK_EVENT_USER_PROMPT_SUBMIT_KEBAB,
     plan.iso,
     promptText,
-    promptText,
+    storedPromptText,
   );
-}
 
-const COACHING_PROMPT_REPEAT_KIND = "prompt-repeat";
+  return nextState;
+}
 
 function tryHashCoachingPrompt(text) {
   try {
@@ -136,25 +162,32 @@ function applyCoachingToState(state, plan, resolvedConfig) {
     return state;
   }
 
-  const updatedState = recordCoachingHit(state, hash, plan.sessionId, plan.iso);
-
-  if (!shouldEmitCoachingNag(updatedState, hash, plan.sessionId)) {
-    return updatedState;
-  }
-
-  const entry = updatedState.coachingState.promptHashCounts[hash];
-  emitCoachingAdvisory(resolvedConfig.vaultPath, resolvedConfig.subfolder, plan.today, {
-    kind: COACHING_PROMPT_REPEAT_KIND,
+  const sensitivity = detectSensitiveContent(plan.promptEntry.text);
+  const snippet = sensitivity.isSensitive
+    ? EMPTY_STRING
+    : buildCoachingSnippet(COACHING_KIND_PROMPT_REPEAT, plan.promptEntry.text);
+  const updatedState = recordCoachingHit(
+    state,
     hash,
-    count: entry.count,
-    sessionId: plan.sessionId,
-    iso: plan.iso,
+    plan.sessionId,
+    plan.iso,
+    COACHING_KIND_PROMPT_REPEAT,
+    snippet,
+  );
+
+  return emitRepeatedPlanCoachingNag({
+    state: updatedState,
+    hash,
+    plan,
+    resolvedConfig,
+    kind: COACHING_KIND_PROMPT_REPEAT,
+    shouldEmitNag: shouldEmitCoachingNag,
+    markNagged: markCoachingNagged,
   });
-  return markCoachingNagged(updatedState, hash, plan.sessionId);
 }
 
 function toCommandErrorResult(error) {
-  return buildCommandErrorResult(error);
+  return cli.buildCommandErrorResult(error);
 }
 
 function run(rawStdin, runtime = {}) {
@@ -183,9 +216,10 @@ function run(rawStdin, runtime = {}) {
       ? setMmSuppressed(captureState, false)
       : captureState;
     const coachedState = applyCoachingToState(unsuppressedState, plan, resolvedConfig);
-    saveCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder, coachedState);
-
-    persistPromptSubmission(plan, resolvedConfig);
+    const stampedState =
+      plan.cwd !== "" ? { ...coachedState, lastProjectPath: plan.cwd } : coachedState;
+    const finalState = persistPromptSubmission(plan, resolvedConfig, stampedState);
+    saveCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder, finalState);
     return buildSuccessResult();
   } catch (error) {
     return toCommandErrorResult(error);

@@ -10,10 +10,12 @@ const {
   assertNonEmptyString,
   assertObjectRecord,
   assertPositiveInteger,
+  isObjectRecord,
 } = require("../shared/assert");
 const { CHUNK_ID_WIDTH } = require("../vault/constants");
 
 const MAX_COACHING_META_COUNT = 999;
+const COACHING_META_WRITE_FLAG = "wx";
 
 const buildCoachingMetaDirPath = (vaultPath, subfolder, dateIso) =>
   path.join(buildDailyFolderPath(vaultPath, subfolder, dateIso), VAULT_META_DIR_NAME);
@@ -26,7 +28,12 @@ const buildCoachingFrontmatter = (payload) => {
   assertNonEmptyString("payload.sessionId", payload.sessionId);
   assertNonEmptyString("payload.iso", payload.iso);
 
-  return `---\nkind: ${payload.kind}\nhash: ${payload.hash}\ncount: ${payload.count}\nsessionId: ${payload.sessionId}\niso: ${payload.iso}\n---\n\n`;
+  const snippetLine =
+    typeof payload.snippet === "string" && payload.snippet !== ""
+      ? `snippet: ${JSON.stringify(payload.snippet)}\n`
+      : "";
+
+  return `---\nkind: ${payload.kind}\nhash: ${payload.hash}\ncount: ${payload.count}\nsessionId: ${payload.sessionId}\niso: ${payload.iso}\n${snippetLine}---\n\n`;
 };
 
 const nextCoachingMetaOrdinal = (metaDirPath, fsApi = fs) => {
@@ -56,24 +63,101 @@ const nextCoachingMetaOrdinal = (metaDirPath, fsApi = fs) => {
   return max + 1;
 };
 
+const writeCoachingMetaFile = (filePath, content, fsApi) => {
+  try {
+    fsApi.writeFileSync(filePath, content, {
+      encoding: UTF8_ENCODING,
+      flag: COACHING_META_WRITE_FLAG,
+    });
+    return true;
+  } catch (error) {
+    if (error && error.code === "EEXIST") {
+      return false;
+    }
+
+    throw error;
+  }
+};
+
+const COACHING_EMIT_FAILURE_PREFIX = "[memory-mason] coaching advisory write failed";
+
 const emitCoachingAdvisory = (vaultPath, subfolder, dateIso, payload, fsApi = fs) => {
   assertNonEmptyString("vaultPath", vaultPath);
   assertNonEmptyString("subfolder", subfolder);
   assertNonEmptyString("dateIso", dateIso);
   assertObjectRecord("payload", payload);
 
-  const metaDirPath = buildCoachingMetaDirPath(vaultPath, subfolder, dateIso);
-
-  fsApi.mkdirSync(metaDirPath, { recursive: true });
-
-  const ordinal = nextCoachingMetaOrdinal(metaDirPath, fsApi);
-  const fileName = `${String(ordinal).padStart(CHUNK_ID_WIDTH, "0")}.md`;
-  const filePath = path.join(metaDirPath, fileName);
   const content = buildCoachingFrontmatter(payload);
 
-  fsApi.writeFileSync(filePath, content, UTF8_ENCODING);
+  try {
+    const metaDirPath = buildCoachingMetaDirPath(vaultPath, subfolder, dateIso);
 
-  return { filePath, ordinal };
+    fsApi.mkdirSync(metaDirPath, { recursive: true });
+
+    let ordinal = nextCoachingMetaOrdinal(metaDirPath, fsApi);
+
+    while (ordinal <= MAX_COACHING_META_COUNT) {
+      const fileName = `${String(ordinal).padStart(CHUNK_ID_WIDTH, "0")}.md`;
+      const filePath = path.join(metaDirPath, fileName);
+
+      if (writeCoachingMetaFile(filePath, content, fsApi)) {
+        return { filePath, ordinal };
+      }
+
+      ordinal += 1;
+    }
+
+    throw new Error("coaching meta count exceeds 999");
+  } catch (error) {
+    process.stderr.write(`${COACHING_EMIT_FAILURE_PREFIX}: ${error.message}\n`);
+    return null;
+  }
+};
+
+const emitRepeatedCoachingNag = (options) => {
+  const { state, hash, sessionId, resolvedConfig, dateIso, advisory, shouldEmitNag, markNagged } =
+    options;
+
+  if (!shouldEmitNag(state, hash, sessionId)) {
+    return state;
+  }
+
+  const entry = state.coachingState.promptHashCounts[hash];
+  if (!isObjectRecord(entry)) {
+    return state;
+  }
+
+  const emitted = emitCoachingAdvisory(
+    resolvedConfig.vaultPath,
+    resolvedConfig.subfolder,
+    dateIso,
+    {
+      ...advisory,
+      hash,
+      count: entry.count,
+      sessionId,
+      snippet: entry.snippet,
+    },
+  );
+  if (emitted === null) {
+    return state;
+  }
+  return markNagged(state, hash, sessionId);
+};
+
+const emitRepeatedPlanCoachingNag = (options) => {
+  const { state, hash, plan, resolvedConfig, kind, shouldEmitNag, markNagged } = options;
+
+  return emitRepeatedCoachingNag({
+    state,
+    hash,
+    sessionId: plan.sessionId,
+    resolvedConfig,
+    dateIso: plan.today,
+    advisory: { kind, iso: plan.iso },
+    shouldEmitNag,
+    markNagged,
+  });
 };
 
 module.exports = {
@@ -81,4 +165,6 @@ module.exports = {
   buildCoachingFrontmatter,
   nextCoachingMetaOrdinal,
   emitCoachingAdvisory,
+  emitRepeatedCoachingNag,
+  emitRepeatedPlanCoachingNag,
 };

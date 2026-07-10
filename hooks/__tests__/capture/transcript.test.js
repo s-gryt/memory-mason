@@ -633,6 +633,21 @@ describe("filterMmTurns", () => {
     expect(filterMmTurns(turns)).toEqual([{ role: TRANSCRIPT_ROLE_USER, content: "normal" }]);
   });
 
+  it("filters every assistant turn after an /mm user turn until the next user turn", () => {
+    const turns = [
+      { role: TRANSCRIPT_ROLE_USER, content: "/mmc" },
+      { role: TRANSCRIPT_ROLE_ASSISTANT, content: "hidden intermediate" },
+      { role: TRANSCRIPT_ROLE_ASSISTANT, content: "hidden final" },
+      { role: TRANSCRIPT_ROLE_USER, content: "normal user" },
+      { role: TRANSCRIPT_ROLE_ASSISTANT, content: "visible reply" },
+    ];
+
+    expect(filterMmTurns(turns)).toEqual([
+      { role: TRANSCRIPT_ROLE_USER, content: "normal user" },
+      { role: TRANSCRIPT_ROLE_ASSISTANT, content: "visible reply" },
+    ]);
+  });
+
   it("does not filter assistant turns not preceded by /mm user turn", () => {
     const turns = [
       { role: TRANSCRIPT_ROLE_USER, content: "hi" },

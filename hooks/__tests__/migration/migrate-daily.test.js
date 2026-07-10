@@ -284,8 +284,11 @@ describe("migrateFlatToChunked - commit mode", () => {
 
   it("writes index.md", () => {
     const { fsApi, paths } = runTwoChunkCommit();
+    const meta = JSON.parse(fsApi._files[paths.metaPath]);
 
-    expect(fsApi._files[paths.indexPath]).toBe(buildChunkIndexContent(paths.dateIso, TWO));
+    expect(fsApi._files[paths.indexPath]).toBe(
+      buildChunkIndexContent(paths.subfolder, paths.dateIso, meta.chunks),
+    );
   });
 
   it("does not delete source flat file", () => {

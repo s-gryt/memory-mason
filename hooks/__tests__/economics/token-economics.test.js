@@ -350,4 +350,38 @@ describe("accumulateCaptureMetrics", () => {
       ),
     ).toThrow("capturedAt must be a non-empty string");
   });
+
+  it("records zero savings when raw content equals stored content (minimize off path)", () => {
+    const content = TEXT_EIGHT;
+    expect(
+      accumulateCaptureMetrics(
+        defaultCaptureMetrics(),
+        SOURCE_POST_TOOL_USE,
+        TIMESTAMP_ONE,
+        content,
+        content,
+      ),
+    ).toEqual({
+      capture_count: ONE,
+      total_raw_chars: EIGHT,
+      total_stored_chars: EIGHT,
+      total_raw_tokens: TWO,
+      total_stored_tokens: TWO,
+      total_savings_chars: ZERO,
+      total_savings_tokens: ZERO,
+      total_savings_percent: ZERO,
+      last_capture_at: TIMESTAMP_ONE,
+      last_capture: {
+        source: SOURCE_POST_TOOL_USE,
+        captured_at: TIMESTAMP_ONE,
+        raw_chars: EIGHT,
+        stored_chars: EIGHT,
+        raw_tokens: TWO,
+        stored_tokens: TWO,
+        savings_chars: ZERO,
+        savings_tokens: ZERO,
+        savings_percent: ZERO,
+      },
+    });
+  });
 });

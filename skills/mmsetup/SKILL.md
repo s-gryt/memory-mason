@@ -28,6 +28,7 @@ Identify which agent you are running in:
 - If `CLAUDE_CONFIG_DIR` or `CLAUDE_PLUGIN_ROOT` is set -> Claude Code
 - If `.github/hooks/session-start.json` exists in workspace -> GitHub Copilot workspace install already done
 - If `~/.copilot/hooks/memory-mason/` exists -> GitHub Copilot user-level already done
+- If `gemini-extension.json` exists in workspace root -> Gemini CLI
 - If `~/.codex/` or `.codex/` exists -> Codex
 - Otherwise -> skills-only host (Cursor, Windsurf, Cline, etc.)
 
@@ -36,6 +37,7 @@ Identify which agent you are running in:
 For Claude Code: check `~/.claude/hooks/memory-mason/session-start.js` exists AND `~/.claude/settings.json` contains memory-mason hook entries.
 For Copilot: check `~/.copilot/hooks/memory-mason/session-start.js` exists.
 For Codex: check `~/.codex/hooks/memory-mason/session-start.js` exists.
+For Gemini CLI: check whether the extension is already installed or linked in the active Gemini extensions directory before reinstalling.
 
 If already installed: report status and skip unless user says "reinstall" or "force".
 
@@ -50,12 +52,15 @@ Check if vault is already configured (file-based vault-path priority order):
 If none found, ask user and create global config:
 1. Ask: "What is the absolute path to your Obsidian vault?"
 2. Ask: "What subfolder name should Memory Mason use? (default: ai-knowledge)"
-3. Create `~/.memory-mason/config.json`:
+3. Ask: "Enable deterministic assistant prose compression before vault writes? (default: no)"
+4. Create `~/.memory-mason/config.json`:
 ```json
-{ "vaultPath": "<input>", "subfolder": "<input>" }
+{ "vaultPath": "<input>", "subfolder": "<input>", "minimize": <true|false> }
 ```
 
-See config priority order above; JSON and `.env` formats both accepted.
+Set `minimize` to `true` only when the user explicitly opts in (step-3 answer). Default is `false`.
+
+`minimize` precedence (highest first): process environment variable `MEMORY_MASON_MINIMIZE` > `.env` file `MEMORY_MASON_MINIMIZE` > `config.json` key `minimize`. Process env overrides everything.
 
 ### Step 4: Install Hooks (if missing)
 

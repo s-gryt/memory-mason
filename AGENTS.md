@@ -18,7 +18,7 @@ path with any supported Memory Mason config source: project `.env`, project
 
 Vault layout:
 
-- `{vault}/{subfolder}/daily/` — Captured session logs, either flat daily files or folder-per-day chunks
+- `{vault}/{subfolder}/_raw/YYYY-MM-DD/` — Captured session logs as session-scoped chunk files (`{HHMMSS}-{sid8}-{NNN}.md`), with `index.md` and a `meta.json` registry (schemaVersion 2, `sessionId` per chunk); legacy flat daily files and `001.md` chunks remain readable
 - `{vault}/{subfolder}/knowledge/concepts/` — Compiled concept articles
 - `{vault}/{subfolder}/knowledge/connections/` — Cross-concept synthesis articles
 - `{vault}/{subfolder}/knowledge/qa/` — Filed query answers

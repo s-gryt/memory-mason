@@ -11,8 +11,9 @@ const {
   GLOBAL_MM_DIR_NAME,
   GLOBAL_CONFIG_FILE_NAME,
 } = require("../../lib/config/constants");
-const { buildDailyChunkPath, buildDailyFilePath } = require("../../lib/vault/vault");
+const { buildDailyFilePath } = require("../../lib/vault/vault");
 const { resolveCaptureStatePath } = require("../../lib/capture/capture-state");
+const { resolveStatePath } = require("../../lib/state/state");
 const userPromptSubmit = require("../../user-prompt-submit");
 const { materializeProjectDotEnvConfig } = require("../helpers/project-dot-env");
 const {
@@ -38,6 +39,8 @@ const {
   buildTranscript,
   cleanupGeneratedArtifacts,
   runHookEntrypoint,
+  readFirstDailyChunk,
+  dailyChunkExists,
 } = require("../helpers/entrypoint-runtime");
 const hooksRoot = path.resolve(__dirname, "..", "..");
 const ENTRYPOINT = "user-prompt-submit.js";
@@ -93,6 +96,10 @@ describe("user-prompt-submit.js", () => {
     const homeDir = createTempDir(TEST_HOME_PREFIX);
     const vaultPath = createTempDir(TEST_VAULT_PREFIX);
     const hooksEnvPath = path.join(hooksRoot, DOTENV_FILE_NAME);
+    const hooksEnvExisted = fs.existsSync(hooksEnvPath);
+    const originalHooksEnvText = hooksEnvExisted
+      ? fs.readFileSync(hooksEnvPath, UTF8_ENCODING)
+      : "";
 
     const result = runHookEntrypoint(ENTRYPOINT, {
       payload: {
@@ -103,10 +110,64 @@ describe("user-prompt-submit.js", () => {
       env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
-    const dailyPath = buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1);
     expect(result.status).toBe(0);
-    expect(fs.existsSync(hooksEnvPath)).toBe(false);
-    expect(fs.readFileSync(dailyPath, UTF8_ENCODING)).toContain("remember hooks");
+    if (hooksEnvExisted) {
+      expect(fs.readFileSync(hooksEnvPath, UTF8_ENCODING)).toBe(originalHooksEnvText);
+    } else {
+      expect(fs.existsSync(hooksEnvPath)).toBe(false);
+    }
+    expect(readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today())).toContain("remember hooks");
+  });
+
+  it("withholds sensitive prompt text from the daily log and coaching state", () => {
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+
+    const result = runHookEntrypoint(ENTRYPOINT, {
+      payload: {
+        hookEventName: HOOK_EVENT_USER_PROMPT_SUBMIT_KEBAB,
+        cwd: hooksRoot,
+        prompt: "API_KEY=secret-123",
+        session_id: "session-sensitive-prompt",
+      },
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
+    });
+
+    const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
+    const statePath = resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER);
+    const state = JSON.parse(fs.readFileSync(statePath, UTF8_ENCODING));
+    const [entry] = Object.values(state.coachingState.promptHashCounts);
+
+    expect(result.status).toBe(0);
+    expect(dailyContent).toContain("prompt withheld:");
+    expect(dailyContent).not.toContain("API_KEY=secret-123");
+    expect(entry).toBeDefined();
+    expect(entry).not.toHaveProperty("snippet");
+  });
+
+  it("does not persist raw sensitive prompt text in capture metrics state", () => {
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const SECRET = "PASSWORD=xK9!mR2qLvZ7nW4p";
+
+    const result = runHookEntrypoint(ENTRYPOINT, {
+      payload: {
+        hookEventName: HOOK_EVENT_USER_PROMPT_SUBMIT_KEBAB,
+        cwd: hooksRoot,
+        prompt: SECRET,
+        session_id: "session-sensitive-metrics",
+      },
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
+    });
+
+    const metricsStatePath = resolveStatePath(vaultPath, DEFAULT_SUBFOLDER);
+    const metricsStateRaw = fs.readFileSync(metricsStatePath, UTF8_ENCODING);
+    const metricsState = JSON.parse(metricsStateRaw);
+
+    expect(result.status).toBe(0);
+    expect(metricsStateRaw).not.toContain(SECRET);
+    expect(metricsState.capture_metrics.capture_count).toBeGreaterThan(0);
+    expect(metricsState.capture_metrics.total_raw_chars).toBeGreaterThan(0);
   });
 
   it("writes rich slash-command metadata for Claude prompt expansion events", () => {
@@ -126,8 +187,7 @@ describe("user-prompt-submit.js", () => {
       env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
-    const dailyPath = buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1);
-    const dailyContent = fs.readFileSync(dailyPath, UTF8_ENCODING);
+    const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
 
     expect(result.status).toBe(0);
     expect(dailyContent).toContain("UserPromptExpansion");
@@ -155,9 +215,7 @@ describe("user-prompt-submit.js", () => {
     const state = JSON.parse(fs.readFileSync(statePath, UTF8_ENCODING));
 
     expect(result.status).toBe(0);
-    expect(fs.existsSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1))).toBe(
-      false,
-    );
+    expect(dailyChunkExists(vaultPath, DEFAULT_SUBFOLDER, today())).toBe(false);
     expect(state.mmSuppressed).toBe(true);
   });
 
@@ -179,9 +237,51 @@ describe("user-prompt-submit.js", () => {
     const state = JSON.parse(fs.readFileSync(statePath, UTF8_ENCODING));
 
     expect(result.status).toBe(0);
-    expect(fs.existsSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1))).toBe(
-      false,
-    );
+    expect(dailyChunkExists(vaultPath, DEFAULT_SUBFOLDER, today())).toBe(false);
+    expect(state.mmSuppressed).toBe(true);
+  });
+
+  it("suppresses Memory Mason submit event when command_name is present and prompt is non-Memory Mason text", () => {
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+
+    const result = runHookEntrypoint(ENTRYPOINT, {
+      payload: {
+        hook_event_name: HOOK_ENTRY_USER_PROMPT_SUBMIT,
+        cwd: hooksRoot,
+        prompt: "/regular command",
+        command_name: "memory-mason:mmc",
+      },
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
+    });
+
+    const statePath = resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER);
+    const state = JSON.parse(fs.readFileSync(statePath, UTF8_ENCODING));
+
+    expect(result.status).toBe(0);
+    expect(dailyChunkExists(vaultPath, DEFAULT_SUBFOLDER, today())).toBe(false);
+    expect(state.mmSuppressed).toBe(true);
+  });
+
+  it("suppresses Memory Mason submit event when commandName is present and prompt is non-Memory Mason text", () => {
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+
+    const result = runHookEntrypoint(ENTRYPOINT, {
+      payload: {
+        hook_event_name: HOOK_ENTRY_USER_PROMPT_SUBMIT,
+        cwd: hooksRoot,
+        prompt: "/regular command",
+        commandName: "memory-mason:mmc",
+      },
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
+    });
+
+    const statePath = resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER);
+    const state = JSON.parse(fs.readFileSync(statePath, UTF8_ENCODING));
+
+    expect(result.status).toBe(0);
+    expect(dailyChunkExists(vaultPath, DEFAULT_SUBFOLDER, today())).toBe(false);
     expect(state.mmSuppressed).toBe(true);
   });
 
@@ -205,9 +305,7 @@ describe("user-prompt-submit.js", () => {
     });
 
     expect(result.status).toBe(0);
-    expect(
-      fs.readFileSync(buildDailyChunkPath(vaultPath, "my-brain", today(), 1), UTF8_ENCODING),
-    ).toContain("remember this");
+    expect(readFirstDailyChunk(vaultPath, "my-brain", today())).toContain("remember this");
     expect(fs.existsSync(buildDailyFilePath(vaultPath, DEFAULT_SUBFOLDER, today()))).toBe(false);
   });
 
@@ -261,8 +359,7 @@ describe("user-prompt-submit.js", () => {
       env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
-    const dailyPathAfterFirst = buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1);
-    const contentAfterFirst = fs.readFileSync(dailyPathAfterFirst, UTF8_ENCODING);
+    const contentAfterFirst = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
     expect(contentAfterFirst).not.toContain(ASSISTANT_REPLY_ENTRY_NAME);
     expect(contentAfterFirst).toContain("first user prompt");
 
@@ -279,7 +376,7 @@ describe("user-prompt-submit.js", () => {
       env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
-    const dailyContent = fs.readFileSync(dailyPathAfterFirst, UTF8_ENCODING);
+    const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
 
     expect(result.status).toBe(0);
     expect(dailyContent).toContain("second user prompt");
@@ -306,10 +403,7 @@ describe("user-prompt-submit.js", () => {
       env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
-    const dailyContent = fs.readFileSync(
-      buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
-      UTF8_ENCODING,
-    );
+    const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
 
     expect(result.status).toBe(0);
     expect(dailyContent).not.toContain(ASSISTANT_REPLY_ENTRY_NAME);
@@ -348,8 +442,7 @@ describe("user-prompt-submit.js", () => {
       env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
-    const dailyPath = buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1);
-    const dailyContent = fs.readFileSync(dailyPath, UTF8_ENCODING);
+    const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
 
     expect(dailyContent).toContain("second prompt");
     expect(dailyContent).toContain("third prompt");
@@ -371,10 +464,7 @@ describe("user-prompt-submit.js", () => {
       env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
-    const dailyContent = fs.readFileSync(
-      buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
-      UTF8_ENCODING,
-    );
+    const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
 
     expect(result.status).toBe(0);
     expect(dailyContent).not.toContain(ASSISTANT_REPLY_ENTRY_NAME);
@@ -399,10 +489,7 @@ describe("user-prompt-submit.js", () => {
       env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
-    const dailyContent = fs.readFileSync(
-      buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
-      UTF8_ENCODING,
-    );
+    const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
 
     expect(result.status).toBe(0);
     expect(dailyContent).not.toContain(ASSISTANT_REPLY_ENTRY_NAME);
@@ -423,10 +510,7 @@ describe("user-prompt-submit.js", () => {
       env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
-    const dailyContent = fs.readFileSync(
-      buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
-      UTF8_ENCODING,
-    );
+    const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
 
     expect(result.status).toBe(0);
     expect(dailyContent).not.toContain(ASSISTANT_REPLY_ENTRY_NAME);
@@ -567,9 +651,7 @@ describe("run - mm suppression state management", () => {
     const state = JSON.parse(fs.readFileSync(statePath, UTF8_ENCODING));
 
     expect(result.status).toBe(0);
-    expect(fs.existsSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1))).toBe(
-      false,
-    );
+    expect(dailyChunkExists(vaultPath, DEFAULT_SUBFOLDER, today())).toBe(false);
     expect(state.mmSuppressed).toBe(true);
   });
 
@@ -613,9 +695,7 @@ describe("run - mm suppression state management", () => {
     const state = JSON.parse(fs.readFileSync(statePath, UTF8_ENCODING));
 
     expect(result.status).toBe(0);
-    expect(fs.existsSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1))).toBe(
-      false,
-    );
+    expect(dailyChunkExists(vaultPath, DEFAULT_SUBFOLDER, today())).toBe(false);
     expect(state.mmSuppressed).toBe(true);
   });
 
@@ -645,10 +725,7 @@ describe("run - mm suppression state management", () => {
       env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
-    const dailyContent = fs.readFileSync(
-      buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
-      UTF8_ENCODING,
-    );
+    const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
     const state = JSON.parse(fs.readFileSync(statePath, UTF8_ENCODING));
 
     expect(result.status).toBe(0);
@@ -666,7 +743,6 @@ describe("run - sync flag", () => {
     const homeDir = createTempDir(TEST_HOME_PREFIX);
     const vaultPath = createTempDir(TEST_VAULT_PREFIX);
     const statePath = resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER);
-    const dailyPath = buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1);
 
     vi.spyOn(userPromptSubmit, "resolveRuntimeConfig").mockReturnValue({
       vaultPath,
@@ -683,40 +759,40 @@ describe("run - sync flag", () => {
       env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
-    return { result, statePath, dailyPath };
+    return { result, statePath, vaultPath };
   };
 
   it("returns status 0 without writing to vault when sync is false", () => {
-    const { result, dailyPath } = runWithSyncDisabled("normal sync-off prompt");
+    const { result, vaultPath } = runWithSyncDisabled("normal sync-off prompt");
 
     expect(result.status).toBe(0);
     expect(result.stdout).toBe("");
     expect(result.stderr).toBe("");
-    expect(fs.existsSync(dailyPath)).toBe(false);
+    expect(dailyChunkExists(vaultPath, DEFAULT_SUBFOLDER, today())).toBe(false);
   });
 
   it("does not write capture state when sync is false on /mm* prompt", () => {
-    const { result, statePath, dailyPath } = runWithSyncDisabled("/mmc");
+    const { result, statePath, vaultPath } = runWithSyncDisabled("/mmc");
 
     expect(result.status).toBe(0);
     expect(fs.existsSync(statePath)).toBe(false);
-    expect(fs.existsSync(dailyPath)).toBe(false);
+    expect(dailyChunkExists(vaultPath, DEFAULT_SUBFOLDER, today())).toBe(false);
   });
 
   it("does not write capture state when sync is false on /memory-mason prompt", () => {
-    const { result, statePath, dailyPath } = runWithSyncDisabled("/memory-mason:mmc");
+    const { result, statePath, vaultPath } = runWithSyncDisabled("/memory-mason:mmc");
 
     expect(result.status).toBe(0);
     expect(fs.existsSync(statePath)).toBe(false);
-    expect(fs.existsSync(dailyPath)).toBe(false);
+    expect(dailyChunkExists(vaultPath, DEFAULT_SUBFOLDER, today())).toBe(false);
   });
 
   it("does not write capture state when sync is false on normal prompt", () => {
-    const { result, statePath, dailyPath } = runWithSyncDisabled("normal prompt with sync off");
+    const { result, statePath, vaultPath } = runWithSyncDisabled("normal prompt with sync off");
 
     expect(result.status).toBe(0);
     expect(fs.existsSync(statePath)).toBe(false);
-    expect(fs.existsSync(dailyPath)).toBe(false);
+    expect(dailyChunkExists(vaultPath, DEFAULT_SUBFOLDER, today())).toBe(false);
   });
 });
 
@@ -885,6 +961,36 @@ describe("user-prompt-submit.js runtime fallback branches", () => {
     );
     expect(result.status).toBe(0);
   });
+
+  it("does not stamp lastProjectPath when both input cwd and fallback cwd are missing", () => {
+    const homeDir = createTempDir(TEST_MM_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_MM_VAULT_PREFIX);
+    const env = buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath });
+    writeText(
+      path.join(homeDir, GLOBAL_MM_DIR_NAME, DOTENV_FILE_NAME),
+      `${ENV_KEY_VAULT_PATH}=${vaultPath}\n${ENV_KEY_SUBFOLDER}=${DEFAULT_SUBFOLDER}`,
+    );
+
+    const result = userPromptSubmit.run(
+      JSON.stringify({
+        hook_event_name: HOOK_ENTRY_USER_PROMPT_SUBMIT,
+        prompt: "test",
+        session_id: "no-cwd-stamp",
+      }),
+      {
+        env,
+        cwd: "",
+        homedir: homeDir,
+      },
+    );
+
+    const state = JSON.parse(
+      fs.readFileSync(resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER), UTF8_ENCODING),
+    );
+
+    expect(result.status).toBe(0);
+    expect(Object.hasOwn(state, "lastProjectPath")).toBe(false);
+  });
 });
 
 describe("run - coaching state branch coverage", () => {
@@ -946,6 +1052,9 @@ describe("run - coaching state branch coverage", () => {
 
     const metaDir = path.join(vaultPath, DEFAULT_SUBFOLDER, "_raw", today(), "_meta");
     expect(fs.existsSync(metaDir)).toBe(true);
-    expect(fs.readdirSync(metaDir).some((f) => f.endsWith(".md"))).toBe(true);
+    const metaFiles = fs.readdirSync(metaDir).filter((f) => f.endsWith(".md"));
+    expect(metaFiles.length).toBeGreaterThan(0);
+    const written = fs.readFileSync(path.join(metaDir, metaFiles[0]), UTF8_ENCODING);
+    expect(written).toContain('snippet: "fix the auth bug please"');
   });
 });

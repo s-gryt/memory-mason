@@ -8,19 +8,20 @@ const {
   MAX_TAG_STRIP_COUNT,
   HOOK_WARNING_TAG_LIMIT_PREFIX,
   HOOK_WARNING_SENSITIVE_SKIP_PREFIX,
+  EVENT_TYPE_NOISE,
 } = require("../../lib/filter/constants");
-const { UTF8_ENCODING } = require("../../lib/shared/constants");
 const {
   ENV_KEY_VAULT_PATH,
   ENV_KEY_SUBFOLDER,
   ENV_KEY_CAPTURE_MODE,
+  ENV_KEY_MINIMIZE,
   ENV_KEY_INVOKED_BY,
   PROJECT_CONFIG_FILE_NAME,
   DOTENV_FILE_NAME,
   GLOBAL_MM_DIR_NAME,
   GLOBAL_CONFIG_FILE_NAME,
 } = require("../../lib/config/constants");
-const { buildDailyChunkPath, buildDailyFilePath } = require("../../lib/vault/vault");
+const { buildDailyFilePath } = require("../../lib/vault/vault");
 const { resolveCaptureStatePath } = require("../../lib/capture/capture-state");
 const postToolUse = require("../../post-tool-use");
 const { materializeProjectDotEnvConfig } = require("../helpers/project-dot-env");
@@ -46,6 +47,8 @@ const {
   today,
   cleanupGeneratedArtifacts,
   runHookEntrypoint,
+  readFirstDailyChunk,
+  dailyChunkExists,
 } = require("../helpers/entrypoint-runtime");
 const hooksRoot = path.resolve(__dirname, "..", "..");
 const ENTRYPOINT = "post-tool-use.js";
@@ -90,6 +93,27 @@ const withProcessCaptureMode = (value, callback) => {
       process.env[ENV_KEY_CAPTURE_MODE] = previousCaptureMode;
     } else {
       delete process.env[ENV_KEY_CAPTURE_MODE];
+    }
+  }
+};
+
+const withProcessMinimize = (value, callback) => {
+  const hadMinimize = Object.hasOwn(process.env, ENV_KEY_MINIMIZE);
+  const previousMinimize = process.env[ENV_KEY_MINIMIZE];
+
+  if (typeof value === "string") {
+    process.env[ENV_KEY_MINIMIZE] = value;
+  } else {
+    delete process.env[ENV_KEY_MINIMIZE];
+  }
+
+  try {
+    return callback();
+  } finally {
+    if (hadMinimize && typeof previousMinimize === "string") {
+      process.env[ENV_KEY_MINIMIZE] = previousMinimize;
+    } else {
+      delete process.env[ENV_KEY_MINIMIZE];
     }
   }
 };
@@ -150,12 +174,7 @@ describe("post-tool-use.js", () => {
       });
 
       expect(result.status).toBe(0);
-      expect(
-        fs.readFileSync(
-          buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
-          UTF8_ENCODING,
-        ),
-      ).toContain("patched file");
+      expect(readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today())).toContain("patched file");
     });
   });
 
@@ -180,18 +199,8 @@ describe("post-tool-use.js", () => {
       });
 
       expect(result.status).toBe(0);
-      expect(
-        fs.readFileSync(
-          buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
-          UTF8_ENCODING,
-        ),
-      ).toContain("grep hit 1");
-      expect(
-        fs.readFileSync(
-          buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
-          UTF8_ENCODING,
-        ),
-      ).toContain("stdout");
+      expect(readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today())).toContain("grep hit 1");
+      expect(readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today())).toContain("stdout");
     });
   });
 
@@ -214,18 +223,8 @@ describe("post-tool-use.js", () => {
       });
 
       expect(result.status).toBe(0);
-      expect(
-        fs.readFileSync(
-          buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
-          UTF8_ENCODING,
-        ),
-      ).toContain("match 1");
-      expect(
-        fs.readFileSync(
-          buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
-          UTF8_ENCODING,
-        ),
-      ).toContain("match 2");
+      expect(readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today())).toContain("match 1");
+      expect(readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today())).toContain("match 2");
     });
   });
 
@@ -244,12 +243,7 @@ describe("post-tool-use.js", () => {
         env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       });
 
-      expect(
-        fs.readFileSync(
-          buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
-          UTF8_ENCODING,
-        ),
-      ).toContain("patch ok");
+      expect(readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today())).toContain("patch ok");
     });
   });
 
@@ -269,12 +263,7 @@ describe("post-tool-use.js", () => {
         env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       });
 
-      expect(
-        fs.readFileSync(
-          buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
-          UTF8_ENCODING,
-        ),
-      ).toContain("codex result");
+      expect(readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today())).toContain("codex result");
     });
   });
 
@@ -293,9 +282,7 @@ describe("post-tool-use.js", () => {
     });
 
     expect(result.status).toBe(0);
-    expect(fs.existsSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1))).toBe(
-      false,
-    );
+    expect(dailyChunkExists(vaultPath, DEFAULT_SUBFOLDER, today())).toBe(false);
   });
 
   it("captures AskUserQuestion tool output in lite mode", () => {
@@ -313,9 +300,9 @@ describe("post-tool-use.js", () => {
     });
 
     expect(result.status).toBe(0);
-    expect(
-      fs.readFileSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1), UTF8_ENCODING),
-    ).toContain("user said: do the thing");
+    expect(readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today())).toContain(
+      "user said: do the thing",
+    );
   });
 
   it("skips noisy tools in full mode", () => {
@@ -354,9 +341,7 @@ describe("post-tool-use.js", () => {
       });
 
       expect(result.status).toBe(0);
-      expect(fs.existsSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1))).toBe(
-        false,
-      );
+      expect(dailyChunkExists(vaultPath, DEFAULT_SUBFOLDER, today())).toBe(false);
     });
   });
 
@@ -379,9 +364,7 @@ describe("post-tool-use.js", () => {
       });
 
       expect(result.status).toBe(0);
-      expect(fs.existsSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1))).toBe(
-        false,
-      );
+      expect(dailyChunkExists(vaultPath, DEFAULT_SUBFOLDER, today())).toBe(false);
     });
   });
 
@@ -400,9 +383,7 @@ describe("post-tool-use.js", () => {
     });
 
     expect(result.status).toBe(0);
-    expect(fs.existsSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1))).toBe(
-      false,
-    );
+    expect(dailyChunkExists(vaultPath, DEFAULT_SUBFOLDER, today())).toBe(false);
   });
 
   it("skips Write test results output in lite mode", () => {
@@ -420,9 +401,7 @@ describe("post-tool-use.js", () => {
     });
 
     expect(result.status).toBe(0);
-    expect(fs.existsSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1))).toBe(
-      false,
-    );
+    expect(dailyChunkExists(vaultPath, DEFAULT_SUBFOLDER, today())).toBe(false);
   });
 
   it("captures Write output for plan paths in full mode", () => {
@@ -444,12 +423,7 @@ describe("post-tool-use.js", () => {
       });
 
       expect(result.status).toBe(0);
-      expect(
-        fs.readFileSync(
-          buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
-          UTF8_ENCODING,
-        ),
-      ).toContain("plan body");
+      expect(readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today())).toContain("plan body");
     });
   });
 
@@ -470,9 +444,8 @@ describe("post-tool-use.js", () => {
 
       expect(result.status).toBe(0);
       expect(result.stderr).toContain(HOOK_WARNING_SENSITIVE_SKIP_PREFIX);
-      expect(fs.existsSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1))).toBe(
-        false,
-      );
+      expect(dailyChunkExists(vaultPath, DEFAULT_SUBFOLDER, today())).toBe(false);
+      expect(fs.existsSync(resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER))).toBe(false);
     });
   });
 
@@ -492,9 +465,7 @@ describe("post-tool-use.js", () => {
       });
 
       expect(result.status).toBe(0);
-      expect(fs.existsSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1))).toBe(
-        false,
-      );
+      expect(dailyChunkExists(vaultPath, DEFAULT_SUBFOLDER, today())).toBe(false);
     });
   });
 
@@ -514,10 +485,7 @@ describe("post-tool-use.js", () => {
         env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       });
 
-      const dailyContent = fs.readFileSync(
-        buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
-        UTF8_ENCODING,
-      );
+      const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
 
       expect(result.status).toBe(0);
       expect(result.stderr).toContain(HOOK_WARNING_TAG_LIMIT_PREFIX);
@@ -565,9 +533,7 @@ describe("run - mm suppression", () => {
     });
 
     expect(result.status).toBe(0);
-    expect(fs.existsSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1))).toBe(
-      false,
-    );
+    expect(dailyChunkExists(vaultPath, DEFAULT_SUBFOLDER, today())).toBe(false);
   });
 
   it("writes tool output when mmSuppressed is false", () => {
@@ -598,10 +564,7 @@ describe("run - mm suppression", () => {
         env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       });
 
-      const dailyContent = fs.readFileSync(
-        buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
-        UTF8_ENCODING,
-      );
+      const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
 
       expect(result.status).toBe(0);
       expect(dailyContent).toContain("tool output when not suppressed");
@@ -623,14 +586,177 @@ describe("run - mm suppression", () => {
         env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       });
 
-      const dailyContent = fs.readFileSync(
-        buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
-        UTF8_ENCODING,
-      );
+      const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
 
       expect(result.status).toBe(0);
       expect(dailyContent).toContain("tool output with missing state");
     });
+  });
+});
+
+describe("run - coaching state coverage", () => {
+  it("saves coaching state and emits advisory after repeated error threshold", () => {
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+      const { COACHING_NAG_THRESHOLD } = require("../../lib/capture/constants");
+      const sessionId = "session-error-coaching";
+
+      for (let i = 0; i < COACHING_NAG_THRESHOLD; i++) {
+        const result = runHookEntrypoint(ENTRYPOINT, {
+          payload: {
+            hook_event_name: HOOK_ENTRY_POST_TOOL_USE,
+            cwd: hooksRoot,
+            tool_name: TOOL_BASH,
+            tool_response: "Error: repeated tool failure 42",
+            session_id: sessionId,
+          },
+          env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
+        });
+
+        expect(result.status).toBe(0);
+      }
+
+      const state = JSON.parse(
+        fs.readFileSync(resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER), "utf8"),
+      );
+      const promptHashCounts = state.coachingState.promptHashCounts;
+      const [hash] = Object.keys(promptHashCounts);
+      expect(promptHashCounts[hash].nagSessions).toContain(sessionId);
+      expect(promptHashCounts[hash].snippet).toBe("error: repeated tool failure #");
+
+      const metaDir = path.join(vaultPath, DEFAULT_SUBFOLDER, "_raw", today(), "_meta");
+      expect(fs.existsSync(metaDir)).toBe(true);
+      const metaFiles = fs.readdirSync(metaDir).filter((fileName) => fileName.endsWith(".md"));
+      expect(metaFiles.length).toBeGreaterThan(0);
+      const written = fs.readFileSync(path.join(metaDir, metaFiles[0]), "utf8");
+      expect(written).toContain('snippet: "error: repeated tool failure #"');
+    });
+  });
+
+  it("skips error coaching when the payload has no session id", () => {
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+      const result = runHookEntrypoint(ENTRYPOINT, {
+        payload: {
+          hook_event_name: HOOK_ENTRY_POST_TOOL_USE,
+          cwd: hooksRoot,
+          tool_name: TOOL_BASH,
+          tool_response: "Error: repeated tool failure 42",
+        },
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
+      });
+
+      expect(result.status).toBe(0);
+      expect(fs.existsSync(resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER))).toBe(false);
+    });
+  });
+
+  it("skips error coaching when the payload is not classified as an error", () => {
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+      const result = runHookEntrypoint(ENTRYPOINT, {
+        payload: {
+          hook_event_name: HOOK_ENTRY_POST_TOOL_USE,
+          cwd: hooksRoot,
+          tool_name: TOOL_WRITE,
+          tool_response: "ok",
+          session_id: "session-non-error",
+        },
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
+      });
+
+      expect(result.status).toBe(0);
+      expect(fs.existsSync(resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER))).toBe(false);
+    });
+  });
+
+  it("skips error coaching when hash computation fails", () => {
+    const captureStatePath = require.resolve("../../lib/capture/capture-state");
+    const postToolUsePath = require.resolve("../../post-tool-use");
+    delete require.cache[captureStatePath];
+    delete require.cache[postToolUsePath];
+
+    const freshCaptureState = require("../../lib/capture/capture-state");
+    vi.spyOn(freshCaptureState, "hashCoachingError").mockImplementation(() => {
+      throw new Error("hash error");
+    });
+
+    const isolatedPostToolUse = require("../../post-tool-use");
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const result = isolatedPostToolUse.run(
+      JSON.stringify({
+        hook_event_name: HOOK_ENTRY_POST_TOOL_USE,
+        cwd: hooksRoot,
+        tool_name: TOOL_BASH,
+        tool_response: "Error: repeated tool failure 42",
+        session_id: "session-hash-fail",
+      }),
+      {
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
+        cwd: hooksRoot,
+        homedir: homeDir,
+      },
+    );
+
+    expect(result.status).toBe(0);
+  });
+
+  it("returns empty hash when error hashing throws", () => {
+    expect(postToolUse.tryHashCoachingError(TEST_INVALID_TOOL_RESPONSE_NUMBER)).toBe("");
+  });
+
+  it("returns the original state when error hashing produces an empty hash", () => {
+    const state = { lastCapture: null };
+    const plan = {
+      sessionId: "session-empty-hash",
+      iso: "2026-07-07T00:00:00.000Z",
+      today: today(),
+    };
+    const resolvedConfig = { captureMode: CAPTURE_MODE_FULL };
+    const enrichedPayload = {
+      toolName: TOOL_BASH,
+      exitCode: 1,
+      strippedResultText: "",
+      filePath: "",
+      lineCount: ONE,
+      commandText: "",
+    };
+
+    expect(
+      postToolUse.applyErrorCoachingToState(state, plan, resolvedConfig, enrichedPayload),
+    ).toBe(state);
+  });
+
+  it("returns the original state unchanged when classification is not an error", () => {
+    const state = { lastCapture: null };
+    const plan = {
+      sessionId: "session-non-error-classification",
+      iso: "2026-07-09T00:00:00.000Z",
+      today: today(),
+    };
+    const resolvedConfig = { captureMode: CAPTURE_MODE_FULL };
+    const enrichedPayload = {
+      toolName: TOOL_BASH,
+      exitCode: 0,
+      strippedResultText: "ok",
+      filePath: "",
+      lineCount: ONE,
+      commandText: "",
+    };
+
+    expect(
+      postToolUse.applyErrorCoachingToState(
+        state,
+        plan,
+        resolvedConfig,
+        enrichedPayload,
+        EVENT_TYPE_NOISE,
+      ),
+    ).toBe(state);
   });
 });
 
@@ -665,9 +791,7 @@ describe("run - sync flag", () => {
     });
 
     expect(result).toEqual({ status: 0, stdout: "", stderr: "" });
-    expect(fs.existsSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1))).toBe(
-      false,
-    );
+    expect(dailyChunkExists(vaultPath, DEFAULT_SUBFOLDER, today())).toBe(false);
   });
 
   it("proceeds normally when sync is true", () => {
@@ -700,10 +824,7 @@ describe("run - sync flag", () => {
       env: buildEnv(homeDir),
     });
 
-    const dailyContent = fs.readFileSync(
-      buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
-      UTF8_ENCODING,
-    );
+    const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
 
     expect(result.status).toBe(0);
     expect(dailyContent).toContain("tool output when sync is enabled");
@@ -1055,9 +1176,7 @@ describe("post-tool-use.js readConfigText with existing file", () => {
 
     expect(result.status).toBe(0);
     expect(result.stderr).toBe("");
-    expect(
-      fs.readFileSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1), UTF8_ENCODING),
-    ).toContain("output");
+    expect(readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today())).toContain("output");
   });
 });
 
@@ -1099,6 +1218,124 @@ describe("post-tool-use.js input cwd fallback branch", () => {
     );
     expect(result.status).toBe(0);
   });
+});
+
+describe("run - minimize flag", () => {
+  it("writes uncompressed tool result when minimize is false (default)", () =>
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+      const verboseResult = "Error: just really check this output carefully";
+
+      const result = runHookEntrypoint(ENTRYPOINT, {
+        payload: {
+          hook_event_name: HOOK_ENTRY_POST_TOOL_USE,
+          cwd: hooksRoot,
+          tool_name: TOOL_WRITE,
+          tool_response: verboseResult,
+        },
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
+      });
+
+      const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
+
+      expect(result.status).toBe(0);
+      expect(dailyContent).toContain(verboseResult);
+    }));
+
+  it("preserves tool result when minimize is true via env var", () =>
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () =>
+      withProcessMinimize("true", () => {
+        const homeDir = createTempDir(TEST_HOME_PREFIX);
+        const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+        const verboseResult = "Error: just really check this output carefully";
+
+        const result = runHookEntrypoint(ENTRYPOINT, {
+          payload: {
+            hook_event_name: HOOK_ENTRY_POST_TOOL_USE,
+            cwd: hooksRoot,
+            tool_name: TOOL_WRITE,
+            tool_response: verboseResult,
+          },
+          env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
+        });
+
+        const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
+
+        expect(result.status).toBe(0);
+        expect(dailyContent).toContain(verboseResult);
+      }),
+    ));
+
+  it("preserves tool result when minimize is true via project config JSON", () =>
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
+      const cwd = createTempDir(TEST_CWD_PREFIX);
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+      const verboseResult = "Error: just really check this output carefully";
+
+      writeText(
+        path.join(cwd, PROJECT_CONFIG_FILE_NAME),
+        JSON.stringify({
+          vaultPath,
+          subfolder: DEFAULT_SUBFOLDER,
+          captureMode: CAPTURE_MODE_FULL,
+          minimize: true,
+        }),
+      );
+
+      const result = runHookEntrypoint(ENTRYPOINT, {
+        payload: {
+          hook_event_name: HOOK_ENTRY_POST_TOOL_USE,
+          cwd,
+          tool_name: TOOL_WRITE,
+          tool_response: verboseResult,
+        },
+        cwd,
+        env: buildEnv(homeDir),
+      });
+
+      const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
+
+      expect(result.status).toBe(0);
+      expect(dailyContent).toContain(verboseResult);
+    }));
+
+  it("env var minimize false overrides project config minimize true", () =>
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () =>
+      withProcessMinimize("false", () => {
+        const cwd = createTempDir(TEST_CWD_PREFIX);
+        const homeDir = createTempDir(TEST_HOME_PREFIX);
+        const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+        const verboseResult = "Error: just really check this output carefully";
+
+        writeText(
+          path.join(cwd, PROJECT_CONFIG_FILE_NAME),
+          JSON.stringify({
+            vaultPath,
+            subfolder: DEFAULT_SUBFOLDER,
+            captureMode: CAPTURE_MODE_FULL,
+            minimize: true,
+          }),
+        );
+
+        const result = runHookEntrypoint(ENTRYPOINT, {
+          payload: {
+            hook_event_name: HOOK_ENTRY_POST_TOOL_USE,
+            cwd,
+            tool_name: TOOL_WRITE,
+            tool_response: verboseResult,
+          },
+          cwd,
+          env: buildEnv(homeDir),
+        });
+
+        const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
+
+        expect(result.status).toBe(0);
+        expect(dailyContent).toContain(verboseResult);
+      }),
+    ));
 });
 
 describe("post-tool-use.js main", () => {

@@ -13,10 +13,12 @@ Hooks resolve config in this order (first match wins):
 | 3 | Global `.env` | `~/.memory-mason/.env` |
 | 4 | Global config | `~/.memory-mason/config.json` |
 
-Vault path is resolved from files only. Process environment variables `MEMORY_MASON_SYNC` and
-`MEMORY_MASON_CAPTURE_MODE` still override file config for a single session. If no source is
-found, hooks throw. `.env` sources default subfolder to `ai-knowledge` when
-`MEMORY_MASON_SUBFOLDER` is unset.
+Vault path is resolved from files only. `subfolder` is layered independently across the same file
+priority order, so a project `.env` or project JSON subfolder can override a farther config even
+when that farther config provided the vault path. Process environment variables
+`MEMORY_MASON_SYNC` and `MEMORY_MASON_CAPTURE_MODE` still override file config for a single
+session. If no source is found, hooks throw. `.env` sources default subfolder to `ai-knowledge`
+when `MEMORY_MASON_SUBFOLDER` is unset.
 
 ### .env format
 
@@ -67,6 +69,14 @@ Memory Mason commands are excluded from capture through three layers. This appli
 
 This prevents Memory Mason command traffic from ever being written into Obsidian daily logs and
 avoids duplicate content in the knowledge base.
+
+## Concurrency Note
+
+`capture-state.json` and per-day raw `meta.json` are written atomically via temp-file rename, so
+hook writes should not leave torn JSON behind. Concurrent hooks targeting the same vault still use
+load-modify-write, which means simultaneous writers can occasionally lose the latest bookkeeping
+update. The practical risk is limited to stale exchange/coaching metadata until the next hook
+write, not chunk interleaving or partial-file corruption.
 
 ## Platform Mappings
 

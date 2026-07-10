@@ -8,11 +8,13 @@ on:
       - .github/workflows/ci.yml
       - hooks/**
       - skills/**/SKILL.md
+      - skills/**/references/**
       - rules/memory-mason.md
       - .claude-plugin/plugin.json
       - .claude-plugin/marketplace.json
       - .github/plugin/plugin.json
       - .github/plugin/marketplace.json
+      - '*.skill'
       - VERSION
       - gemini-extension.json
       - plugins/memory-mason/.codex-plugin/plugin.json
@@ -22,11 +24,13 @@ on:
       - .github/workflows/ci.yml
       - hooks/**
       - skills/**/SKILL.md
+      - skills/**/references/**
       - rules/memory-mason.md
       - .claude-plugin/plugin.json
       - .claude-plugin/marketplace.json
       - .github/plugin/plugin.json
       - .github/plugin/marketplace.json
+      - '*.skill'
       - VERSION
       - gemini-extension.json
       - plugins/memory-mason/.codex-plugin/plugin.json
@@ -59,6 +63,108 @@ jobs:
       - name: Check manifest version drift
         if: github.event_name == 'pull_request'
         run: node ../scripts/version-sync.mjs check
+
+      - name: Sync generated SKILL.md copies for validation
+        if: github.event_name == 'pull_request'
+        working-directory: ${{ github.workspace }}
+        run: |
+          for skill_dir in skills/*; do
+            [ -d "$skill_dir" ] || continue
+            skill="$(basename "$skill_dir")"
+
+            for dest in ".cursor/skills/${skill}" ".windsurf/skills/${skill}" "plugins/memory-mason/skills/${skill}"; do
+              mkdir -p "$dest"
+              cp "${skill_dir}/SKILL.md" "${dest}/SKILL.md"
+
+              if [ -d "${skill_dir}/references" ]; then
+                mkdir -p "${dest}/references"
+                cp "${skill_dir}/references/"* "${dest}/references/"
+              fi
+            done
+          done
+
+      - name: Check generated SKILL.md copies for drift
+        if: github.event_name == 'pull_request'
+        working-directory: ${{ github.workspace }}
+        run: |
+          failed=0
+          for src in skills/*/SKILL.md; do
+            skill="$(basename "$(dirname "$src")")"
+            for copy in \
+              ".cursor/skills/${skill}/SKILL.md" \
+              ".windsurf/skills/${skill}/SKILL.md" \
+              "plugins/memory-mason/skills/${skill}/SKILL.md"
+            do
+              if [ ! -f "$copy" ]; then
+                echo "MISSING: $copy (expected copy of $src)"
+                failed=1
+              elif ! diff -q "$src" "$copy" > /dev/null 2>&1; then
+                echo "DRIFT: $copy differs from $src"
+                diff "$src" "$copy" || true
+                failed=1
+              fi
+            done
+          done
+          for src in skills/*/references/*; do
+            [ -f "$src" ] || continue
+            skill="$(basename "$(dirname "$(dirname "$src")")")"
+            name="$(basename "$src")"
+            for copy in \
+              ".cursor/skills/${skill}/references/${name}" \
+              ".windsurf/skills/${skill}/references/${name}" \
+              "plugins/memory-mason/skills/${skill}/references/${name}"
+            do
+              if [ ! -f "$copy" ]; then
+                echo "MISSING: $copy (expected copy of $src)"
+                failed=1
+              elif ! diff -q "$src" "$copy" > /dev/null 2>&1; then
+                echo "DRIFT: $copy differs from $src"
+                diff "$src" "$copy" || true
+                failed=1
+              fi
+            done
+          done
+          if [ "$failed" -ne 0 ]; then
+            echo ""
+            echo "Generated skill copies still drift after the CI sync step."
+            echo "If this fails, update ci.yml so the sync and drift check cover the same files."
+            exit 1
+          fi
+
+      - name: Check generated .skill archives for drift
+        if: github.event_name == 'pull_request'
+        working-directory: ${{ github.workspace }}
+        run: |
+          failed=0
+          for src in skills/*; do
+            [ -d "$src" ] || continue
+            skill="$(basename "$src")"
+            archive="${skill}.skill"
+
+            if [ ! -f "$archive" ]; then
+              echo "MISSING: $archive (expected archive for $src)"
+              failed=1
+              continue
+            fi
+
+            extract_dir="$(mktemp -d)"
+            unzip -qq "$archive" -d "$extract_dir"
+
+            if ! diff -qr "$src" "$extract_dir" > /dev/null 2>&1; then
+              echo "DRIFT: $archive differs from $src"
+              diff -qr "$src" "$extract_dir" || true
+              failed=1
+            fi
+
+            rm -rf "$extract_dir"
+          done
+
+          if [ "$failed" -ne 0 ]; then
+            echo ""
+            echo "Generated .skill archives still drift after the CI sync step."
+            echo "If this fails, update ci.yml so the sync and drift check cover the same archive sources."
+            exit 1
+          fi
 
       - name: Install hook dependencies
         run: npm ci
@@ -130,14 +236,15 @@ jobs:
             [ -d "$skill_dir" ] || continue
             skill="$(basename "$skill_dir")"
 
-            mkdir -p ".cursor/skills/${skill}"
-            cp "${skill_dir}/SKILL.md" ".cursor/skills/${skill}/SKILL.md"
+            for dest in ".cursor/skills/${skill}" ".windsurf/skills/${skill}" "plugins/memory-mason/skills/${skill}"; do
+              mkdir -p "$dest"
+              cp "${skill_dir}/SKILL.md" "${dest}/SKILL.md"
 
-            mkdir -p ".windsurf/skills/${skill}"
-            cp "${skill_dir}/SKILL.md" ".windsurf/skills/${skill}/SKILL.md"
-
-            mkdir -p "plugins/memory-mason/skills/${skill}"
-            cp "${skill_dir}/SKILL.md" "plugins/memory-mason/skills/${skill}/SKILL.md"
+              if [ -d "${skill_dir}/references" ]; then
+                mkdir -p "${dest}/references"
+                cp "${skill_dir}/references/"* "${dest}/references/"
+              fi
+            done
           done
 
       - name: Build .skill ZIP archives

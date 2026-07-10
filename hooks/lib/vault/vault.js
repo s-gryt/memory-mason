@@ -4,7 +4,13 @@
 "use strict";
 
 const path = require("node:path");
-const { MAX_DAILY_CHUNK_COUNT, CHUNK_ID_WIDTH } = require("./constants");
+const {
+  MAX_DAILY_CHUNK_COUNT,
+  CHUNK_ID_WIDTH,
+  SESSION_CHUNK_TIME_WIDTH,
+  SESSION_ID_SHORT_LENGTH,
+  NO_SESSION_SID,
+} = require("./constants");
 const {
   DAILY_LOG_HEADING_PREFIX,
   SESSIONS_HEADING,
@@ -27,12 +33,24 @@ const {
 } = require("./vault-paths");
 const { assertNonEmptyString, assertString, assertPositiveInteger } = require("../shared/assert");
 
+const SESSION_HEADING_PREFIX = "Session";
+const LEGACY_PARTS_HEADING = "Legacy";
+const SID_SANITIZE_PATTERN = /[^a-z0-9]/g;
+const TIME_PREFIX_PATTERN = new RegExp(`^\\d{${SESSION_CHUNK_TIME_WIDTH}}$`);
+
 const padTwo = (n) => String(n).padStart(2, "0");
 
 const assertTimestamp = (timestamp) => {
   if (!/^\d{2}:\d{2}:\d{2}$/.test(timestamp)) {
     throw new Error("timestamp must be in HH:MM:SS format");
   }
+};
+
+const assertTimePrefix = (timePrefix) => {
+  if (!TIME_PREFIX_PATTERN.test(timePrefix)) {
+    throw new Error("timePrefix must be in HHMMSS format");
+  }
+  return timePrefix;
 };
 
 const assertDailyPathArgs = (vaultPath, subfolder, dateIso) => ({
@@ -210,15 +228,113 @@ const buildChunkHeader = (dateIso, chunkNum) => {
   return `# ${DAILY_LOG_HEADING_PREFIX}${safeDateIso} (Part ${safeChunkNum})\n\n## ${SESSIONS_HEADING}\n\n`;
 };
 
-const buildChunkIndexContent = (dateIso, chunkCount) => {
+const buildSessionSid = (sessionId) => {
+  const safeSessionId = assertString("sessionId", sessionId);
+  const sanitized = safeSessionId
+    .toLowerCase()
+    .replace(SID_SANITIZE_PATTERN, "")
+    .slice(0, SESSION_ID_SHORT_LENGTH);
+  return sanitized === "" ? NO_SESSION_SID : sanitized;
+};
+
+const buildSessionContext = (sessionId, platform, cwd) => {
+  const safeSessionId = assertString("sessionId", sessionId);
+  return {
+    sessionId: safeSessionId,
+    sid8: buildSessionSid(safeSessionId),
+    platform: assertString("platform", platform),
+    cwd: assertString("cwd", cwd),
+  };
+};
+
+const defaultSessionContext = () => buildSessionContext("", "", "");
+
+const assertSessionContext = (session) => {
+  if (session === null || typeof session !== "object" || Array.isArray(session)) {
+    throw new TypeError("session must be an object");
+  }
+  return {
+    sessionId: assertString("session.sessionId", session.sessionId),
+    sid8: assertNonEmptyString("session.sid8", session.sid8),
+    platform: assertString("session.platform", session.platform),
+    cwd: assertString("session.cwd", session.cwd),
+  };
+};
+
+const buildDailyRawFilePath = (vaultPath, subfolder, dateIso, fileName) => {
+  const safeFileName = assertNonEmptyString("fileName", fileName);
+  return buildDailyRawPath(vaultPath, subfolder, dateIso, safeFileName);
+};
+
+const buildSessionChunkFileName = (timePrefix, sid8, chunkNum) => {
+  const safeTimePrefix = assertTimePrefix(assertNonEmptyString("timePrefix", timePrefix));
+  const safeSid8 = assertNonEmptyString("sid8", sid8);
+  const safeChunkNum = assertChunkOrdinal("chunkNum", chunkNum);
+  return `${safeTimePrefix}-${safeSid8}-${String(safeChunkNum).padStart(CHUNK_ID_WIDTH, "0")}.md`;
+};
+
+const buildSessionChunkHeader = (dateIso, sid8, chunkNum) => {
   const safeDateIso = assertNonEmptyString("dateIso", dateIso);
-  const safeChunkCount = assertChunkOrdinal("chunkCount", chunkCount);
-  const bullets = Array.from({ length: safeChunkCount }, (_, index) => {
-    const chunkNum = index + 1;
-    const padded = String(chunkNum).padStart(CHUNK_ID_WIDTH, "0");
-    return `- [[${VAULT_RAW_DIR_NAME}/${safeDateIso}/${padded}|Part ${chunkNum}]]`;
+  const safeSid8 = assertNonEmptyString("sid8", sid8);
+  const safeChunkNum = assertChunkOrdinal("chunkNum", chunkNum);
+  return `# ${DAILY_LOG_HEADING_PREFIX}${safeDateIso} (${SESSION_HEADING_PREFIX} ${safeSid8}, Part ${safeChunkNum})\n\n`;
+};
+
+const buildSessionHeaderBlock = (session, startedIso) => {
+  const safeSession = assertSessionContext(session);
+  const safeStartedIso = assertNonEmptyString("startedIso", startedIso);
+  const renderedSessionId = safeSession.sessionId === "" ? UNKNOWN_LABEL : safeSession.sessionId;
+  const renderedPlatform = safeSession.platform === "" ? UNKNOWN_LABEL : safeSession.platform;
+  const renderedCwd = safeSession.cwd === "" ? UNKNOWN_LABEL : safeSession.cwd;
+  return `## ${SESSION_HEADING_PREFIX} ${safeSession.sid8}\n\n**session_id:** ${renderedSessionId}\n**source:** ${renderedPlatform}\n**project:** ${renderedCwd}\n**started:** ${safeStartedIso}\n\n`;
+};
+
+const assertIndexChunk = (chunk) => {
+  if (chunk === null || typeof chunk !== "object" || Array.isArray(chunk)) {
+    throw new Error("chunk must be an object");
+  }
+  const safeFile = assertNonEmptyString("chunk.file", chunk.file);
+  const partNum = Number(chunk.id);
+  assertChunkOrdinal("chunk.id", partNum);
+  if (typeof chunk.sid8 === "string") {
+    return {
+      file: safeFile,
+      partNum,
+      sid8: assertNonEmptyString("chunk.sid8", chunk.sid8),
+    };
+  }
+  return {
+    file: safeFile,
+    partNum,
+    sid8: "",
+  };
+};
+
+const buildChunkIndexContent = (subfolder, dateIso, chunks) => {
+  const safeSubfolder = assertNonEmptyString("subfolder", subfolder);
+  const safeDateIso = assertNonEmptyString("dateIso", dateIso);
+  if (!Array.isArray(chunks) || chunks.length === 0) {
+    throw new Error("chunks must be a non-empty array");
+  }
+  const sections = [];
+  const sectionsByHeading = new Map();
+  chunks.forEach((chunk) => {
+    const safeChunk = assertIndexChunk(chunk);
+    const heading =
+      safeChunk.sid8 === "" ? LEGACY_PARTS_HEADING : `${SESSION_HEADING_PREFIX} ${safeChunk.sid8}`;
+    const fileSansExt = safeChunk.file.replace(/\.md$/, "");
+    const bullet = `- [[${safeSubfolder}/${VAULT_RAW_DIR_NAME}/${safeDateIso}/${fileSansExt}|Part ${safeChunk.partNum}]]`;
+    if (!sectionsByHeading.has(heading)) {
+      const section = { heading, bullets: [] };
+      sectionsByHeading.set(heading, section);
+      sections.push(section);
+    }
+    sectionsByHeading.get(heading).bullets.push(bullet);
   });
-  return `# ${DAILY_LOG_HEADING_PREFIX}${safeDateIso}\n\n## ${PARTS_HEADING}\n\n${bullets.join("\n")}\n`;
+  const body = sections
+    .map((section) => `### ${section.heading}\n\n${section.bullets.join("\n")}`)
+    .join("\n\n");
+  return `# ${DAILY_LOG_HEADING_PREFIX}${safeDateIso}\n\n## ${PARTS_HEADING}\n\n${body}\n`;
 };
 
 module.exports = {
@@ -233,7 +349,15 @@ module.exports = {
   buildDailyChunkPath,
   buildDailyIndexPath,
   buildDailyMetaPath,
+  buildDailyRawFilePath,
   buildChunkHeader,
+  buildSessionSid,
+  buildSessionContext,
+  defaultSessionContext,
+  assertSessionContext,
+  buildSessionChunkFileName,
+  buildSessionChunkHeader,
+  buildSessionHeaderBlock,
   buildChunkIndexContent,
   takeLastLines,
   buildAdditionalContext,

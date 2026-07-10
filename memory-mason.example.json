@@ -1,4 +1,7 @@
 {
   "vaultPath": "~/ObsidianVault",
-  "subfolder": "ai-knowledge"
+  "subfolder": "ai-knowledge",
+  "sync": true,
+  "captureMode": "lite",
+  "minimize": false
 }

@@ -12,6 +12,11 @@ const {
   COACHING_NAG_SESSION_MEMORY,
   COACHING_HASH_COUNTS_MAX,
   COACHING_LRU_LOW_USE_FLOOR,
+  COACHING_DECAY_MS,
+  COACHING_DECAY_NAGGED_WINDOW_MS,
+  COACHING_KIND_PROMPT_REPEAT,
+  COACHING_KIND_ERROR_REPEAT,
+  EXCHANGE_STALE_OPEN_MS,
 } = require("./constants");
 const { UTF8_ENCODING } = require("../shared/constants");
 const {
@@ -24,6 +29,10 @@ const {
 } = require("../shared/assert");
 const { loadJson, saveJson } = require("../state/json-state");
 const { CAPTURE_STATE_FILE_NAME } = require("../vault/vault-paths");
+
+const MAX_COACHING_ERROR_TEXT_LENGTH = 200;
+const MAX_COACHING_SNIPPET_LENGTH = 80;
+const ISO_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z?$/;
 
 const defaultCaptureState = () => ({
   lastCapture: null,
@@ -79,15 +88,19 @@ const sanitizeCoachingState = (raw) => {
         if (!Array.isArray(entry.nagSessions)) return false;
         return true;
       })
-      .map(([key, entry]) => [
-        key,
-        {
-          ...entry,
-          nagSessions: entry.nagSessions
-            .filter((s) => typeof s === "string")
-            .slice(0, COACHING_NAG_SESSION_MEMORY),
-        },
-      ]),
+      .map(([key, entry]) => {
+        const { snippet, ...rest } = entry;
+        return [
+          key,
+          {
+            ...rest,
+            nagSessions: entry.nagSessions
+              .filter((s) => typeof s === "string")
+              .slice(0, COACHING_NAG_SESSION_MEMORY),
+            ...(typeof snippet === "string" ? { snippet } : {}),
+          },
+        ];
+      }),
   );
   return { promptHashCounts: sanitizedCounts };
 };
@@ -128,10 +141,42 @@ const loadCaptureState = (vaultPath, subfolder) => {
   return mergeWithDefaults(loadedState);
 };
 
+const resolveExchanges = (state) =>
+  isObjectRecord(state) && isObjectRecord(state.exchanges) ? state.exchanges : {};
+
+const sweepStaleExchanges = (state, nowMs = Date.now()) => {
+  const exchanges = resolveExchanges(state);
+  const activeEntries = Object.entries(exchanges).filter(([, entry]) => {
+    if (!isObjectRecord(entry) || entry.open !== true || typeof entry.openedAtIso !== "string") {
+      return false;
+    }
+    const openedMs = Date.parse(entry.openedAtIso);
+    return !Number.isNaN(openedMs) && nowMs - openedMs < EXCHANGE_STALE_OPEN_MS;
+  });
+
+  if (activeEntries.length === 0) {
+    const { exchanges: _removed, ...stateWithoutExchanges } = state;
+    return stateWithoutExchanges;
+  }
+
+  return {
+    ...state,
+    exchanges: Object.fromEntries(activeEntries),
+  };
+};
+
 const saveCaptureState = (vaultPath, subfolder, state) => {
   const safeState = assertObjectRecord("state", state);
   const statePath = resolveCaptureStatePath(vaultPath, subfolder);
-  saveJson(statePath, safeState);
+  saveJson(statePath, sweepStaleExchanges(safeState));
+};
+
+const assertIsoTimestamp = (name, value) => {
+  const safeValue = assertNonEmptyString(name, value);
+  if (!ISO_TIMESTAMP_PATTERN.test(safeValue) || Number.isNaN(Date.parse(safeValue))) {
+    throw new Error(`${name} must be a valid ISO timestamp`);
+  }
+  return safeValue;
 };
 
 const hashCaptureContent = (content) =>
@@ -255,20 +300,90 @@ const normalizeCoachingPromptText = (text) => {
   return normalized;
 };
 
-const hashCoachingPrompt = (text) => hashCaptureContent(normalizeCoachingPromptText(text));
+const hashCoachingPrompt = (text) =>
+  hashCaptureContent(`prompt:${normalizeCoachingPromptText(text)}`);
 
-const recordCoachingHit = (state, hash, sessionId, nowIso) => {
+const normalizeCoachingErrorText = (text) => {
+  if (typeof text !== "string") {
+    throw new Error("text must be a string");
+  }
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line !== "");
+  const matchedLine = lines.find((line) => /error|fail/i.test(line));
+  const fallbackLine = lines.length > 0 ? lines[0] : "";
+  const signalLine = matchedLine === undefined ? fallbackLine : matchedLine;
+  const normalized = signalLine
+    .toLowerCase()
+    .replace(/\d+/g, "#")
+    .replace(/\s+/g, " ")
+    .slice(0, MAX_COACHING_ERROR_TEXT_LENGTH)
+    .trim();
+  if (normalized === "") {
+    throw new Error("text must not be blank after normalization");
+  }
+  return normalized;
+};
+
+const hashCoachingError = (text) => hashCaptureContent(`error:${normalizeCoachingErrorText(text)}`);
+
+const buildCoachingSnippet = (kind, text) => {
+  const normalized =
+    kind === COACHING_KIND_ERROR_REPEAT
+      ? normalizeCoachingErrorText(text)
+      : normalizeCoachingPromptText(text);
+  return normalized.slice(0, MAX_COACHING_SNIPPET_LENGTH);
+};
+
+const decayCoachingCounts = (counts, nowMs) =>
+  Object.fromEntries(
+    Object.entries(counts).filter(([, entry]) => {
+      const lastSeenMs = Date.parse(entry.lastSeenIso);
+      if (Number.isNaN(lastSeenMs)) {
+        return false;
+      }
+      const decayWindowMs =
+        entry.count >= COACHING_NAG_THRESHOLD ? COACHING_DECAY_NAGGED_WINDOW_MS : COACHING_DECAY_MS;
+      return nowMs - lastSeenMs < decayWindowMs;
+    }),
+  );
+
+const recordCoachingHit = (
+  state,
+  hash,
+  sessionId,
+  nowIso,
+  kind = COACHING_KIND_PROMPT_REPEAT,
+  snippet = "",
+) => {
   assertObjectRecord("state", state);
   assertNonEmptyString("hash", hash);
   assertNonEmptyString("sessionId", sessionId);
-  assertNonEmptyString("nowIso", nowIso);
+  const safeNowIso = assertIsoTimestamp("nowIso", nowIso);
+  assertNonEmptyString("kind", kind);
+  assertString("snippet", snippet);
 
-  const counts = readPromptHashCounts(state);
+  const counts = decayCoachingCounts(readPromptHashCounts(state), Date.parse(safeNowIso));
 
   const existing = counts[hash];
+  const nextSnippet = snippet !== "" ? snippet : undefined;
   const updatedEntry = isObjectRecord(existing)
-    ? { ...existing, count: existing.count + 1, lastSeenIso: nowIso }
-    : { count: 1, firstSeenIso: nowIso, lastSeenIso: nowIso, nagSessions: [] };
+    ? {
+        ...existing,
+        count: existing.count + 1,
+        lastSeenIso: safeNowIso,
+        kind: typeof existing.kind === "string" && existing.kind !== "" ? existing.kind : kind,
+        ...(nextSnippet !== undefined ? { snippet: nextSnippet } : {}),
+      }
+    : {
+        count: 1,
+        firstSeenIso: safeNowIso,
+        lastSeenIso: safeNowIso,
+        nagSessions: [],
+        kind,
+        ...(nextSnippet !== undefined ? { snippet: nextSnippet } : {}),
+      };
 
   const updatedCounts = { ...counts, [hash]: updatedEntry };
 
@@ -318,6 +433,52 @@ const markCoachingNagged = (state, hash, sessionId) => {
   };
 };
 
+const isExchangeOpen = (state, sessionId, nowMs = Date.now()) => {
+  assertObjectRecord("state", state);
+  assertNonEmptyString("sessionId", sessionId);
+  const exchanges = resolveExchanges(state);
+  const entry = exchanges[sessionId];
+  if (!isObjectRecord(entry) || entry.open !== true) {
+    return false;
+  }
+  if (typeof entry.openedAtIso !== "string") {
+    return false;
+  }
+  const openedMs = Date.parse(entry.openedAtIso);
+  if (Number.isNaN(openedMs)) {
+    return false;
+  }
+  return nowMs - openedMs < EXCHANGE_STALE_OPEN_MS;
+};
+
+const openExchange = (state, sessionId, nowIso) => {
+  assertObjectRecord("state", state);
+  assertNonEmptyString("sessionId", sessionId);
+  const safeNowIso = assertIsoTimestamp("nowIso", nowIso);
+  const exchanges = resolveExchanges(state);
+  return {
+    ...state,
+    exchanges: {
+      ...exchanges,
+      [sessionId]: { open: true, openedAtIso: safeNowIso },
+    },
+  };
+};
+
+const closeExchange = (state, sessionId) => {
+  assertObjectRecord("state", state);
+  assertNonEmptyString("sessionId", sessionId);
+  const exchanges = resolveExchanges(state);
+  if (!isObjectRecord(exchanges[sessionId])) {
+    return state;
+  }
+  const { [sessionId]: _removed, ...remainingExchanges } = exchanges;
+  return {
+    ...state,
+    exchanges: remainingExchanges,
+  };
+};
+
 module.exports = {
   defaultCaptureState,
   resolveCaptureStatePath,
@@ -331,7 +492,14 @@ module.exports = {
   setMmSuppressed,
   normalizeCoachingPromptText,
   hashCoachingPrompt,
+  normalizeCoachingErrorText,
+  hashCoachingError,
+  buildCoachingSnippet,
+  compareCoachingEntriesForEviction,
   recordCoachingHit,
   shouldEmitCoachingNag,
   markCoachingNagged,
+  isExchangeOpen,
+  openExchange,
+  closeExchange,
 };

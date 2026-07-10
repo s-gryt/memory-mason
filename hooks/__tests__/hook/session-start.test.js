@@ -51,6 +51,7 @@ const hooksRoot = path.resolve(__dirname, "..", "..");
 const TWO = 2;
 const ELEVEN = 11;
 const FORTY = 40;
+const NON_OBJECT_PRIMITIVE = 42;
 const HOT_CONTEXT_SENTINEL_LENGTH = HOT_CACHE_CONTEXT_MAX_CHARS + SESSION_START_RECENT_LOG_LINES;
 const ENTRYPOINT_FILE = "session-start.js";
 const FIRST_CHUNK_FILE = "001.md";
@@ -74,6 +75,7 @@ const createFsApiMock = (nodes) => {
       return {
         isDirectory: () => node.kind === "dir",
         isFile: () => node.kind === "file",
+        mtimeMs: node.mtimeMs,
       };
     },
     readdirSync(targetPath) {
@@ -257,6 +259,21 @@ describe("readDailyLogText", () => {
     ).toBe("");
   });
 
+  it("falls back when folder stat fails after exists check", () => {
+    const vaultPath = TEST_DEFAULT_VAULT_PATH;
+    const subfolder = DEFAULT_SUBFOLDER;
+    const dateIso = TEST_DEFAULT_DATE;
+    const folderPath = buildDailyFolderPath(vaultPath, subfolder, dateIso);
+    const fsApi = createFsApiMock({
+      [folderPath]: { kind: "dir", entries: [FIRST_CHUNK_FILE] },
+    });
+    fsApi.statSync = () => {
+      throw new Error("simulated stat failure");
+    };
+
+    expect(sessionStart.readDailyLogText(vaultPath, subfolder, dateIso, fsApi)).toBe("");
+  });
+
   it("reads highest numbered chunk when multiple exist", () => {
     const vaultPath = TEST_DEFAULT_VAULT_PATH;
     const subfolder = DEFAULT_SUBFOLDER;
@@ -278,6 +295,80 @@ describe("readDailyLogText", () => {
 
     expect(sessionStart.readDailyLogText(vaultPath, subfolder, dateIso, fsApi)).toBe(
       "chunk three latest",
+    );
+  });
+
+  it("picks the chunk with the newest mtime across concurrent sessions, not the last name lexicographically", () => {
+    const vaultPath = TEST_DEFAULT_VAULT_PATH;
+    const subfolder = DEFAULT_SUBFOLDER;
+    const dateIso = TEST_DEFAULT_DATE;
+    const folderPath = buildDailyFolderPath(vaultPath, subfolder, dateIso);
+    const sessionAName = "090000-aaaaaaaa-001.md";
+    const sessionCName = "095000-cccccccc-001.md";
+    const sessionBName = "100000-bbbbbbbb-001.md";
+    const sessionAPath = path.join(folderPath, sessionAName);
+    const sessionCPath = path.join(folderPath, sessionCName);
+    const sessionBPath = path.join(folderPath, sessionBName);
+
+    const fsApi = createFsApiMock({
+      [folderPath]: {
+        kind: "dir",
+        entries: [sessionAName, sessionCName, sessionBName],
+      },
+      [sessionAPath]: { kind: "file", content: "session A", mtimeMs: 3000 },
+      [sessionCPath]: { kind: "file", content: "session C most recent", mtimeMs: 5000 },
+      [sessionBPath]: { kind: "file", content: "session B", mtimeMs: 1000 },
+    });
+
+    expect(sessionStart.readDailyLogText(vaultPath, subfolder, dateIso, fsApi)).toBe(
+      "session C most recent",
+    );
+  });
+
+  it("falls back to the lexicographically-last chunk when a chunk's stat cannot be read", () => {
+    const vaultPath = TEST_DEFAULT_VAULT_PATH;
+    const subfolder = DEFAULT_SUBFOLDER;
+    const dateIso = TEST_DEFAULT_DATE;
+    const folderPath = buildDailyFolderPath(vaultPath, subfolder, dateIso);
+    const unreadableName = "090000-aaaaaaaa-001.md";
+    const readableName = "100000-bbbbbbbb-001.md";
+    const readablePath = path.join(folderPath, readableName);
+
+    const fsApi = createFsApiMock({
+      [folderPath]: {
+        kind: "dir",
+        entries: [unreadableName, readableName],
+      },
+      [readablePath]: { kind: "file", content: "fallback chunk", mtimeMs: 2000 },
+    });
+
+    expect(sessionStart.readDailyLogText(vaultPath, subfolder, dateIso, fsApi)).toBe(
+      "fallback chunk",
+    );
+  });
+
+  it("picks the most-recent valid chunk when one chunk's stat throws (cou)", () => {
+    const vaultPath = TEST_DEFAULT_VAULT_PATH;
+    const subfolder = DEFAULT_SUBFOLDER;
+    const dateIso = TEST_DEFAULT_DATE;
+    const folderPath = buildDailyFolderPath(vaultPath, subfolder, dateIso);
+    const unreadableName = "090000-aaaaaaaa-001.md";
+    const olderName = "095000-bbbbbbbb-001.md";
+    const newerName = "100000-cccccccc-001.md";
+    const olderPath = path.join(folderPath, olderName);
+    const newerPath = path.join(folderPath, newerName);
+
+    const fsApi = createFsApiMock({
+      [folderPath]: {
+        kind: "dir",
+        entries: [unreadableName, olderName, newerName],
+      },
+      [olderPath]: { kind: "file", content: "older valid chunk", mtimeMs: 1000 },
+      [newerPath]: { kind: "file", content: "newest valid chunk", mtimeMs: 9000 },
+    });
+
+    expect(sessionStart.readDailyLogText(vaultPath, subfolder, dateIso, fsApi)).toBe(
+      "newest valid chunk",
     );
   });
 
@@ -600,6 +691,105 @@ describe("session-start.js", () => {
     expect(parsed.hookSpecificOutput.additionalContext).toContain("Workflow Coaching");
   });
 
+  it("retains coaching and shared-stream advisories when base context hits the truncation cap", () => {
+    const cwd = createTempDir(TEST_CWD_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const otherProjectPath = createTempDir(`${TEST_CWD_PREFIX}other-`);
+    const sessionContextPath = buildSessionContextPath(vaultPath, DEFAULT_SUBFOLDER);
+
+    writeText(
+      path.join(cwd, PROJECT_CONFIG_FILE_NAME),
+      JSON.stringify({ vaultPath, subfolder: DEFAULT_SUBFOLDER }),
+    );
+    writeText(sessionContextPath, `HOT_SENTINEL ${"x".repeat(HOT_CACHE_CONTEXT_MAX_CHARS * TWO)}`);
+
+    const statePath = resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER);
+    fs.mkdirSync(path.dirname(statePath), { recursive: true });
+    fs.writeFileSync(
+      statePath,
+      JSON.stringify({
+        lastCapture: null,
+        mmSuppressed: false,
+        lastProjectPath: otherProjectPath,
+        coachingState: {
+          promptHashCounts: {
+            abcdef0123456789: {
+              count: 5,
+              firstSeenIso: "2026-06-01T10:00:00.000Z",
+              lastSeenIso: "2026-06-26T10:00:00.000Z",
+              nagSessions: [],
+            },
+          },
+        },
+      }),
+      UTF8_ENCODING,
+    );
+
+    const result = runHookEntrypoint(ENTRYPOINT_FILE, {
+      payload: { cwd },
+      cwd,
+      env: buildEnv(cwd),
+    });
+    const parsed = JSON.parse(result.stdout);
+
+    expect(result.status).toBe(0);
+    expect(parsed.hookSpecificOutput.additionalContext).toContain("HOT_SENTINEL");
+    expect(parsed.hookSpecificOutput.additionalContext).toContain("Workflow Coaching");
+    expect(parsed.hookSpecificOutput.additionalContext).toContain(
+      "Multiple projects share one capture stream",
+    );
+    expect(parsed.hookSpecificOutput.additionalContext).toContain("...(truncated)");
+  });
+
+  it("baseContext content survives in output when additional sections are present (orp)", () => {
+    const cwd = createTempDir(TEST_CWD_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const otherProjectPath = createTempDir(`${TEST_CWD_PREFIX}other-`);
+    const indexPath = buildRootIndexPath(vaultPath, DEFAULT_SUBFOLDER);
+
+    writeText(
+      path.join(cwd, PROJECT_CONFIG_FILE_NAME),
+      JSON.stringify({ vaultPath, subfolder: DEFAULT_SUBFOLDER }),
+    );
+    writeText(indexPath, "BASE_CONTEXT_SENTINEL");
+
+    const statePath = resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER);
+    fs.mkdirSync(path.dirname(statePath), { recursive: true });
+    fs.writeFileSync(
+      statePath,
+      JSON.stringify({
+        lastCapture: null,
+        mmSuppressed: false,
+        lastProjectPath: otherProjectPath,
+        coachingState: {
+          promptHashCounts: {
+            abcdef0123456789: {
+              count: 5,
+              firstSeenIso: "2026-06-01T10:00:00.000Z",
+              lastSeenIso: "2026-06-26T10:00:00.000Z",
+              nagSessions: [],
+            },
+          },
+        },
+      }),
+      UTF8_ENCODING,
+    );
+
+    const result = runHookEntrypoint(ENTRYPOINT_FILE, {
+      payload: { cwd },
+      cwd,
+      env: buildEnv(cwd),
+    });
+    const parsed = JSON.parse(result.stdout);
+
+    expect(result.status).toBe(0);
+    expect(parsed.hookSpecificOutput.additionalContext).toContain("BASE_CONTEXT_SENTINEL");
+    expect(parsed.hookSpecificOutput.additionalContext).toContain("Workflow Coaching");
+    expect(parsed.hookSpecificOutput.additionalContext).toContain(
+      "Multiple projects share one capture stream",
+    );
+  });
+
   it("omits coaching advisory when capture state path is unreadable", () => {
     const cwd = createTempDir(TEST_CWD_PREFIX);
     const vaultPath = createTempDir(TEST_VAULT_PREFIX);
@@ -621,6 +811,43 @@ describe("session-start.js", () => {
 
     expect(result.status).toBe(0);
     expect(parsed.hookSpecificOutput.additionalContext).not.toContain("Workflow Coaching");
+  });
+
+  it("appends a shared-stream warning when lastProjectPath points elsewhere", () => {
+    const cwd = createTempDir(TEST_CWD_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const otherProjectPath = createTempDir(`${TEST_CWD_PREFIX}other-`);
+
+    writeText(
+      path.join(cwd, PROJECT_CONFIG_FILE_NAME),
+      JSON.stringify({ vaultPath, subfolder: DEFAULT_SUBFOLDER }),
+    );
+
+    const statePath = resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER);
+    fs.mkdirSync(path.dirname(statePath), { recursive: true });
+    fs.writeFileSync(
+      statePath,
+      JSON.stringify({
+        lastCapture: null,
+        mmSuppressed: false,
+        lastProjectPath: otherProjectPath,
+        coachingState: { promptHashCounts: {} },
+      }),
+      UTF8_ENCODING,
+    );
+
+    const result = runHookEntrypoint(ENTRYPOINT_FILE, {
+      payload: { cwd },
+      cwd,
+      env: buildEnv(cwd),
+    });
+    const parsed = JSON.parse(result.stdout);
+
+    expect(result.status).toBe(0);
+    expect(parsed.hookSpecificOutput.additionalContext).toContain(
+      "Multiple projects share one capture stream",
+    );
+    expect(parsed.hookSpecificOutput.additionalContext).toContain(otherProjectPath);
   });
 });
 
@@ -874,9 +1101,39 @@ describe("session-start.js runtime fallback branches", () => {
     expect(result.status).toBe(0);
   });
 
+  it("omits the shared-stream warning when cwd cannot be resolved", () => {
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    writeText(
+      path.join(homeDir, GLOBAL_MM_DIR_NAME, GLOBAL_CONFIG_FILE_NAME),
+      JSON.stringify({ vaultPath, subfolder: DEFAULT_SUBFOLDER }),
+    );
+
+    const result = sessionStart.run(JSON.stringify({}), {
+      cwd: "",
+      homedir: homeDir,
+    });
+
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed.hookSpecificOutput.additionalContext).not.toContain(
+      "Multiple projects share one capture stream",
+    );
+  });
+
   it("handles non-Error throw via String coercion", () => {
     const result = sessionStart.run("not-json-at-all", {});
     expect(result.status).toBe(0);
     expect(result.stderr).toContain("invalid JSON");
+  });
+});
+
+describe("buildCoachingAdditionalText", () => {
+  it("returns empty string when state is null (null guard)", () => {
+    expect(sessionStart.buildCoachingAdditionalText(null)).toBe("");
+  });
+
+  it("returns empty string when state is a non-null non-object (defensive catch)", () => {
+    expect(sessionStart.buildCoachingAdditionalText(NON_OBJECT_PRIMITIVE)).toBe("");
   });
 });

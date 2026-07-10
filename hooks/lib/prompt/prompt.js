@@ -43,6 +43,8 @@ const extractCommandName = (input) =>
     input !== null && typeof input === "object" && !Array.isArray(input) ? input.commandName : "",
   ]);
 
+const extractMmCommandToken = (input) => getMmCommandToken(extractCommandName(input));
+
 const isMmCommand = (value) => {
   if (typeof value !== "string") {
     return false;
@@ -67,11 +69,12 @@ const buildPromptExpansionText = (input) => {
   const commandName = extractCommandName(input);
   const commandArgs = firstNonEmptyString([input.command_args, input.commandArgs]);
   const commandSource = firstNonEmptyString([input.command_source, input.commandSource]);
-  const mmCommandToken = prompt === "" ? getMmCommandToken(commandName) : "";
+  const mmCommandToken = extractMmCommandToken(input);
+  const promptHeader = mmCommandToken !== "" && !isMmCommand(prompt) ? mmCommandToken : prompt;
 
   return [
-    prompt,
-    mmCommandToken,
+    promptHeader,
+    prompt !== "" && prompt !== promptHeader ? prompt : "",
     expansionType === "" ? "" : `type: ${expansionType}`,
     commandName === "" ? "" : `command: ${commandName}`,
     commandArgs === "" ? "" : `args: ${commandArgs}`,
@@ -82,23 +85,29 @@ const buildPromptExpansionText = (input) => {
 };
 
 const extractPromptText = (platform, input) => {
-  const mmCommandToken = getMmCommandToken(extractCommandName(input));
+  const commandName = extractCommandName(input);
+  const mmCommandToken = getMmCommandToken(commandName);
+
+  if (mmCommandToken !== "") {
+    const promptText = firstNonEmptyString([input.prompt]);
+    if (promptText === "" || isMmCommand(promptText)) {
+      return mmCommandToken;
+    }
+    return `${mmCommandToken}\n${promptText}`;
+  }
+
+  const promptText =
+    platform === PLATFORM_COPILOT_CLI
+      ? firstNonEmptyString([input.prompt, input.userPrompt, input.initialPrompt])
+      : firstNonEmptyString([input.prompt]);
 
   if (
     platform === PLATFORM_COPILOT_VSCODE ||
     platform === PLATFORM_CLAUDE_CODE ||
-    platform === PLATFORM_CODEX
+    platform === PLATFORM_CODEX ||
+    platform === PLATFORM_COPILOT_CLI
   ) {
-    return firstNonEmptyString([input.prompt, mmCommandToken]);
-  }
-
-  if (platform === PLATFORM_COPILOT_CLI) {
-    return firstNonEmptyString([
-      input.prompt,
-      input.userPrompt,
-      input.initialPrompt,
-      mmCommandToken,
-    ]);
+    return promptText;
   }
 
   throw new Error(`unsupported platform: ${platform}`);

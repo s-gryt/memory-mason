@@ -6,7 +6,7 @@ const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const { UTF8_ENCODING } = require("../../lib/shared/constants");
 const { ENV_KEY_VAULT_PATH, ENV_KEY_CAPTURE_MODE } = require("../../lib/config/constants");
-const { buildDailyChunkPath } = require("../../lib/vault/vault");
+const { buildDailyChunkPath: buildDailyChunkPathFromVault } = require("../../lib/vault/vault");
 const {
   buildCommandErrorResult,
   formatErrorMessage,
@@ -27,6 +27,7 @@ const {
   TEST_TRANSCRIPT_ROLE_USER: TRANSCRIPT_ROLE_USER,
   TEST_TRANSCRIPT_ROLE_ASSISTANT: TRANSCRIPT_ROLE_ASSISTANT,
 } = require("../helpers/test-constants");
+const { findFirstDailyChunkPath } = require("../helpers/entrypoint-runtime");
 
 const hooksRoot = path.resolve(__dirname, "..", "..");
 const _repoRoot = path.resolve(hooksRoot, "..");
@@ -78,6 +79,10 @@ const buildTranscript = (turnCount, firstUserContent = "user turn") =>
     const content = isUser && index === 0 ? firstUserContent : `${role} turn ${index}`;
     return JSON.stringify({ message: { role, content } });
   }).join("\n");
+
+const buildDailyChunkPath = (vaultPath, subfolder, dateIso, chunkNum) =>
+  findFirstDailyChunkPath(vaultPath, subfolder, dateIso) ??
+  buildDailyChunkPathFromVault(vaultPath, subfolder, dateIso, chunkNum);
 
 const runCli = (scriptName, options = {}) => {
   const env = typeof options.env === "object" && options.env !== null ? options.env : process.env;

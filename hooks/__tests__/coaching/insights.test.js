@@ -9,6 +9,7 @@ const {
 const ISO_EARLY = "2026-06-26T08:00:00.000Z";
 const ISO_MID = "2026-06-26T10:00:00.000Z";
 const ISO_LATE = "2026-06-26T15:00:00.000Z";
+const ISO_NOW = "2026-07-01T00:00:00.000Z";
 const HIGH_COUNT = 12;
 const MEDIUM_COUNT = 7;
 const BELOW_THRESHOLD_COUNT = 2;
@@ -74,7 +75,7 @@ describe("selectTopCoachingInsights", () => {
     expect(selectTopCoachingInsights(state, LIMIT_ZERO).length).toBe(0);
   });
 
-  it("each item shapes correctly", () => {
+  it("each item shapes correctly, defaulting kind and snippet when absent", () => {
     const state = buildState({
       abcdef0123456789: buildEntry(HIGH_COUNT, ISO_EARLY, ISO_LATE),
     });
@@ -85,7 +86,21 @@ describe("selectTopCoachingInsights", () => {
       firstSeenIso: ISO_EARLY,
       lastSeenIso: ISO_LATE,
       kind: "prompt-repeat",
+      snippet: "",
     });
+  });
+
+  it("preserves the entry's own kind and snippet when present", () => {
+    const state = buildState({
+      abcdef0123456789: {
+        ...buildEntry(HIGH_COUNT, ISO_EARLY, ISO_LATE),
+        kind: "error-repeat",
+        snippet: "build failed",
+      },
+    });
+    const [item] = selectTopCoachingInsights(state, LIMIT_THREE);
+    expect(item.kind).toBe("error-repeat");
+    expect(item.snippet).toBe("build failed");
   });
 
   it("throws on invalid state", () => {
@@ -125,6 +140,50 @@ describe("selectTopCoachingInsights", () => {
     const result = selectTopCoachingInsights(state, LIMIT_THREE);
     expect(result.length).toBe(2);
   });
+
+  it("decays stale entries before ranking insights", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(ISO_NOW));
+
+    const staleIso = "2026-03-01T00:00:00.000Z";
+    const state = buildState({
+      stale_high: buildEntry(HIGH_COUNT, staleIso, staleIso),
+      fresh_medium: buildEntry(MEDIUM_COUNT, ISO_EARLY, ISO_LATE),
+    });
+
+    expect(selectTopCoachingInsights(state, LIMIT_THREE).map((item) => item.hash)).toEqual([
+      "fresh_medium",
+    ]);
+
+    vi.useRealTimers();
+  });
+
+  it("excludes entry with unparseable lastSeenIso from output", () => {
+    const state = buildState({
+      corrupt: { count: HIGH_COUNT, firstSeenIso: ISO_EARLY, lastSeenIso: "not-a-date" },
+      valid: buildEntry(HIGH_COUNT, ISO_EARLY, ISO_LATE),
+    });
+    const result = selectTopCoachingInsights(state, LIMIT_THREE);
+    expect(result.map((r) => r.hash)).toEqual(["valid"]);
+  });
+
+  it("excludes entry with null lastSeenIso from output", () => {
+    const state = buildState({
+      corrupt: { count: HIGH_COUNT, firstSeenIso: ISO_EARLY, lastSeenIso: null },
+      valid: buildEntry(HIGH_COUNT, ISO_EARLY, ISO_LATE),
+    });
+    const result = selectTopCoachingInsights(state, LIMIT_THREE);
+    expect(result.map((r) => r.hash)).toEqual(["valid"]);
+  });
+
+  it("a genuinely fresh valid entry above threshold is still selected", () => {
+    const state = buildState({
+      fresh: buildEntry(HIGH_COUNT, ISO_EARLY, ISO_LATE),
+    });
+    const result = selectTopCoachingInsights(state, LIMIT_THREE);
+    expect(result.length).toBe(1);
+    expect(result[0].hash).toBe("fresh");
+  });
 });
 
 describe("formatCoachingAdditionalContext", () => {
@@ -153,6 +212,34 @@ describe("formatCoachingAdditionalContext", () => {
     expect(result).toContain("kind: prompt-repeat");
     expect(result).toContain(`first: ${ISO_EARLY}`);
     expect(result).toContain(`last: ${ISO_LATE}`);
+  });
+
+  it("appends the snippet in quotes when present", () => {
+    const result = formatCoachingAdditionalContext([
+      {
+        hash: "h1",
+        count: HIGH_COUNT,
+        firstSeenIso: ISO_EARLY,
+        lastSeenIso: ISO_LATE,
+        kind: "prompt-repeat",
+        snippet: "fix auth bug",
+      },
+    ]);
+    expect(result).toContain('— "fix auth bug"');
+  });
+
+  it("omits the snippet suffix when absent", () => {
+    const result = formatCoachingAdditionalContext([
+      {
+        hash: "h1",
+        count: HIGH_COUNT,
+        firstSeenIso: ISO_EARLY,
+        lastSeenIso: ISO_LATE,
+        kind: "prompt-repeat",
+        snippet: "",
+      },
+    ]);
+    expect(result).not.toContain('—  "');
   });
 
   it("skips non-object items", () => {

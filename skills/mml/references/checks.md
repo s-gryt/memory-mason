@@ -1,6 +1,6 @@
 ## Check Specifications — mml
 
-Detailed rules, report formats, and edge cases for all fourteen knowledge base health checks. Run every check in full; do not skip any.
+Detailed rules, report formats, and edge cases for all eighteen knowledge base health checks. Run every check in full; do not skip any.
 
 ### Check 1: Broken wikilinks (severity: error)
 
@@ -41,7 +41,10 @@ WARN [orphan_source] _raw/YYYY-MM-DD/: Not yet compiled
 ### Check 4: Stale articles (severity: warning)
 
 - From `state.json` ingested entries, compare the current raw capture hash with the stored hash.
-- Compute the current hash over the concatenated chunk contents in numeric order.
+- Recompute the current hash using the same `/mmc` chunk-ordering rules:
+  - legacy daily layout: numeric chunks in ascending order
+  - schemaVersion 2 mixed/session layout: one optional legacy numeric-chunk group first, then session groups ordered by `{HHMMSS}` with `{sid8}` as deterministic tie-breaker, and chunk indices ascending within each group
+- Hash the concatenated chunk contents in that exact order, with the same single blank-line separators `/mmc` uses.
 - If a raw capture changed since compilation, report it.
 - Report format:
 
@@ -74,11 +77,11 @@ SUGGESTION [sparse_article] file.md: Only N words (minimum recommended: 200)
 ### Check 7: Large raw captures (severity: warning / error)
 
 For each entry under `{vault}/{subfolder}/_raw/`:
-- Read only numeric chunk files such as `001.md`, `002.md`, and so on.
-- Sum the sizes of those chunk files for the daily capture folder.
+- Read both legacy numeric chunk files such as `001.md`, `002.md`, and session-scoped chunk files matching `{HHMMSS}-{sid8}-{NNN}.md`.
+- Sum the sizes of all such chunk files for the daily capture folder regardless of naming layout.
 - Ignore `meta.json` for size calculations.
 
-Report captures over 500KB:
+Report captures over 500KB (512000 bytes):
 ```text
 WARN [large_daily_folder] _raw/YYYY-MM-DD/: Total {size}KB across {n} chunks. Consider running /mmc.
 ```
@@ -196,4 +199,89 @@ ERROR [missing_subfolder_prefix] file.md: [[_raw/2026-05-04/001]] should be [[{s
 
 ```text
 ERROR [cross_project_link] file.md: [[other-project/concepts/foo]] references a different subfolder — remove or replace with a local concept
+```
+
+### Check 15: Session note coverage (severity: warning)
+
+For every compiled date folder in `{vault}/{subfolder}/_raw/`:
+- Read `_raw/{YYYY-MM-DD}/meta.json` if it exists. If the `schemaVersion` field equals `2`, derive each distinct `{HHMMSS}-{sid8}` group by parsing the chunk filenames (each chunk filename follows `{HHMMSS}-{sid8}-{NNN}.md`; there is no dedicated group field in `meta.json`).
+- For each such group, verify that `{vault}/{subfolder}/sessions/YYYY-MM-DD-{sid8}.md` exists.
+- If the session note is missing, report:
+
+```text
+WARN [missing_session_note] sessions/YYYY-MM-DD-{sid8}.md: Compiled date {YYYY-MM-DD} has session {sid8} in meta.json but no session note. Run /mmc to generate it.
+```
+
+- Only apply this check when `meta.json` is present and `schemaVersion == 2`. Skip for legacy daily-layout dates.
+
+### Check 16: Bases integrity (severity: suggestion)
+
+- After at least one successful `/mmc` run (i.e., `_meta/state.json` has at least one `ingested` entry), the four canonical Bases files should exist under `{vault}/{subfolder}/atlas/bases/`: `sessions-timeline.base`, `decisions.base`, `contradictions.base`, `seedlings.base`.
+- For each missing file, report:
+
+```text
+SUGGESTION [missing_base] atlas/bases/{filename}: Expected Bases file is absent. Run /mmc to regenerate.
+```
+
+- For each file that exists, attempt to parse it as YAML. If YAML parsing fails, report:
+
+```text
+SUGGESTION [invalid_base_yaml] atlas/bases/{filename}: File is not valid YAML. Regenerate with /mmc or correct manually.
+```
+
+- For each file that parses as valid YAML, also validate real Bases structure, not just YAML-ness:
+  - `filters` (top-level or per-view) must be an `and`/`or`/`not` block containing expression strings (e.g. `'type == "session"'`). A `filters` list of `{property, operator, value}` maps is invalid Bases syntax — report it as `invalid_base_yaml` even though the YAML itself parses.
+  - Each `views[]` entry's `order` must be a flat list of property names (column display order only). An `order` list of `{property, direction}` maps is invalid Bases syntax for the same reason.
+  - Sort behavior (e.g. "newest first") must live under `views[].groupBy: {property, direction}`, not under `order`.
+
+```text
+SUGGESTION [invalid_base_yaml] atlas/bases/{filename}: File is valid YAML but not valid Bases syntax ({detail}). Regenerate with /mmc or correct manually.
+```
+
+- Do not report drift merely because a valid `.base` file has user formatting or other non-canonical edits outside the canonical structure. Only recommend regeneration when the file is missing, invalid (YAML or Bases syntax), or its canonical filters/view definitions no longer match `/mmc` output.
+
+- Do not report this check if no compile has been run yet (no `ingested` entries in `state.json`).
+
+### Check 17: Supersede integrity (severity: error)
+
+Run three sub-checks on all concept pages:
+
+**17a — broken superseded_by target:**
+- For each concept page that has a `superseded_by` frontmatter field, resolve the wikilink value to a file path under `{vault}/{subfolder}/`.
+- If the target file does not exist, report:
+
+```text
+ERROR [broken_superseded_by] concepts/file.md: superseded_by target [[...]] does not exist
+```
+
+**17b — superseded concept promoted to evergreen:**
+- For each concept page that has a `superseded_by` field, check its `status` field.
+- If `status: evergreen`, report:
+
+```text
+ERROR [superseded_evergreen] concepts/file.md: Superseded concept must not have status evergreen — downgrade to growing or seedling
+```
+
+**17c — has_contradiction flag inconsistency:**
+- For each concept page, check whether `has_contradiction: true` in frontmatter matches the presence of at least one `[!contradiction]` callout in the body, and vice versa.
+- If `has_contradiction: true` but no `[!contradiction]` callout exists, report:
+
+```text
+ERROR [contradiction_flag_stale] concepts/file.md: has_contradiction is true but no [!contradiction] callout found — clear the flag or restore the callout
+```
+
+- If one or more `[!contradiction]` callouts exist but `has_contradiction` is `false` or absent, report:
+
+```text
+ERROR [contradiction_flag_missing] concepts/file.md: [!contradiction] callout present but has_contradiction is not true — set has_contradiction: true in frontmatter
+```
+
+### Check 18: Index session rows (severity: warning)
+
+- Glob all files in `{vault}/{subfolder}/sessions/`.
+- For each session note file, check whether `index.md` contains a row with type `session` linking to that note.
+- If no matching row exists, report:
+
+```text
+WARN [missing_index_session_row] sessions/file.md: Session note has no row in index.md — run /mmc or add the row manually
 ```

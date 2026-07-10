@@ -9,6 +9,8 @@ const { HOOK_WARNING_TAG_LIMIT_PREFIX } = require("../filter/constants");
 
 const EMPTY_STRING = "";
 const NEWLINE = "\n";
+const HOOK_WARNING_FILTER_FALLBACK_PREFIX =
+  "[memory-mason] capture filter failed; using uncompressed sanitized transcript";
 
 const buildCaptureTimestamp = () => {
   const now = localNow();
@@ -41,4 +43,5 @@ module.exports = {
   buildCaptureTimestamp,
   buildTagWarning,
   buildWarningsResult,
+  HOOK_WARNING_FILTER_FALLBACK_PREFIX,
 };

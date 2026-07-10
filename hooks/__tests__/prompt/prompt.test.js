@@ -72,6 +72,16 @@ describe("prompt helpers", () => {
     ).toBe("/memory-mason:mmc\ntype: skill\ncommand: memory-mason:mmc");
   });
 
+  it("prepends Memory Mason command token for non-empty prompt expansion", () => {
+    expect(
+      buildPromptExpansionText({
+        prompt: "/regular command",
+        expansion_type: "skill",
+        command_name: "memory-mason:mmc",
+      }),
+    ).toBe("/memory-mason:mmc\n/regular command\ntype: skill\ncommand: memory-mason:mmc");
+  });
+
   it("returns prompt expansion entry for Claude UserPromptExpansion", () => {
     expect(
       extractPromptEntry(PLATFORM_CLAUDE_CODE, {
@@ -153,6 +163,42 @@ describe("extractPromptText", () => {
     expect(extractPromptText(PLATFORM_CLAUDE_CODE, { commandName: "memory-mason:mmc" })).toBe(
       "/memory-mason:mmc",
     );
+  });
+
+  it("appends non-MM user prompt text when commandName resolves an MM token", () => {
+    expect(
+      extractPromptText(PLATFORM_CLAUDE_CODE, {
+        prompt: "explain the changes",
+        commandName: "memory-mason:mmc",
+      }),
+    ).toBe("/memory-mason:mmc\nexplain the changes");
+  });
+
+  it("returns only the MM token when commandName resolves and prompt is empty", () => {
+    expect(
+      extractPromptText(PLATFORM_CLAUDE_CODE, {
+        prompt: "",
+        commandName: "memory-mason:mmc",
+      }),
+    ).toBe("/memory-mason:mmc");
+  });
+
+  it("returns only the MM token when commandName resolves and prompt is itself an MM command", () => {
+    expect(
+      extractPromptText(PLATFORM_CLAUDE_CODE, {
+        prompt: "/mms",
+        commandName: "memory-mason:mmc",
+      }),
+    ).toBe("/memory-mason:mmc");
+  });
+
+  it("preserves prompt text when commandName is present but not a Memory Mason command", () => {
+    expect(
+      extractPromptText(PLATFORM_CLAUDE_CODE, {
+        prompt: "/regular command",
+        commandName: "caveman:caveman",
+      }),
+    ).toBe("/regular command");
   });
 
   it("returns empty string for array input", () => {

@@ -18,11 +18,8 @@ const {
   GLOBAL_MM_DIR_NAME,
   GLOBAL_CONFIG_FILE_NAME,
 } = require("../../lib/config/constants");
-const {
-  buildDailyChunkPath,
-  buildDailyFilePath,
-  buildRootIndexPath,
-} = require("../../lib/vault/vault");
+const { buildDailyFilePath, buildRootIndexPath } = require("../../lib/vault/vault");
+const { readFirstDailyChunk, findFirstDailyChunkPath } = require("../helpers/entrypoint-runtime");
 const { resolveCaptureStatePath } = require("../../lib/capture/capture-state");
 const sessionStart = require("../../session-start");
 const userPromptSubmit = require("../../user-prompt-submit");
@@ -208,6 +205,24 @@ const resolvePayload = (options) =>
     ? options.payload
     : null;
 
+const applyScriptSpecificPayloadDefaults = (scriptName, payload) => {
+  if (
+    payload === null ||
+    scriptName !== PRE_COMPACT_FILE ||
+    typeof payload.transcript_path !== "string" ||
+    payload.transcript_path === "" ||
+    typeof payload.hook_event_name === "string" ||
+    typeof payload.hookEventName === "string"
+  ) {
+    return payload;
+  }
+
+  return {
+    hook_event_name: HOOK_EVENT_PRE_COMPACT_KEBAB,
+    ...payload,
+  };
+};
+
 const resolveStdinText = (options, resolvedPayload) => {
   if (typeof options.stdinText === "string") {
     return options.stdinText;
@@ -222,7 +237,7 @@ const runScript = (scriptName, options = {}) => {
   const homedir = resolveRuntimeHomedir(env);
   const extraRuntime = resolveExtraRuntime(options);
   const requestedRuntimeCwd = typeof options.cwd === "string" ? options.cwd : hooksRoot;
-  const payload = resolvePayload(options);
+  const payload = applyScriptSpecificPayloadDefaults(scriptName, resolvePayload(options));
   const runtime = {
     cwd: requestedRuntimeCwd,
     env,
@@ -603,9 +618,8 @@ describe(USER_PROMPT_SUBMIT_FILE, () => {
       env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
-    const dailyPath = buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1);
     expect(result.status).toBe(0);
-    expect(fs.readFileSync(dailyPath, UTF8_ENCODING)).toContain("remember hooks");
+    expect(readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today())).toContain("remember hooks");
   });
 
   it("writes rich slash-command metadata for Claude prompt expansion events", () => {
@@ -625,8 +639,7 @@ describe(USER_PROMPT_SUBMIT_FILE, () => {
       env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
-    const dailyPath = buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1);
-    const dailyContent = fs.readFileSync(dailyPath, UTF8_ENCODING);
+    const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
 
     expect(result.status).toBe(0);
     expect(dailyContent).toContain("UserPromptExpansion");
@@ -655,9 +668,7 @@ describe(USER_PROMPT_SUBMIT_FILE, () => {
     });
 
     expect(result.status).toBe(0);
-    expect(
-      fs.readFileSync(buildDailyChunkPath(vaultPath, "my-brain", today(), 1), UTF8_ENCODING),
-    ).toContain("remember this");
+    expect(readFirstDailyChunk(vaultPath, "my-brain", today())).toContain("remember this");
     expect(fs.existsSync(buildDailyFilePath(vaultPath, DEFAULT_SUBFOLDER, today()))).toBe(false);
   });
 
@@ -711,7 +722,7 @@ describe(USER_PROMPT_SUBMIT_FILE, () => {
       env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
-    const dailyPathAfterFirst = buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1);
+    const dailyPathAfterFirst = findFirstDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today());
     const contentAfterFirst = fs.readFileSync(dailyPathAfterFirst, UTF8_ENCODING);
     expect(contentAfterFirst).not.toContain(ASSISTANT_REPLY_ENTRY_NAME);
     expect(contentAfterFirst).toContain("first user prompt");
@@ -756,10 +767,7 @@ describe(USER_PROMPT_SUBMIT_FILE, () => {
       env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
-    const dailyContent = fs.readFileSync(
-      buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
-      UTF8_ENCODING,
-    );
+    const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
 
     expect(result.status).toBe(0);
     expect(dailyContent).not.toContain(ASSISTANT_REPLY_ENTRY_NAME);
@@ -798,8 +806,7 @@ describe(USER_PROMPT_SUBMIT_FILE, () => {
       env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
-    const dailyPath = buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1);
-    const dailyContent = fs.readFileSync(dailyPath, UTF8_ENCODING);
+    const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
 
     expect(dailyContent).toContain("second prompt");
     expect(dailyContent).toContain("third prompt");
@@ -821,10 +828,7 @@ describe(USER_PROMPT_SUBMIT_FILE, () => {
       env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
-    const dailyContent = fs.readFileSync(
-      buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
-      UTF8_ENCODING,
-    );
+    const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
 
     expect(result.status).toBe(0);
     expect(dailyContent).not.toContain(ASSISTANT_REPLY_ENTRY_NAME);
@@ -849,10 +853,7 @@ describe(USER_PROMPT_SUBMIT_FILE, () => {
       env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
-    const dailyContent = fs.readFileSync(
-      buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
-      UTF8_ENCODING,
-    );
+    const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
 
     expect(result.status).toBe(0);
     expect(dailyContent).not.toContain(ASSISTANT_REPLY_ENTRY_NAME);
@@ -873,10 +874,7 @@ describe(USER_PROMPT_SUBMIT_FILE, () => {
       env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
-    const dailyContent = fs.readFileSync(
-      buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
-      UTF8_ENCODING,
-    );
+    const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
 
     expect(result.status).toBe(0);
     expect(dailyContent).not.toContain(ASSISTANT_REPLY_ENTRY_NAME);
@@ -1106,11 +1104,14 @@ describe(PRE_COMPACT_FILE, () => {
         env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       });
 
-      const dailyPath = buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1);
       const statePath = resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER);
       expect(result.status).toBe(0);
-      expect(fs.readFileSync(dailyPath, UTF8_ENCODING)).toContain("session-1 / pre-compact");
-      expect(fs.readFileSync(dailyPath, UTF8_ENCODING)).toContain("**User:** user turn");
+      expect(readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today())).toContain(
+        "session-1 / pre-compact",
+      );
+      expect(readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today())).toContain(
+        "**User:** user turn",
+      );
       expect(JSON.parse(fs.readFileSync(statePath, UTF8_ENCODING)).lastCapture.source).toBe(
         HOOK_EVENT_PRE_COMPACT_KEBAB,
       );
@@ -1138,8 +1139,7 @@ describe(PRE_COMPACT_FILE, () => {
         env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       });
 
-      const dailyPath = buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1);
-      const dailyContent = fs.readFileSync(dailyPath, UTF8_ENCODING);
+      const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
 
       expect(result.status).toBe(0);
       expect(dailyContent).toContain(longFirstTurn);
@@ -1167,7 +1167,7 @@ describe(PRE_COMPACT_FILE, () => {
         },
         env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       });
-      const dailyPath = buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1);
+      const dailyPath = findFirstDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today());
       const firstContent = fs.readFileSync(dailyPath, UTF8_ENCODING);
 
       runScript(PRE_COMPACT_FILE, {
@@ -1242,7 +1242,7 @@ describe(SESSION_END_FILE, () => {
       env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
-    const dailyPath = buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1);
+    const dailyPath = findFirstDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today());
     const afterFirstPrompt = fs.readFileSync(dailyPath, UTF8_ENCODING);
     expect(afterFirstPrompt).toContain("first prompt");
     expect(afterFirstPrompt).not.toContain(ASSISTANT_REPLY_ENTRY_NAME);
@@ -1348,10 +1348,7 @@ describe(SESSION_END_FILE, () => {
       env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
-    const dailyContent = fs.readFileSync(
-      buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
-      UTF8_ENCODING,
-    );
+    const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
 
     expect(result.status).toBe(0);
     expect(dailyContent).toContain("first prompt");
@@ -1406,10 +1403,7 @@ describe(SESSION_END_FILE, () => {
       env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
-    const dailyContent = fs.readFileSync(
-      buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
-      UTF8_ENCODING,
-    );
+    const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
 
     expect(result.status).toBe(0);
     expect(dailyContent.split("assistant turn 1").length - 1).toBe(1);
@@ -1475,10 +1469,7 @@ describe(SESSION_END_FILE, () => {
       env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
-    const dailyContent = fs.readFileSync(
-      buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
-      UTF8_ENCODING,
-    );
+    const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
 
     expect(result.status).toBe(0);
     expect(dailyContent).toContain("first prompt");
@@ -1507,9 +1498,10 @@ describe(SESSION_END_FILE, () => {
         env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       });
 
-      const dailyPath = buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1);
       expect(result.status).toBe(0);
-      expect(fs.readFileSync(dailyPath, UTF8_ENCODING)).toContain("session-1 / stop");
+      expect(readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today())).toContain(
+        "session-1 / stop",
+      );
     });
   });
 
@@ -1536,8 +1528,7 @@ describe(SESSION_END_FILE, () => {
         env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       });
 
-      const dailyPath = buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1);
-      const dailyContent = fs.readFileSync(dailyPath, UTF8_ENCODING);
+      const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
 
       expect(result.status).toBe(0);
       expect(dailyContent).toContain(longFirstTurn);
@@ -1570,12 +1561,9 @@ describe(SESSION_END_FILE, () => {
         env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       });
 
-      expect(
-        fs.readFileSync(
-          buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
-          UTF8_ENCODING,
-        ),
-      ).toContain("session-2 / codex");
+      expect(readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today())).toContain(
+        "session-2 / codex",
+      );
     });
   });
 
@@ -1597,12 +1585,9 @@ describe(SESSION_END_FILE, () => {
         env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       });
 
-      expect(
-        fs.readFileSync(
-          buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
-          UTF8_ENCODING,
-        ),
-      ).toContain("unknown / copilot-cli");
+      expect(readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today())).toContain(
+        "unknown / copilot-cli",
+      );
     });
   });
 
@@ -1643,7 +1628,7 @@ describe(SESSION_END_FILE, () => {
         env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       });
 
-      const dailyPath = buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1);
+      const dailyPath = findFirstDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today());
       const firstContent = fs.readFileSync(dailyPath, UTF8_ENCODING);
 
       runScript(SESSION_END_FILE, {
@@ -3393,7 +3378,12 @@ describe("pre-compact.js readConfigText with existing file", () => {
       JSON.stringify({ vaultPath, [CONFIG_KEY_SUBFOLDER]: DEFAULT_SUBFOLDER }),
     );
     const result = runScript(PRE_COMPACT_FILE, {
-      payload: { cwd, transcript_path: transcriptPath, session_id: "cfg-test" },
+      payload: {
+        hook_event_name: HOOK_EVENT_PRE_COMPACT_KEBAB,
+        cwd,
+        transcript_path: transcriptPath,
+        session_id: "cfg-test",
+      },
       cwd,
       env: buildEnv(homeDir),
     });

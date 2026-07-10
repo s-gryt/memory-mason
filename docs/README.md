@@ -42,47 +42,54 @@ Shell installers copy hook runtime, wire events, and create vault config in one 
 
 Run `/mmsetup` to configure your vault path interactively. Or set it up manually using any of these methods.
 
-`captureMode` controls how much session detail gets written. `lite` is default and keeps capture compact. Set `MEMORY_MASON_CAPTURE_MODE=full` or `"captureMode": "full"` when you want detailed tool output in daily logs.
+`captureMode` controls how much session detail gets written. `lite` is default and keeps capture compact. Set `MEMORY_MASON_CAPTURE_MODE=full` or `"captureMode": "full"` when you want detailed tool output in daily logs. `minimize` (default `false`) enables deterministic compression of assistant narrative text before vault writes; when disabled, raw text is stored verbatim.
 
 Config resolves in this order (first match wins):
 
 | Priority | Source | Location | Best for |
 |:--------:|:-------|:---------|:---------|
-| 1 | Project `.env` | `MEMORY_MASON_VAULT_PATH` + optional `MEMORY_MASON_SUBFOLDER` + optional `MEMORY_MASON_SYNC` | Per-project override |
+| 1 | Project `.env` | `MEMORY_MASON_VAULT_PATH` + optional `MEMORY_MASON_SUBFOLDER` + optional `MEMORY_MASON_SYNC` + optional `MEMORY_MASON_MINIMIZE` | Per-project override |
 | 2 | Project config | `memory-mason.json` in project root | Per-project override |
 | 3 | Global `.env` | `~/.memory-mason/.env` | Shared local defaults |
 | 4 | Global config | `~/.memory-mason/config.json` | Default for all projects |
 
-Vault path is resolved from files only. Per-session `MEMORY_MASON_SYNC` and
-`MEMORY_MASON_CAPTURE_MODE` environment variables still override file config. If no source is
-found, hooks throw an explicit error. `/mmsetup` creates the global config automatically.
+Vault path is resolved from files only. `subfolder` is layered independently using the same priority
+order, so project-local `MEMORY_MASON_SUBFOLDER` or JSON `subfolder` values still win even when a
+different source supplied `vaultPath`. Per-session `MEMORY_MASON_SYNC`,
+`MEMORY_MASON_CAPTURE_MODE`, and `MEMORY_MASON_MINIMIZE` environment variables override file
+config; process env takes highest precedence. If no source is found, hooks throw an explicit error.
+`/mmsetup` creates the global config automatically.
 
 ### .env format
 
 `MEMORY_MASON_VAULT_PATH` sets the Obsidian vault location. `MEMORY_MASON_SUBFOLDER` sets the
 directory inside the vault. `MEMORY_MASON_SYNC` is optional — capture is enabled by default; set
 it to `false` to pause capture. `MEMORY_MASON_CAPTURE_MODE` is optional — set it to `full` to keep
-detailed tool output, or leave it at the default `lite` mode for compact capture. Setting
-`MEMORY_MASON_SYNC` or `MEMORY_MASON_CAPTURE_MODE` as process environment variables overrides file
-config for a single session.
+detailed tool output, or leave it at the default `lite` mode for compact capture.
+`MEMORY_MASON_MINIMIZE` is optional — set to `true` to enable deterministic compression of
+assistant narrative text before vault writes; default is `false` (raw text stored verbatim). Code
+blocks, user prompts, URLs, quoted strings, and errors are never compressed regardless of this
+setting. Process environment variables override file config and take highest precedence.
 
 ```env
 MEMORY_MASON_VAULT_PATH=/path/to/your/obsidian/vault
 MEMORY_MASON_SUBFOLDER=ai-knowledge
 MEMORY_MASON_SYNC=true
 MEMORY_MASON_CAPTURE_MODE=full
+MEMORY_MASON_MINIMIZE=false
 ```
 
 ### JSON format
 
-`vaultPath` sets the Obsidian vault location. `subfolder` sets the directory inside the vault. `sync` is optional — capture is enabled by default; set it to `false` to pause capture. `captureMode` is optional — set it to `full` to keep detailed tool output, or leave it at the default `lite` mode for compact capture. Use this format for `memory-mason.json` in a project root or `~/.memory-mason/config.json` for global config (`/mmsetup` creates the global file automatically).
+`vaultPath` sets the Obsidian vault location. `subfolder` sets the directory inside the vault. `sync` is optional — capture is enabled by default; set it to `false` to pause capture. `captureMode` is optional — set it to `full` to keep detailed tool output, or leave it at the default `lite` mode for compact capture. `minimize` is optional — when `true`, a deterministic lossless algorithm (whitespace and punctuation normalization) compresses assistant narrative text before vault writes (default `false`). Use this format for `memory-mason.json` in a project root or `~/.memory-mason/config.json` for global config (`/mmsetup` creates the global file automatically).
 
 ```json
 {
   "vaultPath": "/path/to/your/obsidian/vault",
   "subfolder": "ai-knowledge",
   "sync": true,
-  "captureMode": "full"
+  "captureMode": "full",
+  "minimize": false
 }
 ```
 
@@ -104,11 +111,19 @@ To also remove global config: delete `~/.memory-mason/config.json`. Vault conten
 
 ### Capture
 
-Hooks append session activity into a folder-per-day structure: `{vault}/{subfolder}/_raw/YYYY-MM-DD/`. Each daily folder contains chunk files (`001.md`, `002.md`, …) capped at 500KB each, an `index.md` with wikilinks to all chunks, and a `meta.json` chunk registry. No API key required — hooks write directly to the filesystem. Capture happens silently during every AI session.
+Hooks write session activity into a folder-per-day structure: `{vault}/{subfolder}/_raw/YYYY-MM-DD/`. Each daily folder contains session-scoped chunk files, an `index.md` with wikilinks to all chunks, and a `meta.json` chunk registry (schemaVersion 2, includes `sessionId` per chunk).
+
+**Session-scoped file naming:** `{HHMMSS}-{sid8}-{NNN}.md` — session start time (local), 8-char session id prefix, 3-digit chunk index (e.g., `143022-a1b2c3d4-001.md`). One session's prompt→answer exchange is never split across files at the 512 KB soft cap; a 2 MB hard cap may force a split, which is marked with a `[!continued]` callout in the new file. Concurrent sessions write to separate files and never interleave. The old daily layout (`001.md`, `002.md`, …) remains readable; no migration is needed.
+
+The raw tier is append-only by design and is never auto-deleted. Archive manually if desired.
+
+No API key required — hooks write directly to the filesystem. Capture happens silently during every AI session.
 
 ```text
-[AI Conversation] ──> [Hook Runtime] ──> _raw/YYYY-MM-DD/001.md  (auto-rotates at 500KB)
+[AI Conversation] ──> [Hook Runtime] ──> _raw/YYYY-MM-DD/{HHMMSS}-{sid8}-{NNN}.md  (512 KB soft cap, session-scoped)
 ```
+
+Compression is off by default. Set `minimize: true` (or `MEMORY_MASON_MINIMIZE=true`) to enable deterministic lossless compression (whitespace and punctuation normalization) on assistant narrative text before vault writes. Content is compacted but never dropped. Code blocks, user prompts, URLs, quoted strings, and errors are never compressed.
 
 Memory Mason's own commands (`/mmc`, `/mmq`, `/mml`, `/mms`, `/mma`, `/mmsetup`) and namespaced
 `/memory-mason:*` forms are automatically excluded from capture. You can compile, query, and
@@ -123,13 +138,17 @@ To exclude entire sessions from capture, set `sync` to `false` in your config fi
 
 ### Compile
 
-Run `/mmc` to compile daily logs into structured knowledge articles. The host LLM reads raw logs and produces atomic concept pages in `concepts/`, cross-session synthesis pages in `synthesis/`, and MOC navigation pages in `atlas/` — all interlinked with `[[wikilinks]]` for Obsidian graph navigation. Compilation also generates session bootstrap context at `_meta/context.md`, updates `_meta/manifest.json` for source-to-page lineage tracking, and writes compile state at `_meta/state.json`.
+Run `/mmc` to compile daily logs into structured knowledge articles. The host LLM reads raw logs and produces atomic concept pages in `concepts/`, cross-session synthesis pages in `synthesis/`, MOC navigation pages in `atlas/`, and per-session summary notes in `sessions/` — all interlinked with `[[wikilinks]]` for Obsidian graph navigation. Compilation also generates session bootstrap context at `_meta/context.md`, updates `_meta/manifest.json` for source-to-page lineage tracking, and writes compile state at `_meta/state.json`.
+
+Session summary notes in `sessions/` carry frontmatter: `type: session`, `date`, `session_id`, `project`, `files`, `tags`, `outcome`. `/mmc` also maintains Obsidian Bases views in `atlas/bases/`: `sessions-timeline.base`, `decisions.base`, `contradictions.base`, `seedlings.base`. Bases views require Obsidian 1.9+.
 
 For large daily logs (over 50KB), `/mmc` splits the content into chunks and compiles them incrementally with per-chunk checkpoints in `_meta/state.json`. Already-compiled chunks are skipped on re-runs.
 
 ```text
 _raw/YYYY-MM-DD/ ──> /mmc ──> concepts/
+                             sessions/            (per-session summaries)
                              atlas/
+                             atlas/bases/         (Obsidian Bases views — requires 1.9+)
                              synthesis/
                              index.md
                              _meta/context.md     (session bootstrap context)
@@ -138,10 +157,10 @@ _raw/YYYY-MM-DD/ ──> /mmc ──> concepts/
 
 ### Retrieve
 
-Run `/mmq` with a question. Memory Mason checks `_meta/context.md` first for recent context, then reads compiled articles, synthesizes an answer, and cites sources with `[[wikilinks]]` back to the original concepts. Your knowledge base grows with every session.
+Run `/mmq` with a question. Memory Mason checks `_meta/context.md` first for recent context, then runs a grep stage for exact matches, reads compiled articles, and consults the `sessions/` tier for temporal questions — synthesizes an answer and cites sources with `[[wikilinks]]` back to the original concepts. `/mmq insights` surfaces candidate-skill recommendations derived from coaching advisories. Your knowledge base grows with every session.
 
 ```text
-/mmq "How does X work?" ──> _meta/context.md ──> concepts/ + atlas/ + synthesis/ ──> answer with [[citations]]
+/mmq "How does X work?" ──> _meta/context.md ──> grep stage ──> concepts/ + sessions/ + atlas/ + synthesis/ ──> answer with [[citations]]
 ```
 
 ### Coaching Advisories
@@ -153,16 +172,22 @@ UserPromptSubmit ──> hash + count ──> threshold crossed ──> _meta/NN
 SessionStart     ──> top-3 advisories ──> injected into context preamble
 ```
 
+**Advisory kinds** are extensible. The `prompt-repeat` kind is implemented today; `error-repeat` (repeated identical error patterns) is planned. Each kind is a separate detection module with its own threshold and decay window.
+
+**Decay:** Advisories that fall back below the repeat threshold — i.e., the pattern stops recurring — are automatically suppressed after 30 days of inactivity. They are not deleted; the advisory file remains in `_meta/` for audit purposes.
+
+**Supersede lifecycle:** Resolved contradictions in compiled knowledge receive `superseded_by` and `invalid_at` frontmatter rather than a permanent `[!contradiction]` callout. Superseded notes are never deleted; they remain in the vault for historical reference.
+
 ## Vault Layout
 
 ```text
 {vault}/{subfolder}/
 ├── _raw/                    # Daily captures — excluded from Obsidian graph
 │   └── YYYY-MM-DD/
-│       ├── 001.md
-│       ├── 002.md
+│       ├── {HHMMSS}-{sid8}-001.md   # Session-scoped chunks
+│       ├── {HHMMSS}-{sid8}-002.md
 │       ├── index.md         # Wikilinks to all chunks for that day
-│       └── meta.json
+│       └── meta.json        # Chunk registry, schemaVersion 2, sessionId per chunk
 ├── _meta/                   # Operational files — excluded from graph
 │   ├── state.json
 │   ├── manifest.json
@@ -173,29 +198,39 @@ SessionStart     ──> top-3 advisories ──> injected into context preamble
 │   └── folds/               # Archived log folds
 ├── atlas/                   # MOCs — graph visible
 │   ├── home.md
-│   └── {topic-slug}.md
+│   ├── {topic-slug}.md
+│   └── bases/               # Obsidian Bases views — requires Obsidian 1.9+
+│       ├── sessions-timeline.base
+│       ├── decisions.base
+│       ├── contradictions.base
+│       └── seedlings.base
 ├── concepts/                # Atomic permanent notes — graph visible
+├── sessions/                # Per-session summary notes — graph visible
 ├── synthesis/               # Cross-session insights — graph visible
 └── index.md                 # Content catalog with type column
 ```
 
 ## Hook Coverage
 
-| Event | Claude Code | Copilot | Codex |
-|:------|:-----------:|:-------:|:-----:|
-| SessionStart | Y | Y | Y |
-| UserPromptSubmit | Y | Y | Y |
-| UserPromptExpansion | — | — | — |
-| PostToolUse | Y | Y | Y |
-| PreCompact | Y | Y | Y |
-| Stop | Y | Y | Y |
-| SessionEnd | Y | Y | — |
+| Event | Claude Code | Copilot | Codex | Gemini CLI | Cursor | Windsurf | Cline |
+|:------|:-----------:|:-------:|:-----:|:----------:|:------:|:--------:|:-----:|
+| SessionStart | Y | Y | Y | — | — | — | — |
+| UserPromptSubmit | Y | Y | Y | — | — | — | — |
+| UserPromptExpansion | — | — | — | — | — | — | — |
+| PostToolUse | Y | Y | Y | — | — | — | — |
+| PreCompact | Y | Y | Y | — | — | — | — |
+| Stop | Y | Y | Y | — | — | — | — |
+| SessionEnd | Y | Y | — | — | — | — | — |
 
 `session-end.js` handles both events: `Stop` appends latest assistant turns; `SessionEnd` captures the full transcript.
+
+Gemini CLI, Cursor, Windsurf, and Cline are skills-only hosts. They receive the six knowledge base commands via `npx skills add` but have no hook runtime. No capture occurs on these platforms regardless of config.
 
 ## Capture Behavior
 
 `captureMode` controls how much session detail is written to the vault. Set via `MEMORY_MASON_CAPTURE_MODE` env var or `captureMode` in config. Default is `lite`.
+
+`minimize` controls whether assistant narrative text is compressed before vault writes. Default is `false` — raw text is stored verbatim. Set `minimize: true` (or `MEMORY_MASON_MINIMIZE=true`) to enable deterministic lossless compression (whitespace and punctuation normalization). Content is compacted but never dropped. Code blocks, user prompts, URLs, quoted strings, and errors are never compressed regardless of this setting. Compression was not always-on in any prior release; `minimize` is the only compression control.
 
 ### Hook × CaptureMode
 

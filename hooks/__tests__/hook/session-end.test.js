@@ -13,6 +13,7 @@ const {
   ENV_KEY_VAULT_PATH,
   ENV_KEY_SUBFOLDER,
   ENV_KEY_CAPTURE_MODE,
+  ENV_KEY_MINIMIZE,
   ENV_KEY_INVOKED_BY,
   PROJECT_CONFIG_FILE_NAME,
   DOTENV_FILE_NAME,
@@ -45,8 +46,14 @@ const {
   TEST_ASSISTANT_REPLY_ENTRY_NAME: ASSISTANT_REPLY_ENTRY_NAME,
   TEST_UNKNOWN_LABEL: UNKNOWN_LABEL,
 } = require("../helpers/test-constants");
-const { buildDailyChunkPath, buildDailyFilePath } = require("../../lib/vault/vault");
+const { buildDailyFilePath, buildDailyFolderPath } = require("../../lib/vault/vault");
 const { resolveCaptureStatePath } = require("../../lib/capture/capture-state");
+const {
+  readFirstDailyChunk,
+  dailyChunkExists,
+  findLatestDailyChunkPath,
+  findFirstDailyChunkPath,
+} = require("../helpers/entrypoint-runtime");
 const sessionEnd = require("../../session-end");
 const { buildStopAssistantSelection } = require("../../session-end");
 const userPromptSubmit = require("../../user-prompt-submit");
@@ -105,6 +112,27 @@ const withProcessCaptureMode = (value, callback) => {
       process.env[ENV_KEY_CAPTURE_MODE] = previousCaptureMode;
     } else {
       delete process.env[ENV_KEY_CAPTURE_MODE];
+    }
+  }
+};
+
+const withProcessMinimize = (value, callback) => {
+  const hadMinimize = Object.hasOwn(process.env, ENV_KEY_MINIMIZE);
+  const previousMinimize = process.env[ENV_KEY_MINIMIZE];
+
+  if (typeof value === "string") {
+    process.env[ENV_KEY_MINIMIZE] = value;
+  } else {
+    delete process.env[ENV_KEY_MINIMIZE];
+  }
+
+  try {
+    return callback();
+  } finally {
+    if (hadMinimize && typeof previousMinimize === "string") {
+      process.env[ENV_KEY_MINIMIZE] = previousMinimize;
+    } else {
+      delete process.env[ENV_KEY_MINIMIZE];
     }
   }
 };
@@ -337,8 +365,7 @@ describe("session-end.js", () => {
       env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
-    const dailyPath = buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1);
-    const afterFirstPrompt = fs.readFileSync(dailyPath, UTF8_ENCODING);
+    const afterFirstPrompt = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
     expect(afterFirstPrompt).toContain("first prompt");
     expect(afterFirstPrompt).not.toContain(ASSISTANT_REPLY_ENTRY_NAME);
 
@@ -354,7 +381,7 @@ describe("session-end.js", () => {
       env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
-    const afterFirstStop = fs.readFileSync(dailyPath, UTF8_ENCODING);
+    const afterFirstStop = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
     expect(afterFirstStop).toContain(ASSISTANT_REPLY_ENTRY_NAME);
     expect(afterFirstStop).toContain("assistant turn 1");
     expect(afterFirstStop.indexOf("first prompt")).toBeLessThan(
@@ -374,7 +401,7 @@ describe("session-end.js", () => {
       env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
-    const afterSecondPrompt = fs.readFileSync(dailyPath, UTF8_ENCODING);
+    const afterSecondPrompt = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
     expect(afterSecondPrompt).toContain("second prompt");
     expect(afterSecondPrompt.split("assistant turn 1").length - 1).toBe(1);
     expect(afterSecondPrompt).not.toContain("assistant turn 3");
@@ -391,7 +418,7 @@ describe("session-end.js", () => {
       env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
-    const afterSecondStop = fs.readFileSync(dailyPath, UTF8_ENCODING);
+    const afterSecondStop = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
     expect(afterSecondStop).toContain("assistant turn 3");
     expect(afterSecondStop.indexOf("second prompt")).toBeLessThan(
       afterSecondStop.indexOf("assistant turn 3"),
@@ -407,7 +434,7 @@ describe("session-end.js", () => {
       env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
-    const afterDuplicateStop = fs.readFileSync(dailyPath, UTF8_ENCODING);
+    const afterDuplicateStop = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
     expect(afterDuplicateStop).toBe(afterSecondStop);
     expect(afterDuplicateStop.split("assistant turn 3").length - 1).toBe(1);
   });
@@ -443,10 +470,7 @@ describe("session-end.js", () => {
       env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
-    const dailyContent = fs.readFileSync(
-      buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
-      UTF8_ENCODING,
-    );
+    const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
 
     expect(result.status).toBe(0);
     expect(dailyContent).toContain("first prompt");
@@ -501,10 +525,7 @@ describe("session-end.js", () => {
       env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
-    const dailyContent = fs.readFileSync(
-      buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
-      UTF8_ENCODING,
-    );
+    const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
 
     expect(result.status).toBe(0);
     expect(dailyContent.split("assistant turn 1").length - 1).toBe(1);
@@ -565,10 +586,7 @@ describe("session-end.js", () => {
       env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
-    const dailyContent = fs.readFileSync(
-      buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
-      UTF8_ENCODING,
-    );
+    const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
 
     expect(result.status).toBe(0);
     expect(dailyContent).toContain("answer");
@@ -596,10 +614,7 @@ describe("session-end.js", () => {
       env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
-    const dailyContent = fs.readFileSync(
-      buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
-      UTF8_ENCODING,
-    );
+    const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
 
     expect(result.status).toBe(0);
     expect(dailyContent).toContain("answer");
@@ -647,10 +662,7 @@ describe("session-end.js", () => {
       env: buildEnv(homeDir),
     });
 
-    const dailyContent = fs.readFileSync(
-      buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
-      UTF8_ENCODING,
-    );
+    const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
 
     expect(result.status).toBe(0);
     expect(dailyContent).toContain("<thinking>hidden</thinking>");
@@ -686,10 +698,7 @@ describe("session-end.js", () => {
       env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
-    const dailyContent = fs.readFileSync(
-      buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
-      UTF8_ENCODING,
-    );
+    const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
 
     expect(result.status).toBe(0);
     expect(dailyContent).toContain("final answer");
@@ -729,10 +738,7 @@ describe("session-end.js", () => {
       env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
-    const dailyContent = fs.readFileSync(
-      buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
-      UTF8_ENCODING,
-    );
+    const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
 
     expect(result.status).toBe(0);
     expect(dailyContent).toContain("visible");
@@ -892,10 +898,7 @@ describe("session-end.js", () => {
       env: buildEnv(homeDir),
     });
 
-    const dailyContent = fs.readFileSync(
-      buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
-      UTF8_ENCODING,
-    );
+    const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
 
     expect(result.status).toBe(0);
     expect(dailyContent).toContain("<thinking>hidden</thinking>");
@@ -937,10 +940,7 @@ describe("session-end.js", () => {
       env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
-    const dailyContent = fs.readFileSync(
-      buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
-      UTF8_ENCODING,
-    );
+    const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
 
     expect(result.status).toBe(0);
     expect(dailyContent).toContain("first prompt");
@@ -971,9 +971,10 @@ describe("session-end.js", () => {
         }),
       });
 
-      const dailyPath = buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1);
       expect(result.status).toBe(0);
-      expect(fs.readFileSync(dailyPath, UTF8_ENCODING)).toContain("session-1 / stop");
+      expect(readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today())).toContain(
+        "session-1 / stop",
+      );
     });
   });
 
@@ -1062,8 +1063,7 @@ describe("session-end.js", () => {
         }),
       });
 
-      const dailyPath = buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1);
-      const dailyContent = fs.readFileSync(dailyPath, UTF8_ENCODING);
+      const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
 
       expect(result.status).toBe(0);
       expect(dailyContent).toContain(longFirstTurn);
@@ -1098,12 +1098,9 @@ describe("session-end.js", () => {
         }),
       });
 
-      expect(
-        fs.readFileSync(
-          buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
-          UTF8_ENCODING,
-        ),
-      ).toContain(`session-2 / ${PLATFORM_CODEX}`);
+      expect(readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today())).toContain(
+        `session-2 / ${PLATFORM_CODEX}`,
+      );
     });
   });
 
@@ -1127,12 +1124,9 @@ describe("session-end.js", () => {
         }),
       });
 
-      expect(
-        fs.readFileSync(
-          buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
-          UTF8_ENCODING,
-        ),
-      ).toContain(`${UNKNOWN_LABEL} / ${PLATFORM_COPILOT_CLI}`);
+      expect(readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today())).toContain(
+        `${UNKNOWN_LABEL} / ${PLATFORM_COPILOT_CLI}`,
+      );
     });
   });
 
@@ -1175,8 +1169,7 @@ describe("session-end.js", () => {
         }),
       });
 
-      const dailyPath = buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1);
-      const firstContent = fs.readFileSync(dailyPath, UTF8_ENCODING);
+      const firstContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
 
       runScript(ENTRYPOINT_FILE, {
         payload: {
@@ -1190,7 +1183,7 @@ describe("session-end.js", () => {
         }),
       });
 
-      expect(fs.readFileSync(dailyPath, UTF8_ENCODING)).toBe(firstContent);
+      expect(readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today())).toBe(firstContent);
     });
   });
 
@@ -1312,9 +1305,7 @@ describe("run - mm suppression for Stop event", () => {
     });
 
     expect(result.status).toBe(0);
-    expect(fs.existsSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1))).toBe(
-      false,
-    );
+    expect(dailyChunkExists(vaultPath, DEFAULT_SUBFOLDER, today())).toBe(false);
   });
 
   it("writes assistant reply when mmSuppressed is false", () => {
@@ -1349,13 +1340,180 @@ describe("run - mm suppression for Stop event", () => {
       env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
-    const dailyContent = fs.readFileSync(
-      buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
-      UTF8_ENCODING,
-    );
+    const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
 
     expect(result.status).toBe(0);
     expect(dailyContent).toContain("assistant turn 1");
+  });
+
+  it("closes exchange when Stop assistant write fails", () => {
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const transcriptPath = path.join(
+      createTempDir(TEST_TRANSCRIPT_PREFIX),
+      TEST_DEFAULT_TRANSCRIPT_FILE,
+    );
+    const sessionId = "session-stop-write-fails";
+    const statePath = resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER);
+    const folderPath = buildDailyFolderPath(vaultPath, DEFAULT_SUBFOLDER, today());
+
+    writeText(transcriptPath, buildTranscript(2, "stop-write-fails-user"));
+    writeText(
+      statePath,
+      JSON.stringify(
+        {
+          lastCapture: null,
+          mmSuppressed: false,
+          coachingState: { promptHashCounts: {} },
+          transcriptTurnCounts: { [sessionId]: 1 },
+          exchanges: { [sessionId]: { open: true, openedAtIso: new Date().toISOString() } },
+        },
+        null,
+        2,
+      ),
+    );
+    writeText(folderPath, "not a directory");
+
+    const result = runScript(ENTRYPOINT_FILE, {
+      payload: {
+        hook_event_name: HOOK_EVENT_STOP_PASCAL,
+        cwd: hooksRoot,
+        transcript_path: transcriptPath,
+        session_id: sessionId,
+      },
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
+    });
+    const persistedState = JSON.parse(fs.readFileSync(statePath, UTF8_ENCODING));
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain("daily folder path is not a directory");
+    expect(persistedState.exchanges).toBeUndefined();
+    expect(persistedState.transcriptTurnCounts[sessionId]).toBe(1);
+  });
+
+  it("logs to stderr when persisting closed exchange state fails on Stop", () => {
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const transcriptPath = path.join(
+      createTempDir(TEST_TRANSCRIPT_PREFIX),
+      TEST_DEFAULT_TRANSCRIPT_FILE,
+    );
+    const sessionId = "session-stop-state-save-fails";
+    const stateDir = path.dirname(resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER));
+
+    writeText(transcriptPath, buildTranscript(2, "stop-state-save-fails-user"));
+    writeText(stateDir, "not a directory");
+
+    const stderrMessages = [];
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
+      stderrMessages.push(String(chunk));
+      return true;
+    });
+
+    let result;
+    try {
+      result = runScript(ENTRYPOINT_FILE, {
+        payload: {
+          hook_event_name: HOOK_EVENT_STOP_PASCAL,
+          cwd: hooksRoot,
+          transcript_path: transcriptPath,
+          session_id: sessionId,
+        },
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
+      });
+    } finally {
+      stderrSpy.mockRestore();
+    }
+
+    expect(result.status).toBe(0);
+    expect(stderrMessages.join("")).toContain("failed to persist closed exchange state");
+  });
+});
+
+describe("run - mm suppression for SessionEnd event", () => {
+  it("skips transcript capture when mmSuppressed is true on session_end path", () => {
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+      const transcriptPath = path.join(
+        createTempDir(TEST_TRANSCRIPT_PREFIX),
+        TEST_DEFAULT_TRANSCRIPT_FILE,
+      );
+      const statePath = resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER);
+
+      writeText(transcriptPath, buildTranscript(2, "session-end-mm-user"));
+      writeText(
+        statePath,
+        JSON.stringify(
+          {
+            lastCapture: null,
+            mmSuppressed: true,
+            coachingState: { promptHashCounts: {} },
+          },
+          null,
+          2,
+        ),
+      );
+
+      const result = runScript(ENTRYPOINT_FILE, {
+        payload: {
+          hook_event_name: HOOK_EVENT_SESSION_END_SNAKE,
+          cwd: hooksRoot,
+          transcript_path: transcriptPath,
+          session_id: "session-end-mm-suppressed",
+        },
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
+      });
+
+      expect(result.status).toBe(0);
+      expect(dailyChunkExists(vaultPath, DEFAULT_SUBFOLDER, today())).toBe(false);
+    });
+  });
+
+  it("closes exchange when session_end transcript write fails", () => {
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+      const transcriptPath = path.join(
+        createTempDir(TEST_TRANSCRIPT_PREFIX),
+        TEST_DEFAULT_TRANSCRIPT_FILE,
+      );
+      const sessionId = "session-end-write-fails";
+      const statePath = resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER);
+      const folderPath = buildDailyFolderPath(vaultPath, DEFAULT_SUBFOLDER, today());
+
+      writeText(transcriptPath, buildTranscript(2, "session-end-write-fails-user"));
+      writeText(
+        statePath,
+        JSON.stringify(
+          {
+            lastCapture: null,
+            mmSuppressed: false,
+            coachingState: { promptHashCounts: {} },
+            exchanges: { [sessionId]: { open: true, openedAtIso: new Date().toISOString() } },
+          },
+          null,
+          2,
+        ),
+      );
+      writeText(folderPath, "not a directory");
+
+      const result = runScript(ENTRYPOINT_FILE, {
+        payload: {
+          hook_event_name: HOOK_EVENT_SESSION_END_SNAKE,
+          cwd: hooksRoot,
+          transcript_path: transcriptPath,
+          session_id: sessionId,
+        },
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
+      });
+      const persistedState = JSON.parse(fs.readFileSync(statePath, UTF8_ENCODING));
+
+      expect(result.status).toBe(0);
+      expect(result.stderr).toContain("daily folder path is not a directory");
+      expect(persistedState.exchanges).toBeUndefined();
+      expect(persistedState.lastCapture).toBeNull();
+    });
   });
 });
 
@@ -1398,9 +1556,7 @@ describe("run - sync flag", () => {
     const persistedState = JSON.parse(fs.readFileSync(statePath, UTF8_ENCODING));
 
     expect(result.status).toBe(0);
-    expect(fs.existsSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1))).toBe(
-      false,
-    );
+    expect(dailyChunkExists(vaultPath, DEFAULT_SUBFOLDER, today())).toBe(false);
     expect(persistedState).toEqual(initialState);
   });
 
@@ -1444,10 +1600,130 @@ describe("run - sync flag", () => {
     const persistedState = JSON.parse(fs.readFileSync(statePath, UTF8_ENCODING));
 
     expect(result.status).toBe(0);
-    expect(fs.existsSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1))).toBe(
-      false,
-    );
+    expect(dailyChunkExists(vaultPath, DEFAULT_SUBFOLDER, today())).toBe(false);
     expect(persistedState).toEqual(initialState);
+  });
+});
+
+describe("run - minimize flag", () => {
+  it("writes uncompressed assistant content on Stop when minimize is false (default)", () => {
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const transcriptPath = path.join(
+      createTempDir(TEST_TRANSCRIPT_PREFIX),
+      TEST_DEFAULT_TRANSCRIPT_FILE,
+    );
+    const verboseContent = "I will just run the tests really quickly";
+
+    writeText(
+      transcriptPath,
+      [
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "run tests" } }),
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: verboseContent } }),
+      ].join("\n"),
+    );
+
+    const result = runScript(ENTRYPOINT_FILE, {
+      payload: {
+        hook_event_name: HOOK_EVENT_STOP_PASCAL,
+        cwd: hooksRoot,
+        transcript_path: transcriptPath,
+        session_id: "session-stop-minimize-false",
+        last_assistant_message: verboseContent,
+      },
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
+    });
+
+    const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
+
+    expect(result.status).toBe(0);
+    expect(dailyContent).toContain(verboseContent);
+  });
+
+  it("compresses assistant content on Stop when minimize is true via env var", () => {
+    withProcessMinimize("true", () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+      const transcriptPath = path.join(
+        createTempDir(TEST_TRANSCRIPT_PREFIX),
+        TEST_DEFAULT_TRANSCRIPT_FILE,
+      );
+
+      writeText(
+        transcriptPath,
+        [
+          JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "run tests" } }),
+          JSON.stringify({
+            message: {
+              role: TRANSCRIPT_ROLE_ASSISTANT,
+              content: "I will   run    tests  quickly",
+            },
+          }),
+        ].join("\n"),
+      );
+
+      const result = runScript(ENTRYPOINT_FILE, {
+        payload: {
+          hook_event_name: HOOK_EVENT_STOP_PASCAL,
+          cwd: hooksRoot,
+          transcript_path: transcriptPath,
+          session_id: "session-stop-minimize-true",
+          last_assistant_message: "I will   run    tests  quickly",
+        },
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
+      });
+
+      const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
+
+      expect(result.status).toBe(0);
+      expect(dailyContent).not.toContain("I will   run    tests  quickly");
+      expect(dailyContent).toContain("I will run tests quickly");
+    });
+  });
+
+  it("compresses assistant content on Stop when minimize is true via project config JSON", () => {
+    const cwd = createTempDir(TEST_CWD_PREFIX);
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const transcriptPath = path.join(
+      createTempDir(TEST_TRANSCRIPT_PREFIX),
+      TEST_DEFAULT_TRANSCRIPT_FILE,
+    );
+
+    writeText(
+      path.join(cwd, PROJECT_CONFIG_FILE_NAME),
+      JSON.stringify({ vaultPath, subfolder: DEFAULT_SUBFOLDER, minimize: true }),
+    );
+    writeText(
+      transcriptPath,
+      [
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "run tests" } }),
+        JSON.stringify({
+          message: {
+            role: TRANSCRIPT_ROLE_ASSISTANT,
+            content: "I will   run    tests  quickly",
+          },
+        }),
+      ].join("\n"),
+    );
+
+    const result = runScript(ENTRYPOINT_FILE, {
+      payload: {
+        hook_event_name: HOOK_EVENT_STOP_PASCAL,
+        cwd,
+        transcript_path: transcriptPath,
+        session_id: "session-stop-minimize-true-json",
+        last_assistant_message: "I will   run    tests  quickly",
+      },
+      cwd,
+      env: buildEnv(homeDir),
+    });
+
+    const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
+
+    expect(result.status).toBe(0);
+    expect(dailyContent).not.toContain("I will   run    tests  quickly");
+    expect(dailyContent).toContain("I will run tests quickly");
   });
 });
 
@@ -1485,16 +1761,58 @@ describe("run - mm transcript filtering for SessionEnd event", () => {
         env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       });
 
-      const dailyContent = fs.readFileSync(
-        buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
-        UTF8_ENCODING,
-      );
+      const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
 
       expect(result.status).toBe(0);
       expect(dailyContent).toContain("normal prompt");
       expect(dailyContent).toContain("normal assistant");
       expect(dailyContent).not.toContain("/mmq summarize history");
       expect(dailyContent).not.toContain("hidden mm assistant");
+    });
+  });
+
+  it("filters all assistant messages emitted after an /mm turn in full mode until the next user turn", () => {
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+      const transcriptPath = path.join(
+        createTempDir(TEST_TRANSCRIPT_PREFIX),
+        TEST_DEFAULT_TRANSCRIPT_FILE,
+      );
+      const mixedTranscript = [
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "/mmq summarize" } }),
+        JSON.stringify({
+          message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: "hidden intermediate" },
+        }),
+        JSON.stringify({
+          message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: "hidden final" },
+        }),
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "normal prompt" } }),
+        JSON.stringify({
+          message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: "normal assistant" },
+        }),
+      ].join("\n");
+
+      writeText(transcriptPath, mixedTranscript);
+
+      const result = runScript(ENTRYPOINT_FILE, {
+        payload: {
+          hook_event_name: HOOK_EVENT_SESSION_END_SNAKE,
+          cwd: hooksRoot,
+          transcript_path: transcriptPath,
+          session_id: "session-filter-full-multi-assistant",
+        },
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
+      });
+
+      const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
+
+      expect(result.status).toBe(0);
+      expect(dailyContent).toContain("normal prompt");
+      expect(dailyContent).toContain("normal assistant");
+      expect(dailyContent).not.toContain("/mmq summarize");
+      expect(dailyContent).not.toContain("hidden intermediate");
+      expect(dailyContent).not.toContain("hidden final");
     });
   });
 
@@ -1519,10 +1837,7 @@ describe("run - mm transcript filtering for SessionEnd event", () => {
         env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       });
 
-      const dailyContent = fs.readFileSync(
-        buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
-        UTF8_ENCODING,
-      );
+      const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
 
       expect(result.status).toBe(0);
       expect(dailyContent).toContain("normal first user turn");
@@ -1557,9 +1872,7 @@ describe("run - mm transcript filtering for SessionEnd event", () => {
     });
 
     expect(result.status).toBe(0);
-    expect(fs.existsSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1))).toBe(
-      false,
-    );
+    expect(dailyChunkExists(vaultPath, DEFAULT_SUBFOLDER, today())).toBe(false);
   });
 
   it("strips memory tags in full transcript mode before writing", () => {
@@ -1597,10 +1910,7 @@ describe("run - mm transcript filtering for SessionEnd event", () => {
         env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       });
 
-      const dailyContent = fs.readFileSync(
-        buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
-        UTF8_ENCODING,
-      );
+      const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
 
       expect(result.status).toBe(0);
       expect(dailyContent).toContain("hello");
@@ -1612,51 +1922,97 @@ describe("run - mm transcript filtering for SessionEnd event", () => {
     });
   });
 
+  it("preserves user wording while compressing assistant transcript turns when minimize is true", () => {
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
+      withProcessMinimize("true", () => {
+        const homeDir = createTempDir(TEST_HOME_PREFIX);
+        const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+        const transcriptPath = path.join(
+          createTempDir(TEST_TRANSCRIPT_PREFIX),
+          TEST_DEFAULT_TRANSCRIPT_FILE,
+        );
+        const transcript = [
+          JSON.stringify({
+            message: {
+              role: TRANSCRIPT_ROLE_USER,
+              content: "just run tests",
+            },
+          }),
+          JSON.stringify({
+            message: {
+              role: TRANSCRIPT_ROLE_ASSISTANT,
+              content: "I will   run    tests  quickly",
+            },
+          }),
+        ].join("\n");
+
+        writeText(transcriptPath, transcript);
+
+        const result = runScript(ENTRYPOINT_FILE, {
+          payload: {
+            hook_event_name: HOOK_EVENT_SESSION_END_SNAKE,
+            cwd: hooksRoot,
+            transcript_path: transcriptPath,
+            session_id: "session-full-preserve-user-wording",
+          },
+          env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
+        });
+
+        const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
+
+        expect(result.status).toBe(0);
+        expect(dailyContent).toContain("**User:** just run tests");
+        expect(dailyContent).toContain("**Assistant:** I will run tests quickly");
+        expect(dailyContent).not.toContain("**User:** run tests");
+        expect(dailyContent).not.toContain("**Assistant:** I will   run    tests  quickly");
+      });
+    });
+  });
+
   it("preserves user wording while compressing assistant transcript turns", () => {
     withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
-      const homeDir = createTempDir(TEST_HOME_PREFIX);
-      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
-      const transcriptPath = path.join(
-        createTempDir(TEST_TRANSCRIPT_PREFIX),
-        TEST_DEFAULT_TRANSCRIPT_FILE,
-      );
-      const transcript = [
-        JSON.stringify({
-          message: {
-            role: TRANSCRIPT_ROLE_USER,
-            content: "just run tests",
-          },
-        }),
-        JSON.stringify({
-          message: {
-            role: TRANSCRIPT_ROLE_ASSISTANT,
-            content: "I will just run tests really quickly",
-          },
-        }),
-      ].join("\n");
+      withProcessMinimize("true", () => {
+        const homeDir = createTempDir(TEST_HOME_PREFIX);
+        const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+        const transcriptPath = path.join(
+          createTempDir(TEST_TRANSCRIPT_PREFIX),
+          TEST_DEFAULT_TRANSCRIPT_FILE,
+        );
+        const transcript = [
+          JSON.stringify({
+            message: {
+              role: TRANSCRIPT_ROLE_USER,
+              content: "just run tests",
+            },
+          }),
+          JSON.stringify({
+            message: {
+              role: TRANSCRIPT_ROLE_ASSISTANT,
+              content: "I will   run    tests  quickly",
+            },
+          }),
+        ].join("\n");
 
-      writeText(transcriptPath, transcript);
+        writeText(transcriptPath, transcript);
 
-      const result = runScript(ENTRYPOINT_FILE, {
-        payload: {
-          hook_event_name: HOOK_EVENT_SESSION_END_SNAKE,
-          cwd: hooksRoot,
-          transcript_path: transcriptPath,
-          session_id: "session-full-preserve-user-wording",
-        },
-        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
+        const result = runScript(ENTRYPOINT_FILE, {
+          payload: {
+            hook_event_name: HOOK_EVENT_SESSION_END_SNAKE,
+            cwd: hooksRoot,
+            transcript_path: transcriptPath,
+            session_id: "session-full-preserve-user-wording",
+          },
+          env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
+        });
+
+        const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
+
+        expect(result.status).toBe(0);
+        expect(dailyContent).toContain("**User:** just run tests");
+        expect(dailyContent).toContain("**Assistant:** I will run tests quickly");
+        expect(dailyContent).not.toContain("**User:** run tests");
+        expect(dailyContent).not.toContain("**Assistant:** I will   run    tests  quickly");
       });
-
-      const dailyContent = fs.readFileSync(
-        buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
-        UTF8_ENCODING,
-      );
-
-      expect(result.status).toBe(0);
-      expect(dailyContent).toContain("**User:** just run tests");
-      expect(dailyContent).toContain("**Assistant:** I will run tests quickly");
-      expect(dailyContent).not.toContain("**User:** run tests");
-      expect(dailyContent).not.toContain("**Assistant:** I will just run tests really quickly");
     });
   });
 
@@ -1697,9 +2053,7 @@ describe("run - mm transcript filtering for SessionEnd event", () => {
 
       expect(result.status).toBe(0);
       expect(result.stderr).toContain(HOOK_WARNING_SENSITIVE_SKIP_PREFIX);
-      expect(fs.existsSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1))).toBe(
-        false,
-      );
+      expect(dailyChunkExists(vaultPath, DEFAULT_SUBFOLDER, today())).toBe(false);
       expect(fs.existsSync(resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER))).toBe(false);
     });
   });
@@ -1741,9 +2095,7 @@ describe("run - mm transcript filtering for SessionEnd event", () => {
 
       expect(result.status).toBe(0);
       expect(result.stderr).toBe("");
-      expect(fs.existsSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1))).toBe(
-        false,
-      );
+      expect(dailyChunkExists(vaultPath, DEFAULT_SUBFOLDER, today())).toBe(false);
       expect(fs.existsSync(resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER))).toBe(false);
     });
   });
@@ -1785,16 +2137,69 @@ describe("run - mm transcript filtering for SessionEnd event", () => {
         env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
       });
 
-      const dailyContent = fs.readFileSync(
-        buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
-        UTF8_ENCODING,
-      );
+      const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
 
       expect(result.status).toBe(0);
       expect(result.stderr).toContain(HOOK_WARNING_TAG_LIMIT_PREFIX);
       expect(dailyContent).toContain("visible-");
       expect(dailyContent).toContain("assistant response");
       expect(dailyContent).not.toContain("<system-reminder>");
+    });
+  });
+
+  it("session_end does not rotate to a second chunk when exchange is open at soft cap", () => {
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
+      const cwd = createTempDir(TEST_CWD_PREFIX);
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+      const transcriptPath = path.join(
+        createTempDir(TEST_TRANSCRIPT_PREFIX),
+        TEST_DEFAULT_TRANSCRIPT_FILE,
+      );
+      const sessionId = "session-end-exchange-open-no-rotate";
+
+      writeText(
+        path.join(cwd, PROJECT_CONFIG_FILE_NAME),
+        JSON.stringify(
+          { vaultPath, subfolder: DEFAULT_SUBFOLDER, captureMode: CAPTURE_MODE_FULL },
+          null,
+          TWO,
+        ),
+      );
+
+      writeText(transcriptPath, buildTranscript(1, "open-exchange-prompt"));
+
+      runScript(USER_PROMPT_SUBMIT_ENTRYPOINT_FILE, {
+        payload: {
+          hookEventName: HOOK_EVENT_USER_PROMPT_SUBMIT_KEBAB,
+          cwd,
+          prompt: "open-exchange-prompt",
+          transcript_path: transcriptPath,
+          session_id: sessionId,
+        },
+        cwd,
+        env: buildEnv(homeDir),
+      });
+
+      const longTurn = "z".repeat(LONG_TURN_LENGTH);
+      writeText(transcriptPath, buildTranscript(FORTY, longTurn));
+
+      runScript(ENTRYPOINT_FILE, {
+        payload: {
+          hook_event_name: HOOK_EVENT_SESSION_END_SNAKE,
+          cwd,
+          transcript_path: transcriptPath,
+          session_id: sessionId,
+        },
+        cwd,
+        env: buildEnv(homeDir),
+      });
+
+      const firstChunkPath = findFirstDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today());
+      const latestChunkPath = findLatestDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today());
+
+      expect(firstChunkPath).not.toBeNull();
+      expect(firstChunkPath).toBe(latestChunkPath);
     });
   });
 });
@@ -2034,9 +2439,7 @@ describe("session-end.js readConfigText with existing file", () => {
 
     expect(result.status).toBe(0);
     expect(result.stderr).toBe("");
-    expect(
-      fs.readFileSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1), UTF8_ENCODING),
-    ).toContain("cfg-test /");
+    expect(readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today())).toContain("cfg-test /");
   });
 });
 
@@ -2139,5 +2542,46 @@ describe("session-end.js main", () => {
     });
     expect(exitCode).toBe(0);
     expect(errors.join("")).toContain("invalid JSON in stdin");
+  });
+});
+
+describe("session-end.js helper warnings", () => {
+  it("formats filter fallback warnings with the configured prefix", () => {
+    expect(sessionEnd.buildFilterFallbackWarning(new Error("compression failed"))).toContain(
+      "capture filter failed; using uncompressed sanitized transcript: compression failed",
+    );
+  });
+
+  it("merges only new warnings", () => {
+    expect(sessionEnd.mergeWarning("alpha\n", "beta\n")).toBe("alpha\nbeta\n");
+    expect(sessionEnd.mergeWarning("alpha\n", "alpha\n")).toBe("alpha\n");
+  });
+
+  it("falls back to sanitized content when compression throws", () => {
+    const compressPath = require.resolve("../../lib/economics/compress");
+    const sessionEndPath = require.resolve("../../session-end");
+    delete require.cache[compressPath];
+    delete require.cache[sessionEndPath];
+
+    const compressModule = require("../../lib/economics/compress");
+    vi.spyOn(compressModule, "compressNarrativeText").mockImplementation(() => {
+      throw new Error("compression failed");
+    });
+
+    const isolatedSessionEnd = require("../../session-end");
+    const result = isolatedSessionEnd.sanitizeTranscriptContent("assistant content", true, true);
+
+    expect(result.content).toBe("assistant content");
+    expect(result.filterWarning).toContain(
+      "capture filter failed; using uncompressed sanitized transcript",
+    );
+  });
+
+  it("writes assistant turns with a default session when session input is invalid", () => {
+    const vaultPath = createTempDir(TEST_MM_VAULT_PREFIX);
+    const now = sessionEnd.writeAssistantTurns(vaultPath, DEFAULT_SUBFOLDER, ["assistant"], [], {});
+
+    expect(typeof now.date).toBe("string");
+    expect(readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, now.date)).toContain("assistant");
   });
 });

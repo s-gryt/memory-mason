@@ -9,6 +9,7 @@ const sessionStart = require("../../session-start");
 const preCompact = require("../../pre-compact");
 const postToolUse = require("../../post-tool-use");
 const sessionEnd = require("../../session-end");
+const { HOOK_EVENT_PRE_COMPACT_KEBAB } = require("../../lib/hook/hook-events");
 const { materializeProjectDotEnvConfig } = require("./project-dot-env");
 
 const hooksRoot = path.resolve(__dirname, "..", "..");
@@ -165,6 +166,26 @@ const resolveRequestedRuntimeCwd = (options) =>
 const resolvePayload = (options) =>
   isObjectValue(options.payload) && !Array.isArray(options.payload) ? options.payload : null;
 
+const applyScriptSpecificPayloadDefaults = (scriptName, payload) => {
+  if (!isObjectValue(payload) || scriptName !== "pre-compact.js") {
+    return payload;
+  }
+
+  if (
+    typeof payload.transcript_path !== "string" ||
+    payload.transcript_path === "" ||
+    typeof payload.hook_event_name === "string" ||
+    typeof payload.hookEventName === "string"
+  ) {
+    return payload;
+  }
+
+  return {
+    hook_event_name: HOOK_EVENT_PRE_COMPACT_KEBAB,
+    ...payload,
+  };
+};
+
 const resolvePayloadCwd = (payload) =>
   payload !== null && typeof payload.cwd === "string" ? payload.cwd : "";
 
@@ -233,7 +254,7 @@ const runHookEntrypoint = (scriptPath, options = {}) => {
   const scriptModule = resolveScriptModule(scriptPath);
   const env = resolveRuntimeEnv(options);
   const requestedRuntimeCwd = resolveRequestedRuntimeCwd(options);
-  const payload = resolvePayload(options);
+  const payload = applyScriptSpecificPayloadDefaults(scriptName, resolvePayload(options));
   const payloadCwd = resolvePayloadCwd(payload);
   const isolatedProjectCwd = resolveIsolatedProjectCwd(env, requestedRuntimeCwd, payloadCwd);
   const resolvedPayload = resolvePayloadRuntimeValue(payload, payloadCwd, isolatedProjectCwd);
@@ -255,6 +276,49 @@ const runHookEntrypoint = (scriptPath, options = {}) => {
   return normalizeHookResult(rawResult);
 };
 
+const findLatestDailyChunkPath = (vaultPath, subfolder, dateStr) => {
+  const folderPath = path.join(vaultPath, subfolder, "_raw", dateStr);
+  if (!fs.existsSync(folderPath) || !fs.statSync(folderPath).isDirectory()) {
+    return null;
+  }
+  const chunkPattern = /^(?:\d{6}-[a-z0-9]+-\d{3}|\d{3})\.md$/;
+  const files = fs
+    .readdirSync(folderPath)
+    .filter((f) => chunkPattern.test(f))
+    .sort();
+  if (files.length === 0) {
+    return null;
+  }
+  return path.join(folderPath, files[files.length - 1]);
+};
+
+const findFirstDailyChunkPath = (vaultPath, subfolder, dateStr) => {
+  const folderPath = path.join(vaultPath, subfolder, "_raw", dateStr);
+  if (!fs.existsSync(folderPath) || !fs.statSync(folderPath).isDirectory()) {
+    return null;
+  }
+  const chunkPattern = /^(?:\d{6}-[a-z0-9]+-\d{3}|\d{3})\.md$/;
+  const files = fs
+    .readdirSync(folderPath)
+    .filter((f) => chunkPattern.test(f))
+    .sort();
+  if (files.length === 0) {
+    return null;
+  }
+  return path.join(folderPath, files[0]);
+};
+
+const readFirstDailyChunk = (vaultPath, subfolder, dateStr) => {
+  const chunkPath = findFirstDailyChunkPath(vaultPath, subfolder, dateStr);
+  if (chunkPath === null) {
+    return "";
+  }
+  return fs.readFileSync(chunkPath, "utf-8");
+};
+
+const dailyChunkExists = (vaultPath, subfolder, dateStr) =>
+  findFirstDailyChunkPath(vaultPath, subfolder, dateStr) !== null;
+
 module.exports = {
   tempDirs,
   generatedEnvPaths,
@@ -267,4 +331,8 @@ module.exports = {
   buildTranscript,
   cleanupGeneratedArtifacts,
   runHookEntrypoint,
+  findLatestDailyChunkPath,
+  findFirstDailyChunkPath,
+  readFirstDailyChunk,
+  dailyChunkExists,
 };

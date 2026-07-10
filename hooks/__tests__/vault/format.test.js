@@ -46,6 +46,8 @@ const {
   buildDailyMetaPath,
   buildChunkHeader,
   buildChunkIndexContent,
+  assertSessionContext,
+  buildSessionChunkFileName,
 } = require("../../lib/vault/vault");
 
 const TEST_NON_STRING_VALUE = 123;
@@ -63,6 +65,16 @@ const TEST_CHUNK_COUNT_TWO = 2;
 const TEST_CHUNK_COUNT_THREE = 3;
 const TEST_INVALID_CHUNK_NUM_DECIMAL = 1.5;
 const TEST_CHUNK_OVERFLOW = MAX_DAILY_CHUNK_COUNT + 1;
+const TEST_SESSION_SID8 = "abc123de";
+
+const makeIndexChunk = (chunkNum, sid8 = TEST_SESSION_SID8) => {
+  const id = String(chunkNum).padStart(CHUNK_ID_WIDTH, "0");
+  return {
+    id,
+    file: `${"110000"}-${sid8}-${id}.md`,
+    sid8,
+  };
+};
 
 const TOOL_WRITE = "Write";
 const TOOL_RESULT = "some result";
@@ -521,41 +533,95 @@ describe("buildChunkHeader", () => {
 
 describe("buildChunkIndexContent", () => {
   it("single chunk produces one wikilink", () => {
-    expect(buildChunkIndexContent(TEST_DEFAULT_DATE, 1)).toBe(
-      `# ${DAILY_LOG_HEADING_PREFIX}${TEST_DEFAULT_DATE}\n\n## ${PARTS_HEADING}\n\n- [[${VAULT_RAW_DIR_NAME}/${TEST_DEFAULT_DATE}/${String(1).padStart(CHUNK_ID_WIDTH, "0")}|Part 1]]\n`,
+    expect(buildChunkIndexContent(DEFAULT_SUBFOLDER, TEST_DEFAULT_DATE, [makeIndexChunk(1)])).toBe(
+      `# ${DAILY_LOG_HEADING_PREFIX}${TEST_DEFAULT_DATE}\n\n## ${PARTS_HEADING}\n\n### Session ${TEST_SESSION_SID8}\n\n- [[${DEFAULT_SUBFOLDER}/${VAULT_RAW_DIR_NAME}/${TEST_DEFAULT_DATE}/110000-${TEST_SESSION_SID8}-001|Part 1]]\n`,
     );
   });
 
   it("three chunks produces three wikilinks", () => {
-    expect(buildChunkIndexContent(TEST_DEFAULT_DATE, TEST_CHUNK_COUNT_THREE)).toBe(
-      `# ${DAILY_LOG_HEADING_PREFIX}${TEST_DEFAULT_DATE}\n\n## ${PARTS_HEADING}\n\n- [[${VAULT_RAW_DIR_NAME}/${TEST_DEFAULT_DATE}/001|Part 1]]\n- [[${VAULT_RAW_DIR_NAME}/${TEST_DEFAULT_DATE}/002|Part 2]]\n- [[${VAULT_RAW_DIR_NAME}/${TEST_DEFAULT_DATE}/003|Part 3]]\n`,
+    expect(
+      buildChunkIndexContent(DEFAULT_SUBFOLDER, TEST_DEFAULT_DATE, [
+        makeIndexChunk(1),
+        makeIndexChunk(TEST_CHUNK_COUNT_TWO),
+        makeIndexChunk(TEST_CHUNK_COUNT_THREE),
+      ]),
+    ).toBe(
+      `# ${DAILY_LOG_HEADING_PREFIX}${TEST_DEFAULT_DATE}\n\n## ${PARTS_HEADING}\n\n### Session ${TEST_SESSION_SID8}\n\n- [[${DEFAULT_SUBFOLDER}/${VAULT_RAW_DIR_NAME}/${TEST_DEFAULT_DATE}/110000-${TEST_SESSION_SID8}-001|Part 1]]\n- [[${DEFAULT_SUBFOLDER}/${VAULT_RAW_DIR_NAME}/${TEST_DEFAULT_DATE}/110000-${TEST_SESSION_SID8}-002|Part 2]]\n- [[${DEFAULT_SUBFOLDER}/${VAULT_RAW_DIR_NAME}/${TEST_DEFAULT_DATE}/110000-${TEST_SESSION_SID8}-003|Part 3]]\n`,
     );
   });
 
   it("wikilinks use correct Obsidian format", () => {
-    const result = buildChunkIndexContent(TEST_DEFAULT_DATE, TEST_CHUNK_COUNT_TWO);
+    const result = buildChunkIndexContent(DEFAULT_SUBFOLDER, TEST_DEFAULT_DATE, [
+      makeIndexChunk(1),
+      makeIndexChunk(TEST_CHUNK_COUNT_TWO),
+    ]);
 
-    expect(result.includes(`- [[${VAULT_RAW_DIR_NAME}/${TEST_DEFAULT_DATE}/001|Part 1]]`)).toBe(
-      true,
-    );
-    expect(result.includes(`- [[${VAULT_RAW_DIR_NAME}/${TEST_DEFAULT_DATE}/002|Part 2]]`)).toBe(
-      true,
+    expect(
+      result.includes(
+        `- [[${DEFAULT_SUBFOLDER}/${VAULT_RAW_DIR_NAME}/${TEST_DEFAULT_DATE}/110000-${TEST_SESSION_SID8}-001|Part 1]]`,
+      ),
+    ).toBe(true);
+    expect(
+      result.includes(
+        `- [[${DEFAULT_SUBFOLDER}/${VAULT_RAW_DIR_NAME}/${TEST_DEFAULT_DATE}/110000-${TEST_SESSION_SID8}-002|Part 2]]`,
+      ),
+    ).toBe(true);
+  });
+
+  it("throws on empty chunks array", () => {
+    expect(() => buildChunkIndexContent(DEFAULT_SUBFOLDER, TEST_DEFAULT_DATE, [])).toThrow(
+      "chunks must be a non-empty array",
     );
   });
 
-  it("throws on chunkCount 0", () => {
-    expect(() => buildChunkIndexContent(TEST_DEFAULT_DATE, 0)).toThrow(
-      "chunkCount must be a positive integer",
+  it("throws on too many chunks", () => {
+    const chunks = Array.from({ length: TEST_CHUNK_OVERFLOW }, (_, index) =>
+      makeIndexChunk(index + 1),
     );
-  });
-
-  it("throws on chunkCount 1000", () => {
-    expect(() => buildChunkIndexContent(TEST_DEFAULT_DATE, TEST_CHUNK_OVERFLOW)).toThrow(
-      "chunkCount must be less than or equal to 999",
+    expect(() => buildChunkIndexContent(DEFAULT_SUBFOLDER, TEST_DEFAULT_DATE, chunks)).toThrow(
+      "chunk.id must be less than or equal to 999",
     );
   });
 
   it("throws on empty dateIso", () => {
-    expect(() => buildChunkIndexContent("", 1)).toThrow("dateIso must be a non-empty string");
+    expect(() => buildChunkIndexContent(DEFAULT_SUBFOLDER, "", [makeIndexChunk(1)])).toThrow(
+      "dateIso must be a non-empty string",
+    );
+  });
+
+  it("throws when a chunk is not an object", () => {
+    expect(() => buildChunkIndexContent(DEFAULT_SUBFOLDER, TEST_DEFAULT_DATE, [null])).toThrow(
+      "chunk must be an object",
+    );
+  });
+
+  it("throws when chunk has empty string sid8", () => {
+    expect(() =>
+      buildChunkIndexContent(DEFAULT_SUBFOLDER, TEST_DEFAULT_DATE, [
+        { id: "001", file: "110000-abc123de-001.md", sid8: "" },
+      ]),
+    ).toThrow("chunk.sid8 must be a non-empty string");
+  });
+
+  it("legacy chunk with no sid8 field buckets under Legacy heading", () => {
+    const result = buildChunkIndexContent(DEFAULT_SUBFOLDER, TEST_DEFAULT_DATE, [
+      { id: "001", file: "001.md" },
+    ]);
+
+    expect(result.includes("Legacy")).toBe(true);
+  });
+});
+
+describe("assertSessionContext", () => {
+  it("throws when session is not an object", () => {
+    expect(() => assertSessionContext(null)).toThrow("session must be an object");
+  });
+});
+
+describe("buildSessionChunkFileName", () => {
+  it("throws when timePrefix is not in HHMMSS format", () => {
+    expect(() => buildSessionChunkFileName("bad", TEST_SESSION_SID8, 1)).toThrow(
+      "timePrefix must be in HHMMSS format",
+    );
   });
 });

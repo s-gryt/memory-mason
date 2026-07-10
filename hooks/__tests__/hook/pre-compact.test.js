@@ -12,14 +12,24 @@ const {
   ENV_KEY_VAULT_PATH,
   ENV_KEY_SUBFOLDER,
   ENV_KEY_CAPTURE_MODE,
+  ENV_KEY_MINIMIZE,
   ENV_KEY_INVOKED_BY,
   PROJECT_CONFIG_FILE_NAME,
   DOTENV_FILE_NAME,
   GLOBAL_MM_DIR_NAME,
   GLOBAL_CONFIG_FILE_NAME,
 } = require("../../lib/config/constants");
-const { buildDailyChunkPath, buildDailyFilePath } = require("../../lib/vault/vault");
-const { resolveCaptureStatePath, buildCaptureRecord } = require("../../lib/capture/capture-state");
+const {
+  buildDailyFilePath,
+  buildDailyChunkPath: buildDailyChunkPathFromVault,
+  defaultSessionContext,
+} = require("../../lib/vault/vault");
+const {
+  resolveCaptureStatePath,
+  buildCaptureRecord,
+  openExchange,
+  defaultCaptureState,
+} = require("../../lib/capture/capture-state");
 const { parseJsonlTranscript, renderTurnsAsMarkdown } = require("../../lib/capture/transcript");
 const { stripMemoryTags } = require("../../lib/filter/tag-stripper");
 const { compressNarrativeText } = require("../../lib/economics/compress");
@@ -51,6 +61,9 @@ const {
   buildTranscript,
   cleanupGeneratedArtifacts,
   runHookEntrypoint,
+  readFirstDailyChunk,
+  dailyChunkExists,
+  findFirstDailyChunkPath,
 } = require("../helpers/entrypoint-runtime");
 const hooksRoot = path.resolve(__dirname, "..", "..");
 const ENTRYPOINT = "pre-compact.js";
@@ -65,9 +78,14 @@ const TEST_INVALID_RUNTIME_CWD = 123;
 const TEST_INVALID_RUNTIME_HOMEDIR = 42;
 const TEST_TAG_WARNING_EXTRA_COUNT = 1;
 const TEST_POSITIVE_TIMESTAMP_MS = 1;
-const TEST_FILTER_FAILURE_MESSAGE = "compress validation failed: protected segment altered";
 const TEST_FILTER_FALLBACK_WARNING_PREFIX =
-  "[memory-mason] capture filter failed; using uncompressed sanitized transcript";
+  "[memory-mason] capture filter failed; using uncompressed sanitized transcript: 1 assistant turn(s) failed compression; using sanitized originals";
+const TEST_COMPRESSION_COLLAPSE_WARNING_PREFIX =
+  "[memory-mason] capture filter failed; using uncompressed sanitized transcript: all assistant turns compressed to empty; using sanitized originals";
+
+const buildDailyChunkPath = (vaultPath, subfolder, dateIso, chunkNum) =>
+  findFirstDailyChunkPath(vaultPath, subfolder, dateIso) ??
+  buildDailyChunkPathFromVault(vaultPath, subfolder, dateIso, chunkNum);
 
 const withProcessCaptureMode = (value, callback) => {
   const hadCaptureMode = Object.hasOwn(process.env, ENV_KEY_CAPTURE_MODE);
@@ -86,6 +104,27 @@ const withProcessCaptureMode = (value, callback) => {
       process.env[ENV_KEY_CAPTURE_MODE] = previousCaptureMode;
     } else {
       delete process.env[ENV_KEY_CAPTURE_MODE];
+    }
+  }
+};
+
+const withProcessMinimize = (value, callback) => {
+  const hadMinimize = Object.hasOwn(process.env, ENV_KEY_MINIMIZE);
+  const previousMinimize = process.env[ENV_KEY_MINIMIZE];
+
+  if (typeof value === "string") {
+    process.env[ENV_KEY_MINIMIZE] = value;
+  } else {
+    delete process.env[ENV_KEY_MINIMIZE];
+  }
+
+  try {
+    return callback();
+  } finally {
+    if (hadMinimize && typeof previousMinimize === "string") {
+      process.env[ENV_KEY_MINIMIZE] = previousMinimize;
+    } else {
+      delete process.env[ENV_KEY_MINIMIZE];
     }
   }
 };
@@ -144,15 +183,20 @@ describe("entrypoint config readers", () => {
     writeText(transcriptPath, buildTranscript(TEST_TRANSCRIPT_TURN_COUNT_STANDARD));
 
     const result = runHookEntrypoint(ENTRYPOINT, {
-      payload: { cwd, transcript_path: transcriptPath, session_id: "cfg-test" },
+      payload: {
+        hook_event_name: HOOK_EVENT_PRE_COMPACT_KEBAB,
+        cwd,
+        transcript_path: transcriptPath,
+        session_id: "cfg-test",
+      },
       cwd,
       env: buildEnv(homeDir),
     });
 
     expect(result.status).toBe(0);
-    expect(
-      fs.readFileSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1), UTF8_ENCODING),
-    ).toContain("cfg-test / pre-compact");
+    expect(readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today())).toContain(
+      "cfg-test / pre-compact",
+    );
   });
 });
 
@@ -168,7 +212,12 @@ describe("pre-compact.js", () => {
     writeText(transcriptPath, buildTranscript(TEST_TRANSCRIPT_TURN_COUNT_STANDARD));
 
     const result = runHookEntrypoint(ENTRYPOINT, {
-      payload: { cwd: hooksRoot, transcript_path: transcriptPath, session_id: "session-1" },
+      payload: {
+        hook_event_name: HOOK_EVENT_PRE_COMPACT_KEBAB,
+        cwd: hooksRoot,
+        transcript_path: transcriptPath,
+        session_id: "session-1",
+      },
       env: buildEnv(homeDir, {
         [ENV_KEY_VAULT_PATH]: vaultPath,
         [ENV_KEY_INVOKED_BY]: "mmc",
@@ -207,7 +256,12 @@ describe("pre-compact.js", () => {
     writeText(transcriptPath, buildTranscript(TEST_TRANSCRIPT_TURN_COUNT_SHORT));
 
     runHookEntrypoint(ENTRYPOINT, {
-      payload: { cwd: hooksRoot, transcript_path: transcriptPath, session_id: "session-1" },
+      payload: {
+        hook_event_name: HOOK_EVENT_PRE_COMPACT_KEBAB,
+        cwd: hooksRoot,
+        transcript_path: transcriptPath,
+        session_id: "session-1",
+      },
       env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
@@ -251,17 +305,25 @@ describe("pre-compact.js", () => {
       writeText(transcriptPath, buildTranscript(TEST_TRANSCRIPT_TURN_COUNT_STANDARD));
 
       const result = runHookEntrypoint(ENTRYPOINT, {
-        payload: { cwd: hooksRoot, transcript_path: transcriptPath, session_id: "session-1" },
+        payload: {
+          hook_event_name: HOOK_EVENT_PRE_COMPACT_KEBAB,
+          cwd: hooksRoot,
+          transcript_path: transcriptPath,
+          session_id: "session-1",
+        },
         env: buildEnv(homeDir, {
           [ENV_KEY_VAULT_PATH]: vaultPath,
         }),
       });
 
-      const dailyPath = buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1);
       const statePath = resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER);
       expect(result.status).toBe(0);
-      expect(fs.readFileSync(dailyPath, UTF8_ENCODING)).toContain("session-1 / pre-compact");
-      expect(fs.readFileSync(dailyPath, UTF8_ENCODING)).toContain("**User:** user turn");
+      expect(readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today())).toContain(
+        "session-1 / pre-compact",
+      );
+      expect(readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today())).toContain(
+        "**User:** user turn",
+      );
       expect(JSON.parse(fs.readFileSync(statePath, UTF8_ENCODING)).lastCapture.source).toBe(
         HOOK_EVENT_PRE_COMPACT_KEBAB,
       );
@@ -302,8 +364,7 @@ describe("pre-compact.js", () => {
         }),
       });
 
-      const dailyPath = buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1);
-      const dailyContent = fs.readFileSync(dailyPath, UTF8_ENCODING);
+      const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
 
       expect(result.status).toBe(0);
       expect(dailyContent).toContain("user");
@@ -312,54 +373,109 @@ describe("pre-compact.js", () => {
       expect(dailyContent).not.toContain("tag content");
     }));
 
-  it("preserves user wording while compressing assistant transcript turns", () =>
-    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
-      const homeDir = createTempDir(TEST_HOME_PREFIX);
-      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
-      const transcriptPath = path.join(
-        createTempDir(TEST_TRANSCRIPT_PREFIX),
-        TEST_DEFAULT_TRANSCRIPT_FILE,
-      );
-      const transcript = [
-        JSON.stringify({
-          message: { role: TRANSCRIPT_ROLE_USER, content: "just run tests" },
-        }),
-        JSON.stringify({
-          message: {
-            role: TRANSCRIPT_ROLE_ASSISTANT,
-            content: "I will just run tests really quickly",
+  it("preserves user wording while compressing assistant transcript turns when minimize is true", () =>
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () =>
+      withProcessMinimize("true", () => {
+        const homeDir = createTempDir(TEST_HOME_PREFIX);
+        const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+        const transcriptPath = path.join(
+          createTempDir(TEST_TRANSCRIPT_PREFIX),
+          TEST_DEFAULT_TRANSCRIPT_FILE,
+        );
+        const transcript = [
+          JSON.stringify({
+            message: { role: TRANSCRIPT_ROLE_USER, content: "just run tests" },
+          }),
+          JSON.stringify({
+            message: {
+              role: TRANSCRIPT_ROLE_ASSISTANT,
+              content: "I will   run    tests  quickly",
+            },
+          }),
+          JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "user-2" } }),
+          JSON.stringify({ message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: "assistant-2" } }),
+          JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "user-3" } }),
+          JSON.stringify({ message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: "assistant-3" } }),
+        ].join("\n");
+
+        writeText(transcriptPath, transcript);
+
+        const result = runHookEntrypoint(ENTRYPOINT, {
+          payload: {
+            cwd: hooksRoot,
+            transcript_path: transcriptPath,
+            session_id: "session-preserve-user-wording",
           },
-        }),
-        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "user-2" } }),
-        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: "assistant-2" } }),
-        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "user-3" } }),
-        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: "assistant-3" } }),
-      ].join("\n");
+          env: buildEnv(homeDir, {
+            [ENV_KEY_VAULT_PATH]: vaultPath,
+          }),
+        });
 
-      writeText(transcriptPath, transcript);
+        const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
 
-      const result = runHookEntrypoint(ENTRYPOINT, {
-        payload: {
-          cwd: hooksRoot,
-          transcript_path: transcriptPath,
-          session_id: "session-preserve-user-wording",
-        },
-        env: buildEnv(homeDir, {
-          [ENV_KEY_VAULT_PATH]: vaultPath,
-        }),
-      });
+        expect(result.status).toBe(0);
+        expect(dailyContent).toContain("**User:** just run tests");
+        expect(dailyContent).toContain("**Assistant:** I will run tests quickly");
+        expect(dailyContent).not.toContain("**User:** run tests");
+        expect(dailyContent).not.toContain("**Assistant:** I will   run    tests  quickly");
+      }),
+    ));
 
-      const dailyContent = fs.readFileSync(
-        buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
-        UTF8_ENCODING,
-      );
+  it("keeps compressing later assistant turns when one assistant turn fails validation", () =>
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () =>
+      withProcessMinimize("true", () => {
+        const homeDir = createTempDir(TEST_HOME_PREFIX);
+        const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+        const transcriptPath = path.join(
+          createTempDir(TEST_TRANSCRIPT_PREFIX),
+          TEST_DEFAULT_TRANSCRIPT_FILE,
+        );
+        const transcript = [
+          JSON.stringify({
+            message: { role: TRANSCRIPT_ROLE_USER, content: "first user turn" },
+          }),
+          JSON.stringify({
+            message: {
+              role: TRANSCRIPT_ROLE_ASSISTANT,
+              content: "I will   run    tests  quickly",
+            },
+          }),
+          JSON.stringify({
+            message: { role: TRANSCRIPT_ROLE_USER, content: "second user turn" },
+          }),
+          JSON.stringify({
+            message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: "# bad heading" },
+          }),
+          JSON.stringify({
+            message: { role: TRANSCRIPT_ROLE_USER, content: "third user turn" },
+          }),
+          JSON.stringify({
+            message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: "third assistant turn" },
+          }),
+        ].join("\n");
 
-      expect(result.status).toBe(0);
-      expect(dailyContent).toContain("**User:** just run tests");
-      expect(dailyContent).toContain("**Assistant:** I will run tests quickly");
-      expect(dailyContent).not.toContain("**User:** run tests");
-      expect(dailyContent).not.toContain("**Assistant:** I will just run tests really quickly");
-    }));
+        writeText(transcriptPath, transcript);
+
+        const result = runHookEntrypoint(ENTRYPOINT, {
+          payload: {
+            cwd: hooksRoot,
+            transcript_path: transcriptPath,
+            session_id: "session-per-turn-fallback",
+          },
+          env: buildEnv(homeDir, {
+            [ENV_KEY_VAULT_PATH]: vaultPath,
+          }),
+        });
+
+        const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
+
+        expect(result.status).toBe(0);
+        expect(result.stderr).toBe("");
+        expect(dailyContent).toContain("**Assistant:** I will run tests quickly");
+        expect(dailyContent).toContain("**Assistant:** # bad heading");
+        expect(dailyContent).not.toContain("I will   run    tests  quickly");
+      }),
+    ));
 
   it("returns tag warning when stripped tag count exceeds max and still writes", () =>
     withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
@@ -386,10 +502,7 @@ describe("pre-compact.js", () => {
         }),
       });
 
-      const dailyContent = fs.readFileSync(
-        buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
-        UTF8_ENCODING,
-      );
+      const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
 
       expect(result.status).toBe(0);
       expect(result.stderr).toContain(HOOK_WARNING_TAG_LIMIT_PREFIX);
@@ -449,8 +562,7 @@ describe("pre-compact.js", () => {
         }),
       });
 
-      const dailyPath = buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1);
-      const firstContent = fs.readFileSync(dailyPath, UTF8_ENCODING);
+      const firstContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
 
       const duplicateResult = runHookEntrypoint(ENTRYPOINT, {
         payload: {
@@ -465,74 +577,76 @@ describe("pre-compact.js", () => {
 
       expect(duplicateResult.status).toBe(0);
       expect(duplicateResult.stderr).toContain(HOOK_WARNING_TAG_LIMIT_PREFIX);
-      expect(fs.readFileSync(dailyPath, UTF8_ENCODING)).toBe(firstContent);
+      expect(readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today())).toBe(firstContent);
     }));
 
-  it("uses sanitized markdown for capture record hash", () =>
-    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
-      const homeDir = createTempDir(TEST_HOME_PREFIX);
-      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
-      const transcriptPath = path.join(
-        createTempDir(TEST_TRANSCRIPT_PREFIX),
-        TEST_DEFAULT_TRANSCRIPT_FILE,
-      );
-      const sessionId = "session-sanitized-hash";
-      const transcript = [
-        JSON.stringify({
-          message: {
-            role: TRANSCRIPT_ROLE_USER,
-            content: "hash<system-reminder>remove-me</system-reminder>",
+  it("uses sanitized markdown for capture record hash when minimize is true", () =>
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () =>
+      withProcessMinimize("true", () => {
+        const homeDir = createTempDir(TEST_HOME_PREFIX);
+        const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+        const transcriptPath = path.join(
+          createTempDir(TEST_TRANSCRIPT_PREFIX),
+          TEST_DEFAULT_TRANSCRIPT_FILE,
+        );
+        const sessionId = "session-sanitized-hash";
+        const transcript = [
+          JSON.stringify({
+            message: {
+              role: TRANSCRIPT_ROLE_USER,
+              content: "hash<system-reminder>remove-me</system-reminder>",
+            },
+          }),
+          JSON.stringify({ message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: "assistant" } }),
+          JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "user-2" } }),
+          JSON.stringify({ message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: "assistant-2" } }),
+          JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "user-3" } }),
+          JSON.stringify({ message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: "assistant-3" } }),
+        ].join("\n");
+
+        writeText(transcriptPath, transcript);
+
+        const result = runHookEntrypoint(ENTRYPOINT, {
+          payload: {
+            cwd: hooksRoot,
+            transcript_path: transcriptPath,
+            session_id: sessionId,
           },
-        }),
-        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: "assistant" } }),
-        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "user-2" } }),
-        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: "assistant-2" } }),
-        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "user-3" } }),
-        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: "assistant-3" } }),
-      ].join("\n");
+          env: buildEnv(homeDir, {
+            [ENV_KEY_VAULT_PATH]: vaultPath,
+          }),
+        });
 
-      writeText(transcriptPath, transcript);
+        const turns = parseJsonlTranscript(transcript, CAPTURE_MODE_FULL);
+        const sanitizedMarkdown = renderTurnsAsMarkdown(
+          turns.map((turn) => ({
+            ...turn,
+            content:
+              turn.role === TRANSCRIPT_ROLE_ASSISTANT
+                ? compressNarrativeText(stripVTControlCharacters(stripMemoryTags(turn.content)))
+                : stripVTControlCharacters(stripMemoryTags(turn.content)),
+          })),
+        );
+        const expectedSanitizedRecord = buildCaptureRecord(
+          sessionId,
+          HOOK_EVENT_PRE_COMPACT_KEBAB,
+          sanitizedMarkdown,
+          TEST_POSITIVE_TIMESTAMP_MS,
+        );
+        const expectedRawRecord = buildCaptureRecord(
+          sessionId,
+          HOOK_EVENT_PRE_COMPACT_KEBAB,
+          renderTurnsAsMarkdown(turns),
+          TEST_POSITIVE_TIMESTAMP_MS,
+        );
+        const statePath = resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER);
+        const state = JSON.parse(fs.readFileSync(statePath, UTF8_ENCODING));
 
-      const result = runHookEntrypoint(ENTRYPOINT, {
-        payload: {
-          cwd: hooksRoot,
-          transcript_path: transcriptPath,
-          session_id: sessionId,
-        },
-        env: buildEnv(homeDir, {
-          [ENV_KEY_VAULT_PATH]: vaultPath,
-        }),
-      });
-
-      const turns = parseJsonlTranscript(transcript, CAPTURE_MODE_FULL);
-      const sanitizedMarkdown = renderTurnsAsMarkdown(
-        turns.map((turn) => ({
-          ...turn,
-          content:
-            turn.role === TRANSCRIPT_ROLE_ASSISTANT
-              ? compressNarrativeText(stripVTControlCharacters(stripMemoryTags(turn.content)))
-              : stripVTControlCharacters(stripMemoryTags(turn.content)),
-        })),
-      );
-      const expectedSanitizedRecord = buildCaptureRecord(
-        sessionId,
-        HOOK_EVENT_PRE_COMPACT_KEBAB,
-        sanitizedMarkdown,
-        TEST_POSITIVE_TIMESTAMP_MS,
-      );
-      const expectedRawRecord = buildCaptureRecord(
-        sessionId,
-        HOOK_EVENT_PRE_COMPACT_KEBAB,
-        renderTurnsAsMarkdown(turns),
-        TEST_POSITIVE_TIMESTAMP_MS,
-      );
-      const statePath = resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER);
-      const state = JSON.parse(fs.readFileSync(statePath, UTF8_ENCODING));
-
-      expect(result.status).toBe(0);
-      expect(state.lastCapture.contentHash).toBe(expectedSanitizedRecord.contentHash);
-      expect(state.lastCapture.contentHash).not.toBe(expectedRawRecord.contentHash);
-    }));
+        expect(result.status).toBe(0);
+        expect(state.lastCapture.contentHash).toBe(expectedSanitizedRecord.contentHash);
+        expect(state.lastCapture.contentHash).not.toBe(expectedRawRecord.contentHash);
+      }),
+    ));
 
   it("writes full transcript without turn or character truncation", () =>
     withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
@@ -560,13 +674,148 @@ describe("pre-compact.js", () => {
         }),
       });
 
-      const dailyPath = buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1);
-      const dailyContent = fs.readFileSync(dailyPath, UTF8_ENCODING);
+      const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
 
       expect(result.status).toBe(0);
       expect(dailyContent).toContain(longFirstTurn);
       expect(dailyContent).toContain("assistant turn 39");
       expect(dailyContent).not.toContain("...(truncated)");
+    }));
+
+  it("skips assistant turns compressed to whitespace-only content", () =>
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () =>
+      withProcessMinimize("true", () => {
+        const homeDir = createTempDir(TEST_HOME_PREFIX);
+        const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+        const transcriptPath = path.join(
+          createTempDir(TEST_TRANSCRIPT_PREFIX),
+          TEST_DEFAULT_TRANSCRIPT_FILE,
+        );
+        const sessionId = "session-whitespace-compress";
+        const whitespaceOnlyAssistant = "\x1b[31m \x1b[0m";
+        const transcript = [
+          JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "user-1" } }),
+          JSON.stringify({
+            message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: whitespaceOnlyAssistant },
+          }),
+          JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "user-2" } }),
+          JSON.stringify({
+            message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: whitespaceOnlyAssistant },
+          }),
+          JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "user-3" } }),
+          JSON.stringify({
+            message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: whitespaceOnlyAssistant },
+          }),
+        ].join("\n");
+
+        writeText(transcriptPath, transcript);
+
+        const result = runHookEntrypoint(ENTRYPOINT, {
+          payload: {
+            cwd: hooksRoot,
+            transcript_path: transcriptPath,
+            session_id: sessionId,
+          },
+          env: buildEnv(homeDir, {
+            [ENV_KEY_VAULT_PATH]: vaultPath,
+            [ENV_KEY_MINIMIZE]: "true",
+          }),
+        });
+
+        const turns = parseJsonlTranscript(transcript, CAPTURE_MODE_FULL);
+        const sanitizedMarkdown = renderTurnsAsMarkdown(
+          turns
+            .map((turn) => ({
+              ...turn,
+              content:
+                turn.role === TRANSCRIPT_ROLE_ASSISTANT
+                  ? compressNarrativeText(stripVTControlCharacters(stripMemoryTags(turn.content)))
+                  : stripVTControlCharacters(stripMemoryTags(turn.content)),
+            }))
+            .filter((turn) => turn.content.trim() !== ""),
+        );
+        const expectedSanitizedRecord = buildCaptureRecord(
+          sessionId,
+          HOOK_EVENT_PRE_COMPACT_KEBAB,
+          sanitizedMarkdown,
+          TEST_POSITIVE_TIMESTAMP_MS,
+        );
+        const statePath = resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER);
+        const state = JSON.parse(fs.readFileSync(statePath, UTF8_ENCODING));
+        const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
+
+        expect(
+          compressNarrativeText(
+            stripVTControlCharacters(stripMemoryTags(whitespaceOnlyAssistant)),
+          ).trim(),
+        ).toBe("");
+        expect(result.status).toBe(0);
+        expect(state.lastCapture.contentHash).toBe(expectedSanitizedRecord.contentHash);
+        expect(dailyContent).toContain("user-1");
+        expect(dailyContent).toContain("user-2");
+        expect(dailyContent).toContain("user-3");
+        expect(dailyContent).not.toContain(whitespaceOnlyAssistant);
+      }),
+    ));
+
+  it("filters mm command turns and following assistant turns until the next user turn", () =>
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+      const transcriptPath = path.join(
+        createTempDir(TEST_TRANSCRIPT_PREFIX),
+        TEST_DEFAULT_TRANSCRIPT_FILE,
+      );
+
+      writeText(
+        transcriptPath,
+        [
+          JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "normal user" } }),
+          JSON.stringify({
+            message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: "normal assistant" },
+          }),
+          JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "/mmc" } }),
+          JSON.stringify({
+            message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: "hidden assistant one" },
+          }),
+          JSON.stringify({
+            message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: "hidden assistant two" },
+          }),
+          JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "resume user" } }),
+          JSON.stringify({
+            message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: "resume assistant" },
+          }),
+          JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "tail user" } }),
+          JSON.stringify({
+            message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: "tail assistant" },
+          }),
+        ].join("\n"),
+      );
+
+      const result = runHookEntrypoint(ENTRYPOINT, {
+        payload: {
+          cwd: hooksRoot,
+          transcript_path: transcriptPath,
+          session_id: "session-mm-turn-filter",
+        },
+        env: buildEnv(homeDir, {
+          [ENV_KEY_VAULT_PATH]: vaultPath,
+        }),
+      });
+
+      const dailyPath = buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1);
+      const dailyContent = fs.readFileSync(dailyPath, UTF8_ENCODING);
+
+      expect(result.status).toBe(0);
+      expect(dailyContent).toContain("normal user");
+      expect(dailyContent).toContain("normal assistant");
+      expect(dailyContent).toContain("resume user");
+      expect(dailyContent).toContain("resume assistant");
+      expect(dailyContent).toContain("tail user");
+      expect(dailyContent).toContain("tail assistant");
+      expect(dailyContent).not.toContain("/mmc");
+      expect(dailyContent).not.toContain("hidden assistant one");
+      expect(dailyContent).not.toContain("hidden assistant two");
     }));
 
   it("skips empty transcript file without writing capture", () =>
@@ -700,40 +949,44 @@ describe("pre-compact.js", () => {
       expect(fs.existsSync(resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER))).toBe(false);
     }));
 
-  it("skips transcript when assistant-only turns compress to empty", () =>
+  it("falls back to sanitized original when all assistant turns compress to empty", () =>
     withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
-      const homeDir = createTempDir(TEST_HOME_PREFIX);
-      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
-      const transcriptPath = path.join(
-        createTempDir(TEST_TRANSCRIPT_PREFIX),
-        TEST_DEFAULT_TRANSCRIPT_FILE,
-      );
-      const transcript = Array.from({ length: TEST_TRANSCRIPT_TURN_COUNT_STANDARD }, () =>
-        JSON.stringify({
-          message: {
-            role: TRANSCRIPT_ROLE_ASSISTANT,
-            content: "just really basically actually simply",
+      withProcessMinimize("true", () => {
+        const homeDir = createTempDir(TEST_HOME_PREFIX);
+        const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+        const transcriptPath = path.join(
+          createTempDir(TEST_TRANSCRIPT_PREFIX),
+          TEST_DEFAULT_TRANSCRIPT_FILE,
+        );
+        const transcript = Array.from({ length: TEST_TRANSCRIPT_TURN_COUNT_STANDARD }, () =>
+          JSON.stringify({
+            message: {
+              role: TRANSCRIPT_ROLE_ASSISTANT,
+              content: "\x1b[31m \x1b[0m",
+            },
+          }),
+        ).join("\n");
+
+        writeText(transcriptPath, transcript);
+
+        const result = runHookEntrypoint(ENTRYPOINT, {
+          payload: {
+            cwd: hooksRoot,
+            transcript_path: transcriptPath,
+            session_id: "session-empty-after-compress",
           },
-        }),
-      ).join("\n");
+          env: buildEnv(homeDir, {
+            [ENV_KEY_VAULT_PATH]: vaultPath,
+          }),
+        });
 
-      writeText(transcriptPath, transcript);
+        const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
 
-      const result = runHookEntrypoint(ENTRYPOINT, {
-        payload: {
-          cwd: hooksRoot,
-          transcript_path: transcriptPath,
-          session_id: "session-empty-after-compress",
-        },
-        env: buildEnv(homeDir, {
-          [ENV_KEY_VAULT_PATH]: vaultPath,
-        }),
+        expect(result.status).toBe(0);
+        expect(result.stderr).toContain(TEST_COMPRESSION_COLLAPSE_WARNING_PREFIX);
+        expect(dailyContent).toContain("session-empty-after-compress / pre-compact");
+        expect(dailyContent).toContain("**Assistant:**");
       });
-
-      expect(result.status).toBe(0);
-      expect(result.stderr).toBe("");
-      expect(fs.existsSync(buildDailyFilePath(vaultPath, DEFAULT_SUBFOLDER, today()))).toBe(false);
-      expect(fs.existsSync(resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER))).toBe(false);
     }));
   it("lite mode skips pre-compact entirely", () => {
     const homeDir = createTempDir(TEST_HOME_PREFIX);
@@ -828,10 +1081,7 @@ describe("pre-compact.js", () => {
       env: buildEnv(homeDir),
     });
 
-    const dailyContent = fs.readFileSync(
-      buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
-      UTF8_ENCODING,
-    );
+    const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
 
     expect(result.status).toBe(0);
     expect(dailyContent).toContain("<thinking>hidden</thinking>");
@@ -849,22 +1099,31 @@ describe("pre-compact.js", () => {
       writeText(transcriptPath, buildTranscript(TEST_TRANSCRIPT_TURN_COUNT_STANDARD));
 
       runHookEntrypoint(ENTRYPOINT, {
-        payload: { cwd: hooksRoot, transcript_path: transcriptPath, session_id: "session-1" },
+        payload: {
+          hook_event_name: HOOK_EVENT_PRE_COMPACT_KEBAB,
+          cwd: hooksRoot,
+          transcript_path: transcriptPath,
+          session_id: "session-1",
+        },
         env: buildEnv(homeDir, {
           [ENV_KEY_VAULT_PATH]: vaultPath,
         }),
       });
-      const dailyPath = buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1);
-      const firstContent = fs.readFileSync(dailyPath, UTF8_ENCODING);
+      const firstContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
 
       runHookEntrypoint(ENTRYPOINT, {
-        payload: { cwd: hooksRoot, transcript_path: transcriptPath, session_id: "session-1" },
+        payload: {
+          hook_event_name: HOOK_EVENT_PRE_COMPACT_KEBAB,
+          cwd: hooksRoot,
+          transcript_path: transcriptPath,
+          session_id: "session-1",
+        },
         env: buildEnv(homeDir, {
           [ENV_KEY_VAULT_PATH]: vaultPath,
         }),
       });
 
-      expect(fs.readFileSync(dailyPath, UTF8_ENCODING)).toBe(firstContent);
+      expect(readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today())).toBe(firstContent);
     }));
 
   it("returns sensitive-content warning and skips write when transcript contains .env reference", () =>
@@ -903,89 +1162,91 @@ describe("pre-compact.js", () => {
 
       expect(result.status).toBe(0);
       expect(result.stderr).toContain(HOOK_WARNING_SENSITIVE_SKIP_PREFIX);
-      expect(fs.existsSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1))).toBe(
-        false,
-      );
+      expect(dailyChunkExists(vaultPath, DEFAULT_SUBFOLDER, today())).toBe(false);
     }));
 
   it("falls back to raw transcript when compression fails and still writes capture", () =>
     withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
-      const codeBlock = "```\nsome just code\n```";
-      const originalIncludes = String.prototype.includes;
-      const includesSpy = vi.spyOn(String.prototype, "includes").mockImplementation(function (
-        searchValue,
-        ...rest
-      ) {
-        if (searchValue === codeBlock) {
-          return false;
-        }
+      withProcessMinimize("true", () => {
+        const codeBlock = "```\nsome just code\n```";
+        const originalIndexOf = String.prototype.indexOf;
+        const includesSpy = vi.spyOn(String.prototype, "indexOf").mockImplementation(function (
+          searchValue,
+          ...rest
+        ) {
+          if (searchValue === codeBlock) {
+            return -1;
+          }
 
-        return originalIncludes.call(this, searchValue, ...rest);
-      });
-
-      try {
-        const projectCwd = createTempDir(TEST_CWD_PREFIX);
-        const homeDir = createTempDir(TEST_HOME_PREFIX);
-        const vaultPath = createTempDir(TEST_VAULT_PREFIX);
-        const transcriptPath = path.join(
-          createTempDir(TEST_TRANSCRIPT_PREFIX),
-          TEST_DEFAULT_TRANSCRIPT_FILE,
-        );
-        const env = buildEnv(homeDir, {
-          [ENV_KEY_VAULT_PATH]: vaultPath,
+          return originalIndexOf.call(this, searchValue, ...rest);
         });
-        const transcript = [
-          JSON.stringify({
-            message: {
-              role: TRANSCRIPT_ROLE_USER,
-              content: "\u001b[31mjust run<system-reminder>hidden</system-reminder> tests\u001b[0m",
+
+        try {
+          const projectCwd = createTempDir(TEST_CWD_PREFIX);
+          const homeDir = createTempDir(TEST_HOME_PREFIX);
+          const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+          const transcriptPath = path.join(
+            createTempDir(TEST_TRANSCRIPT_PREFIX),
+            TEST_DEFAULT_TRANSCRIPT_FILE,
+          );
+          const env = buildEnv(homeDir, {
+            [ENV_KEY_VAULT_PATH]: vaultPath,
+          });
+          const transcript = [
+            JSON.stringify({
+              message: {
+                role: TRANSCRIPT_ROLE_USER,
+                content:
+                  "\u001b[31mjust run<system-reminder>hidden</system-reminder> tests\u001b[0m",
+              },
+            }),
+            JSON.stringify({
+              message: {
+                role: TRANSCRIPT_ROLE_ASSISTANT,
+                content: codeBlock,
+              },
+            }),
+            JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "user-2" } }),
+            JSON.stringify({
+              message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: "assistant-2" },
+            }),
+            JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "user-3" } }),
+            JSON.stringify({
+              message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: "assistant-3" },
+            }),
+          ].join("\n");
+
+          materializeProjectDotEnvConfig(projectCwd, env, generatedEnvPaths);
+          writeText(transcriptPath, transcript);
+
+          const result = preCompact.run(
+            JSON.stringify({
+              hook_event_name: HOOK_EVENT_PRE_COMPACT_KEBAB,
+              cwd: projectCwd,
+              transcript_path: transcriptPath,
+              session_id: "session-filter-fallback",
+            }),
+            {
+              env,
+              cwd: projectCwd,
+              homedir: homeDir,
             },
-          }),
-          JSON.stringify({
-            message: {
-              role: TRANSCRIPT_ROLE_ASSISTANT,
-              content: codeBlock,
-            },
-          }),
-          JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "user-2" } }),
-          JSON.stringify({ message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: "assistant-2" } }),
-          JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "user-3" } }),
-          JSON.stringify({ message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: "assistant-3" } }),
-        ].join("\n");
+          );
 
-        materializeProjectDotEnvConfig(projectCwd, env, generatedEnvPaths);
-        writeText(transcriptPath, transcript);
+          const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
 
-        const result = preCompact.run(
-          JSON.stringify({
-            cwd: projectCwd,
-            transcript_path: transcriptPath,
-            session_id: "session-filter-fallback",
-          }),
-          {
-            env,
-            cwd: projectCwd,
-            homedir: homeDir,
-          },
-        );
-
-        const dailyContent = fs.readFileSync(
-          buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
-          UTF8_ENCODING,
-        );
-
-        expect(result.status).toBe(0);
-        expect(result.stderr).toContain(TEST_FILTER_FALLBACK_WARNING_PREFIX);
-        expect(result.stderr).toContain(TEST_FILTER_FAILURE_MESSAGE);
-        expect(dailyContent).toContain("session-filter-fallback / pre-compact");
-        expect(dailyContent).toContain("**User:** just run tests");
-        expect(dailyContent).toContain(`**Assistant:** ${codeBlock}`);
-        expect(dailyContent).not.toContain("<system-reminder>");
-        expect(dailyContent).not.toContain("hidden");
-        expect(dailyContent).not.toContain("\u001b");
-      } finally {
-        includesSpy.mockRestore();
-      }
+          expect(result.status).toBe(0);
+          expect(result.stderr).toContain(TEST_FILTER_FALLBACK_WARNING_PREFIX);
+          expect(dailyContent).toContain("session-filter-fallback / pre-compact");
+          expect(dailyContent).toContain("**User:** just run tests");
+          expect(dailyContent).toContain(`**Assistant:** ${codeBlock}`);
+          expect(dailyContent).not.toContain("<system-reminder>");
+          expect(dailyContent).not.toContain("hidden");
+          expect(dailyContent).not.toContain("\u001b");
+        } finally {
+          includesSpy.mockRestore();
+        }
+      });
     }));
 
   it("reports invalid stdin to stderr", () => {
@@ -1023,14 +1284,17 @@ describe("run - mm suppression", () => {
     );
 
     const result = runHookEntrypoint(ENTRYPOINT, {
-      payload: { cwd: hooksRoot, transcript_path: transcriptPath, session_id: "session-mm-true" },
+      payload: {
+        hook_event_name: HOOK_EVENT_PRE_COMPACT_KEBAB,
+        cwd: hooksRoot,
+        transcript_path: transcriptPath,
+        session_id: "session-mm-true",
+      },
       env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
     });
 
     expect(result.status).toBe(0);
-    expect(fs.existsSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1))).toBe(
-      false,
-    );
+    expect(dailyChunkExists(vaultPath, DEFAULT_SUBFOLDER, today())).toBe(false);
   });
 
   it("skips pre-compact capture in full mode when mmSuppressed is true", () => {
@@ -1056,9 +1320,7 @@ describe("run - mm suppression", () => {
       });
 
       expect(result.status).toBe(0);
-      expect(fs.existsSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1))).toBe(
-        false,
-      );
+      expect(dailyChunkExists(vaultPath, DEFAULT_SUBFOLDER, today())).toBe(false);
     });
   });
 
@@ -1096,10 +1358,7 @@ describe("run - mm suppression", () => {
         }),
       });
 
-      const dailyContent = fs.readFileSync(
-        buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1),
-        UTF8_ENCODING,
-      );
+      const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
 
       expect(result.status).toBe(0);
       expect(dailyContent).toContain("session-mm-false / pre-compact");
@@ -1133,10 +1392,188 @@ describe("run - sync flag", () => {
     });
 
     expect(result.status).toBe(0);
-    expect(fs.existsSync(buildDailyChunkPath(vaultPath, DEFAULT_SUBFOLDER, today(), 1))).toBe(
-      false,
-    );
+    expect(dailyChunkExists(vaultPath, DEFAULT_SUBFOLDER, today())).toBe(false);
   });
+});
+
+describe("run - minimize flag", () => {
+  it("writes uncompressed assistant content when minimize is false (default)", () =>
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+      const transcriptPath = path.join(
+        createTempDir(TEST_TRANSCRIPT_PREFIX),
+        TEST_DEFAULT_TRANSCRIPT_FILE,
+      );
+      const verboseContent = "I will just run the tests really quickly";
+      const transcript = [
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "run tests" } }),
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: verboseContent } }),
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "user-2" } }),
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: "assistant-2" } }),
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "user-3" } }),
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: "assistant-3" } }),
+      ].join("\n");
+
+      writeText(transcriptPath, transcript);
+
+      const result = runHookEntrypoint(ENTRYPOINT, {
+        payload: {
+          cwd: hooksRoot,
+          transcript_path: transcriptPath,
+          session_id: "session-minimize-false",
+        },
+        env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
+      });
+
+      const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
+
+      expect(result.status).toBe(0);
+      expect(dailyContent).toContain(verboseContent);
+    }));
+
+  it("compresses assistant content when minimize is true via env var", () =>
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () =>
+      withProcessMinimize("true", () => {
+        const homeDir = createTempDir(TEST_HOME_PREFIX);
+        const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+        const transcriptPath = path.join(
+          createTempDir(TEST_TRANSCRIPT_PREFIX),
+          TEST_DEFAULT_TRANSCRIPT_FILE,
+        );
+        const transcript = [
+          JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "run tests" } }),
+          JSON.stringify({
+            message: {
+              role: TRANSCRIPT_ROLE_ASSISTANT,
+              content: "I will   run    tests  quickly",
+            },
+          }),
+          JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "user-2" } }),
+          JSON.stringify({ message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: "assistant-2" } }),
+          JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "user-3" } }),
+          JSON.stringify({ message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: "assistant-3" } }),
+        ].join("\n");
+
+        writeText(transcriptPath, transcript);
+
+        const result = runHookEntrypoint(ENTRYPOINT, {
+          payload: {
+            cwd: hooksRoot,
+            transcript_path: transcriptPath,
+            session_id: "session-minimize-true-env",
+          },
+          env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
+        });
+
+        const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
+
+        expect(result.status).toBe(0);
+        expect(dailyContent).not.toContain("**Assistant:** I will   run    tests  quickly");
+        expect(dailyContent).toContain("**Assistant:** I will run tests quickly");
+      }),
+    ));
+
+  it("compresses assistant content when minimize is true via project config JSON", () =>
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
+      const cwd = createTempDir(TEST_CWD_PREFIX);
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+      const transcriptPath = path.join(
+        createTempDir(TEST_TRANSCRIPT_PREFIX),
+        TEST_DEFAULT_TRANSCRIPT_FILE,
+      );
+      const transcript = [
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "run tests" } }),
+        JSON.stringify({
+          message: {
+            role: TRANSCRIPT_ROLE_ASSISTANT,
+            content: "I will   run    tests  quickly",
+          },
+        }),
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "user-2" } }),
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: "assistant-2" } }),
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "user-3" } }),
+        JSON.stringify({ message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: "assistant-3" } }),
+      ].join("\n");
+
+      writeText(
+        path.join(cwd, PROJECT_CONFIG_FILE_NAME),
+        JSON.stringify({
+          vaultPath,
+          subfolder: DEFAULT_SUBFOLDER,
+          captureMode: CAPTURE_MODE_FULL,
+          minimize: true,
+        }),
+      );
+      writeText(transcriptPath, transcript);
+
+      const result = runHookEntrypoint(ENTRYPOINT, {
+        payload: {
+          cwd,
+          transcript_path: transcriptPath,
+          session_id: "session-minimize-true-json",
+        },
+        cwd,
+        env: buildEnv(homeDir),
+      });
+
+      const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
+
+      expect(result.status).toBe(0);
+      expect(dailyContent).not.toContain("**Assistant:** I will   run    tests  quickly");
+      expect(dailyContent).toContain("**Assistant:** I will run tests quickly");
+    }));
+
+  it("env var minimize overrides project config minimize", () =>
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () =>
+      withProcessMinimize("false", () => {
+        const cwd = createTempDir(TEST_CWD_PREFIX);
+        const homeDir = createTempDir(TEST_HOME_PREFIX);
+        const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+        const transcriptPath = path.join(
+          createTempDir(TEST_TRANSCRIPT_PREFIX),
+          TEST_DEFAULT_TRANSCRIPT_FILE,
+        );
+        const verboseContent = "I will just run tests really quickly";
+        const transcript = [
+          JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "run tests" } }),
+          JSON.stringify({
+            message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: verboseContent },
+          }),
+          JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "user-2" } }),
+          JSON.stringify({ message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: "assistant-2" } }),
+          JSON.stringify({ message: { role: TRANSCRIPT_ROLE_USER, content: "user-3" } }),
+          JSON.stringify({ message: { role: TRANSCRIPT_ROLE_ASSISTANT, content: "assistant-3" } }),
+        ].join("\n");
+
+        writeText(
+          path.join(cwd, PROJECT_CONFIG_FILE_NAME),
+          JSON.stringify({
+            vaultPath,
+            subfolder: DEFAULT_SUBFOLDER,
+            captureMode: CAPTURE_MODE_FULL,
+            minimize: true,
+          }),
+        );
+        writeText(transcriptPath, transcript);
+
+        const result = runHookEntrypoint(ENTRYPOINT, {
+          payload: {
+            cwd,
+            transcript_path: transcriptPath,
+            session_id: "session-minimize-env-override",
+          },
+          cwd,
+          env: buildEnv(homeDir),
+        });
+
+        const dailyContent = readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, today());
+
+        expect(result.status).toBe(0);
+        expect(dailyContent).toContain(verboseContent);
+      }),
+    ));
 });
 
 describe("pre-compact.js readStdin", () => {
@@ -1194,7 +1631,11 @@ describe("pre-compact.js runtime fallback branches", () => {
     writeText(transcriptPath, buildTranscript(TEST_TRANSCRIPT_TURN_COUNT_STANDARD));
 
     const result = preCompact.run(
-      JSON.stringify({ transcript_path: transcriptPath, session_id: "nocwd" }),
+      JSON.stringify({
+        hook_event_name: HOOK_EVENT_PRE_COMPACT_KEBAB,
+        transcript_path: transcriptPath,
+        session_id: "nocwd",
+      }),
       {
         env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
         cwd: createTempDir("mm-fb-"),
@@ -1203,6 +1644,38 @@ describe("pre-compact.js runtime fallback branches", () => {
     );
 
     expect(result.status).toBe(0);
+  });
+
+  it("keeps capture state unchanged when persistCapture receives no session id", () => {
+    const vaultPath = createTempDir(TEST_MM_VAULT_PREFIX);
+    const captureRecord = buildCaptureRecord(
+      "session-pre-compact",
+      HOOK_EVENT_PRE_COMPACT_KEBAB,
+      "content",
+      Date.now(),
+    );
+
+    preCompact.persistCapture(
+      { vaultPath, subfolder: DEFAULT_SUBFOLDER },
+      today(),
+      "header\n",
+      "raw\n",
+      "sanitized\n",
+      {
+        lastCapture: null,
+        exchanges: { keep: { open: true, openedAtIso: new Date().toISOString() } },
+      },
+      captureRecord,
+      new Date().toISOString(),
+      defaultSessionContext(),
+    );
+
+    const state = JSON.parse(
+      fs.readFileSync(resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER), UTF8_ENCODING),
+    );
+
+    expect(state.exchanges.keep.open).toBe(true);
+    expect(state.lastCapture).toEqual(captureRecord);
   });
 });
 
@@ -1221,6 +1694,7 @@ describe("pre-compact.js main", () => {
       writeText(transcriptPath, buildTranscript(TEST_TRANSCRIPT_TURN_COUNT_STANDARD));
       const projectCwd = createTempDir(TEST_MM_CWD_PREFIX);
       const payload = JSON.stringify({
+        hook_event_name: HOOK_EVENT_PRE_COMPACT_KEBAB,
         cwd: projectCwd,
         transcript_path: transcriptPath,
         session_id: "session-main",
@@ -1285,4 +1759,58 @@ describe("pre-compact.js main", () => {
     expect(exitCode).toBe(0);
     expect(errors.join("")).toContain("invalid JSON in stdin");
   });
+});
+
+describe("pre-compact.js - exchangeOpen flag", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    delete require.cache[require.resolve("../../pre-compact")];
+    delete require.cache[require.resolve("../../lib/vault/writer")];
+  });
+
+  it("passes exchangeOpen=true to appendToDaily when exchange is open at capture time", () =>
+    withProcessCaptureMode(CAPTURE_MODE_FULL, () => {
+      const writerPath = require.resolve("../../lib/vault/writer");
+      const preCompactPath = require.resolve("../../pre-compact");
+
+      delete require.cache[preCompactPath];
+      delete require.cache[writerPath];
+
+      const writer = require("../../lib/vault/writer");
+      const appendToDailySpy = vi.spyOn(writer, "appendToDaily");
+      const isolatedPreCompact = require("../../pre-compact");
+
+      const homeDir = createTempDir(TEST_HOME_PREFIX);
+      const vaultPath = createTempDir(TEST_MM_VAULT_PREFIX);
+      const transcriptPath = path.join(
+        createTempDir(TEST_MM_TR_PREFIX),
+        TEST_DEFAULT_TRANSCRIPT_FILE,
+      );
+      const sessionId = "session-exchange-open";
+      const env = buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath });
+      const projectCwd = createTempDir(TEST_MM_CWD_PREFIX);
+
+      const openState = openExchange(defaultCaptureState(), sessionId, new Date().toISOString());
+      writeText(
+        resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER),
+        JSON.stringify(openState, null, 2),
+      );
+      writeText(transcriptPath, buildTranscript(TEST_TRANSCRIPT_TURN_COUNT_STANDARD));
+      materializeProjectDotEnvConfig(projectCwd, env, generatedEnvPaths);
+
+      const result = isolatedPreCompact.run(
+        JSON.stringify({
+          hook_event_name: HOOK_EVENT_PRE_COMPACT_KEBAB,
+          cwd: projectCwd,
+          transcript_path: transcriptPath,
+          session_id: sessionId,
+        }),
+        { env, cwd: projectCwd, homedir: homeDir },
+      );
+
+      expect(result.status).toBe(0);
+      expect(appendToDailySpy).toHaveBeenCalledOnce();
+      const [, , , , options] = appendToDailySpy.mock.calls[0];
+      expect(options.exchangeOpen).toBe(true);
+    }));
 });

@@ -5,16 +5,21 @@
 "use strict";
 
 const fs = require("node:fs");
-const { parseJsonInput } = require("./lib/config/config");
-const { buildCommandErrorResult, formatErrorMessage } = require("./lib/cli/cli");
-const { parseJsonlTranscript, renderTurnsAsMarkdown } = require("./lib/capture/transcript");
-const { buildSessionHeader } = require("./lib/vault/vault");
+const { parseJsonInput, detectPlatform } = require("./lib/config/config");
+const { buildCommandErrorResult } = require("./lib/cli/cli");
+const {
+  parseJsonlTranscript,
+  renderTurnsAsMarkdown,
+  filterMmTurns,
+} = require("./lib/capture/transcript");
+const { buildSessionHeader, buildSessionContext } = require("./lib/vault/vault");
 const { appendToDaily } = require("./lib/vault/writer");
 const { recordCaptureMetrics } = require("./lib/state/state");
 const {
   buildCaptureTimestamp,
   buildTagWarning,
   buildWarningsResult,
+  HOOK_WARNING_FILTER_FALLBACK_PREFIX,
 } = require("./lib/hook/capture-ops");
 const hookRuntime = require("./lib/hook/hook-runtime");
 const {
@@ -37,6 +42,8 @@ const {
   buildCaptureRecord,
   isDuplicateCapture,
   getMmSuppressed,
+  closeExchange,
+  isExchangeOpen,
 } = require("./lib/capture/capture-state");
 const { CAPTURE_MODE_LITE, ENV_KEY_INVOKED_BY } = require("./lib/config/constants");
 const { PRE_COMPACT_MIN_TURNS } = require("./lib/hook/constants");
@@ -53,8 +60,6 @@ const { stripVTControlCharacters } = require("node:util");
 
 const EMPTY_STRING = "";
 const NEWLINE = "\n";
-const HOOK_WARNING_FILTER_FALLBACK_PREFIX =
-  "[memory-mason] capture filter failed; using uncompressed sanitized transcript";
 
 function firstNonEmptyString(values) {
   if (Array.isArray(values)) {
@@ -87,12 +92,16 @@ function buildDuplicateDecision(captureState, captureRecord) {
   return isDuplicateCapture(captureState.lastCapture, captureRecord, DUPLICATE_CAPTURE_WINDOW_MS);
 }
 
-function buildFilterFallbackWarning(error) {
-  return `${HOOK_WARNING_FILTER_FALLBACK_PREFIX}: ${formatErrorMessage(error)}${NEWLINE}`;
-}
-
 function sanitizeTranscriptBaseContent(content) {
   return stripVTControlCharacters(stripMemoryTags(content));
+}
+
+function buildCompressionFallbackWarning(failureCount) {
+  if (!Number.isInteger(failureCount) || failureCount < 1) {
+    return EMPTY_STRING;
+  }
+
+  return `${HOOK_WARNING_FILTER_FALLBACK_PREFIX}: ${failureCount} assistant turn(s) failed compression; using sanitized originals${NEWLINE}`;
 }
 
 function parseTranscriptTurnsForSanitization(transcriptContent, captureMode) {
@@ -113,19 +122,38 @@ function sanitizeTurnsBaseContent(turns) {
 }
 
 function compressAssistantTurns(turns) {
-  return turns
-    .map((turn) => ({
-      ...turn,
-      content:
-        turn.role === TRANSCRIPT_ROLE_ASSISTANT
-          ? compressNarrativeText(turn.content)
-          : turn.content,
-    }))
-    .filter((turn) => turn.content !== EMPTY_STRING);
+  return turns.reduce(
+    (state, turn) => {
+      if (turn.role !== TRANSCRIPT_ROLE_ASSISTANT) {
+        return {
+          turns: state.turns.concat([turn]),
+          failureCount: state.failureCount,
+        };
+      }
+
+      try {
+        return {
+          turns: state.turns.concat([
+            {
+              ...turn,
+              content: compressNarrativeText(turn.content),
+            },
+          ]),
+          failureCount: state.failureCount,
+        };
+      } catch (_error) {
+        return {
+          turns: state.turns.concat([turn]),
+          failureCount: state.failureCount + 1,
+        };
+      }
+    },
+    { turns: [], failureCount: 0 },
+  );
 }
 
-function buildSanitizedTranscript(transcriptContent, captureMode) {
-  const turns = parseTranscriptTurnsForSanitization(transcriptContent, captureMode);
+function buildSanitizedTranscript(transcriptContent, captureMode, minimize) {
+  const turns = filterMmTurns(parseTranscriptTurnsForSanitization(transcriptContent, captureMode));
 
   if (turns.length === 0) {
     return {
@@ -150,32 +178,33 @@ function buildSanitizedTranscript(transcriptContent, captureMode) {
 
   const baseSanitizedMarkdown = renderTurnsAsMarkdown(baseSanitizedTurns);
 
-  try {
-    const sanitizedTurns = compressAssistantTurns(baseSanitizedTurns);
-
-    if (sanitizedTurns.length === 0) {
-      return {
-        markdown: EMPTY_STRING,
-        rawMarkdown,
-        filterWarning: EMPTY_STRING,
-        turnCount: turns.length,
-      };
-    }
-
+  if (!minimize) {
     return {
-      markdown: renderTurnsAsMarkdown(sanitizedTurns),
+      markdown: baseSanitizedMarkdown,
       rawMarkdown,
       filterWarning: EMPTY_STRING,
       turnCount: turns.length,
     };
-  } catch (error) {
+  }
+
+  const compressed = compressAssistantTurns(baseSanitizedTurns);
+  const sanitizedTurns = compressed.turns.filter((turn) => turn.content.trim() !== EMPTY_STRING);
+
+  if (sanitizedTurns.length === 0) {
     return {
       markdown: baseSanitizedMarkdown,
       rawMarkdown,
-      filterWarning: buildFilterFallbackWarning(error),
+      filterWarning: `${HOOK_WARNING_FILTER_FALLBACK_PREFIX}: all assistant turns compressed to empty; using sanitized originals${NEWLINE}`,
       turnCount: turns.length,
     };
   }
+
+  return {
+    markdown: renderTurnsAsMarkdown(sanitizedTurns),
+    rawMarkdown,
+    filterWarning: buildCompressionFallbackWarning(compressed.failureCount),
+    turnCount: turns.length,
+  };
 }
 
 function persistCapture(
@@ -187,15 +216,26 @@ function persistCapture(
   captureState,
   captureRecord,
   capturedAt,
+  session,
 ) {
+  const hasValidSession =
+    session !== null &&
+    typeof session === "object" &&
+    typeof session.sessionId === "string" &&
+    session.sessionId !== "";
+  const closedState = hasValidSession
+    ? closeExchange(captureState, session.sessionId)
+    : captureState;
+  const exchangeOpen = hasValidSession && isExchangeOpen(captureState, session.sessionId);
   appendToDaily(
     resolvedConfig.vaultPath,
     resolvedConfig.subfolder,
     today,
     sessionHeader + transcriptMarkdown,
+    { session, exchangeOpen },
   );
   saveCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder, {
-    ...captureState,
+    ...closedState,
     lastCapture: captureRecord,
   });
   recordCaptureMetrics(
@@ -243,7 +283,11 @@ function run(rawStdin, runtime = {}) {
     }
 
     const transcriptContent = fs.readFileSync(transcriptPath, UTF8_ENCODING);
-    const fullTranscript = buildSanitizedTranscript(transcriptContent, resolvedConfig.captureMode);
+    const fullTranscript = buildSanitizedTranscript(
+      transcriptContent,
+      resolvedConfig.captureMode,
+      resolvedConfig.minimize === true,
+    );
     const tagCount = countMemoryTags(fullTranscript.rawMarkdown);
     const sanitizedMarkdown = fullTranscript.markdown;
     const tagWarning = buildTagWarning(tagCount);
@@ -276,6 +320,8 @@ function run(rawStdin, runtime = {}) {
       return buildWarningsResult(tagWarning, filterWarning, sensitiveWarning);
     }
 
+    const platform = detectPlatform(input);
+    const session = buildSessionContext(sessionId, platform, cwd);
     const sessionHeader = buildSessionHeader(
       sessionId,
       HOOK_EVENT_PRE_COMPACT_KEBAB,
@@ -290,6 +336,7 @@ function run(rawStdin, runtime = {}) {
       captureState,
       captureRecord,
       captureTimestamp.iso,
+      session,
     );
     return buildWarningsResult(tagWarning, filterWarning);
   } catch (error) {
@@ -307,6 +354,7 @@ module.exports = {
   readDotEnvText,
   readGlobalConfigText,
   readGlobalDotEnvText,
+  persistCapture,
   run,
   main,
 };

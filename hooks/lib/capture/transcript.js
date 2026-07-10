@@ -282,7 +282,7 @@ const filterMmTurns = (turns) => {
 
     if (state.skipAssistantAfterMm && turn.role === TRANSCRIPT_ROLE_ASSISTANT) {
       return {
-        skipAssistantAfterMm: false,
+        skipAssistantAfterMm: true,
         includeTurn: false,
       };
     }

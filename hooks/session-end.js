@@ -7,14 +7,19 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { parseJsonInput, detectPlatform } = require("./lib/config/config");
-const { buildCommandErrorResult } = require("./lib/cli/cli");
+const { buildCommandErrorResult, formatErrorMessage } = require("./lib/cli/cli");
 const {
   parseJsonlTranscript,
   filterMmTurns,
   renderTurnsAsMarkdown,
   normalizeTranscriptText,
 } = require("./lib/capture/transcript");
-const { buildSessionHeader, buildAssistantReplyEntry, localNow } = require("./lib/vault/vault");
+const {
+  buildSessionHeader,
+  buildAssistantReplyEntry,
+  localNow,
+  buildSessionContext,
+} = require("./lib/vault/vault");
 const { appendToDaily } = require("./lib/vault/writer");
 const { recordCaptureMetrics } = require("./lib/state/state");
 const {
@@ -25,6 +30,8 @@ const {
   getTranscriptTurnCount,
   setTranscriptTurnCount,
   getMmSuppressed,
+  isExchangeOpen,
+  closeExchange,
 } = require("./lib/capture/capture-state");
 const { CAPTURE_MODE_LITE, ENV_KEY_INVOKED_BY } = require("./lib/config/constants");
 const { HOOK_EVENT_STOP } = require("./lib/hook/constants");
@@ -37,7 +44,11 @@ const { stripMemoryTags, countMemoryTags } = require("./lib/filter/tag-stripper"
 const { detectSensitiveContent } = require("./lib/filter/sensitive-guard");
 const { compressNarrativeText } = require("./lib/economics/compress");
 const { HOOK_EVENT_SESSION_END_KEBAB } = require("./lib/hook/hook-events");
-const { buildTagWarning, buildWarningsResult } = require("./lib/hook/capture-ops");
+const {
+  buildTagWarning,
+  buildWarningsResult,
+  HOOK_WARNING_FILTER_FALLBACK_PREFIX,
+} = require("./lib/hook/capture-ops");
 const { TRANSCRIPT_ROLE_ASSISTANT } = require("./lib/capture/transcript-labels");
 const { stripVTControlCharacters } = require("node:util");
 const {
@@ -306,63 +317,81 @@ function calculateNextTurnCount(shouldAppendPayloadAssistant, turns, lastCount) 
   return Math.max(lastCount + 1, 2);
 }
 
-function writeAssistantTurns(vaultPath, subfolder, assistantContents) {
+function writeAssistantTurns(vaultPath, subfolder, assistantContents, session, captureState) {
   const now = localNow();
 
   if (assistantContents.length < 1) {
     return now;
   }
 
+  const safeSession =
+    session !== null && typeof session === "object" && !Array.isArray(session)
+      ? session
+      : buildSessionContext("", "", "");
+  const exchangeOpen =
+    safeSession.sessionId !== "" && isExchangeOpen(captureState, safeSession.sessionId);
+
   assistantContents.forEach((content) => {
-    appendToDaily(vaultPath, subfolder, now.date, buildAssistantReplyEntry(content, now.time));
+    appendToDaily(vaultPath, subfolder, now.date, buildAssistantReplyEntry(content, now.time), {
+      session: safeSession,
+      exchangeOpen,
+    });
   });
 
   return now;
 }
 
-function sanitizeTranscriptContent(content, shouldCompress) {
+function sanitizeTranscriptContent(content, shouldCompress, minimize) {
   const sanitizedContent = stripVTControlCharacters(stripMemoryTags(content));
 
-  if (!shouldCompress) {
-    return sanitizedContent;
+  if (!shouldCompress || !minimize) {
+    return {
+      content: sanitizedContent,
+      filterWarning: EMPTY_STRING,
+    };
   }
 
-  return compressNarrativeText(sanitizedContent);
+  try {
+    return {
+      content: compressNarrativeText(sanitizedContent),
+      filterWarning: EMPTY_STRING,
+    };
+  } catch (error) {
+    return {
+      content: sanitizedContent,
+      filterWarning: buildFilterFallbackWarning(error),
+    };
+  }
 }
 
-function buildSafeStopTurns(assistantContents) {
-  return assistantContents.reduce(
-    (state, content) => {
-      const sanitizedContent = compressNarrativeText(
-        stripVTControlCharacters(stripMemoryTags(content)),
-      );
+function buildSafeStopTurns(assistantContents, minimize) {
+  const state = {
+    rawTurns: [],
+    storedTurns: [],
+    sensitiveSkippedCount: ZERO,
+    filterWarning: EMPTY_STRING,
+  };
 
-      if (sanitizedContent === EMPTY_STRING) {
-        return state;
-      }
+  for (const content of assistantContents) {
+    const sanitizedTurn = sanitizeTranscriptContent(content, true, minimize);
+    const sanitizedContent = sanitizedTurn.content;
+    state.filterWarning = mergeWarning(state.filterWarning, sanitizedTurn.filterWarning);
 
-      const guard = detectSensitiveContent(sanitizedContent);
+    if (sanitizedContent === EMPTY_STRING) {
+      continue;
+    }
 
-      if (guard.isSensitive) {
-        return {
-          rawTurns: state.rawTurns,
-          storedTurns: state.storedTurns,
-          sensitiveSkippedCount: state.sensitiveSkippedCount + ONE,
-        };
-      }
+    const guard = detectSensitiveContent(sanitizedContent);
+    if (guard.isSensitive) {
+      state.sensitiveSkippedCount += ONE;
+      continue;
+    }
 
-      return {
-        rawTurns: state.rawTurns.concat([content]),
-        storedTurns: state.storedTurns.concat([sanitizedContent]),
-        sensitiveSkippedCount: state.sensitiveSkippedCount,
-      };
-    },
-    {
-      rawTurns: [],
-      storedTurns: [],
-      sensitiveSkippedCount: ZERO,
-    },
-  );
+    state.rawTurns.push(content);
+    state.storedTurns.push(sanitizedContent);
+  }
+
+  return state;
 }
 
 function buildSensitiveSkipWarning(skippedCount) {
@@ -379,6 +408,28 @@ function buildSensitiveReasonWarning(reasons) {
 
 function joinWarnings(warnings) {
   return warnings.filter((warning) => warning !== EMPTY_STRING).join(EMPTY_STRING);
+}
+
+function buildFilterFallbackWarning(error) {
+  return `${HOOK_WARNING_FILTER_FALLBACK_PREFIX}: ${formatErrorMessage(error)}${NEWLINE}`;
+}
+
+function mergeWarning(existingWarning, nextWarning) {
+  if (nextWarning === EMPTY_STRING || existingWarning.includes(nextWarning)) {
+    return existingWarning;
+  }
+
+  return `${existingWarning}${nextWarning}`;
+}
+
+function trySaveCaptureState(vaultPath, subfolder, state) {
+  try {
+    saveCaptureState(vaultPath, subfolder, state);
+  } catch (error) {
+    process.stderr.write(
+      `[memory-mason] failed to persist closed exchange state: ${formatErrorMessage(error)}${NEWLINE}`,
+    );
+  }
 }
 
 function captureStopPath(input, platform, cwd, homedir, resolvedConfig, captureMode, sessionIdRaw) {
@@ -410,16 +461,34 @@ function captureStopPath(input, platform, cwd, homedir, resolvedConfig, captureM
     (sum, content) => sum + countMemoryTags(content),
     ZERO,
   );
-  const safeStopTurns = buildSafeStopTurns(stopAssistantContents);
+  const safeStopTurns = buildSafeStopTurns(stopAssistantContents, resolvedConfig.minimize === true);
   const tagWarning = buildTagWarning(totalTagCount);
   const sensitiveWarning = buildSensitiveSkipWarning(safeStopTurns.sensitiveSkippedCount);
-  const stopWarnings = joinWarnings([tagWarning, sensitiveWarning]);
+  const stopWarnings = joinWarnings([tagWarning, sensitiveWarning, safeStopTurns.filterWarning]);
 
-  const stopNow = writeAssistantTurns(
-    resolvedConfig.vaultPath,
-    resolvedConfig.subfolder,
-    safeStopTurns.storedTurns,
+  const stopSession = buildSessionContext(sessionIdRaw, platform, cwd);
+  const closedExchangeState = closeExchange(stopCaptureState, sessionIdRaw);
+  let stopNow;
+  try {
+    stopNow = writeAssistantTurns(
+      resolvedConfig.vaultPath,
+      resolvedConfig.subfolder,
+      safeStopTurns.storedTurns,
+      stopSession,
+      stopCaptureState,
+    );
+  } catch (error) {
+    trySaveCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder, closedExchangeState);
+    throw error;
+  }
+
+  const nextTurnCount = calculateNextTurnCount(
+    stopSelection.shouldAppendPayloadAssistant,
+    turns,
+    lastCount,
   );
+  const updatedState = setTranscriptTurnCount(closedExchangeState, sessionIdRaw, nextTurnCount);
+  trySaveCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder, updatedState);
 
   if (safeStopTurns.storedTurns.length > ZERO) {
     recordCaptureMetrics(
@@ -431,14 +500,6 @@ function captureStopPath(input, platform, cwd, homedir, resolvedConfig, captureM
       safeStopTurns.storedTurns.join(NEWLINE),
     );
   }
-
-  const nextTurnCount = calculateNextTurnCount(
-    stopSelection.shouldAppendPayloadAssistant,
-    turns,
-    lastCount,
-  );
-  const updatedState = setTranscriptTurnCount(stopCaptureState, sessionIdRaw, nextTurnCount);
-  saveCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder, updatedState);
   return buildWarningsResult(stopWarnings);
 }
 
@@ -452,6 +513,9 @@ function captureSessionEndPath(
   sessionIdRaw,
 ) {
   const captureState = loadCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder);
+  if (getMmSuppressed(captureState)) {
+    return buildSuccessResult();
+  }
   const transcriptContent = resolveSessionTranscript(input, platform, homedir, sessionIdRaw, cwd);
 
   if (transcriptContent === "") {
@@ -469,12 +533,37 @@ function captureSessionEndPath(
     ZERO,
   );
   const rawTranscriptMarkdown = renderTurnsAsMarkdown(filteredTurns);
-  const sanitizedTurns = filteredTurns
-    .map((turn) => ({
-      ...turn,
-      content: sanitizeTranscriptContent(turn.content, turn.role === TRANSCRIPT_ROLE_ASSISTANT),
-    }))
-    .filter((turn) => turn.content !== EMPTY_STRING);
+  const sanitizedTurnData = filteredTurns.reduce(
+    (state, turn) => {
+      const sanitizedTurn = sanitizeTranscriptContent(
+        turn.content,
+        turn.role === TRANSCRIPT_ROLE_ASSISTANT,
+        resolvedConfig.minimize === true,
+      );
+
+      if (sanitizedTurn.content === EMPTY_STRING) {
+        return {
+          turns: state.turns,
+          filterWarning: mergeWarning(state.filterWarning, sanitizedTurn.filterWarning),
+        };
+      }
+
+      return {
+        turns: state.turns.concat([
+          {
+            ...turn,
+            content: sanitizedTurn.content,
+          },
+        ]),
+        filterWarning: mergeWarning(state.filterWarning, sanitizedTurn.filterWarning),
+      };
+    },
+    {
+      turns: [],
+      filterWarning: EMPTY_STRING,
+    },
+  );
+  const sanitizedTurns = sanitizedTurnData.turns;
 
   if (sanitizedTurns.length < 1) {
     return buildSuccessResult();
@@ -486,7 +575,11 @@ function captureSessionEndPath(
 
   if (fullTranscriptGuard.isSensitive) {
     const sensitiveWarning = buildSensitiveReasonWarning(fullTranscriptGuard.reasons);
-    const fullWarnings = joinWarnings([tagWarning, sensitiveWarning]);
+    const fullWarnings = joinWarnings([
+      tagWarning,
+      sensitiveWarning,
+      sanitizedTurnData.filterWarning,
+    ]);
     return buildWarningsResult(fullWarnings);
   }
 
@@ -502,17 +595,27 @@ function captureSessionEndPath(
   const now = localNow();
   const capturedAt = `${now.date}T${now.time}`;
   const sessionHeader = buildSessionHeader(sessionId, source, capturedAt);
-  appendToDaily(
-    resolvedConfig.vaultPath,
-    resolvedConfig.subfolder,
-    today,
-    sessionHeader + fullTranscriptMarkdown,
-  );
+  const sessionEndSession = buildSessionContext(sessionId, platform, cwd);
+  const exchangeOpen = sessionIdRaw !== "" && isExchangeOpen(captureState, sessionIdRaw);
+  const closedState =
+    sessionIdRaw !== "" ? closeExchange(captureState, sessionIdRaw) : captureState;
+  try {
+    appendToDaily(
+      resolvedConfig.vaultPath,
+      resolvedConfig.subfolder,
+      today,
+      sessionHeader + fullTranscriptMarkdown,
+      { session: sessionEndSession, exchangeOpen },
+    );
+  } catch (error) {
+    trySaveCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder, closedState);
+    throw error;
+  }
   const nextCaptureState = {
-    ...captureState,
+    ...closedState,
     lastCapture: captureRecord,
   };
-  saveCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder, nextCaptureState);
+  trySaveCaptureState(resolvedConfig.vaultPath, resolvedConfig.subfolder, nextCaptureState);
   recordCaptureMetrics(
     resolvedConfig.vaultPath,
     resolvedConfig.subfolder,
@@ -522,7 +625,7 @@ function captureSessionEndPath(
     fullTranscriptMarkdown,
   );
 
-  return buildWarningsResult(tagWarning);
+  return buildWarningsResult(joinWarnings([tagWarning, sanitizedTurnData.filterWarning]));
 }
 
 function run(rawStdin, runtime = {}) {
@@ -609,6 +712,10 @@ module.exports = {
   readGlobalConfigText,
   readGlobalDotEnvText,
   buildStopAssistantSelection,
+  sanitizeTranscriptContent,
+  buildFilterFallbackWarning,
+  mergeWarning,
+  writeAssistantTurns,
   run,
   main,
 };

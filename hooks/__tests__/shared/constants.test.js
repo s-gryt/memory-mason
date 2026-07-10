@@ -35,16 +35,10 @@ const {
   HOOK_WARNING_SENSITIVE_SKIP_PREFIX,
 } = require("../../lib/filter/constants");
 
-const {
-  TOKEN_CHARS_RATIO,
-  MAX_NARRATIVE_TOKENS,
-  MAX_NARRATIVE_CHARS,
-  CAVEMAN_LITE_DROP_WORDS,
-  CAVEMAN_LITE_DROP_PHRASES,
-} = require("../../lib/economics/constants");
+const { TOKEN_CHARS_RATIO } = require("../../lib/economics/constants");
 
 const ZERO = 0;
-const EXPECTED_MAX_NARRATIVE_CHARS = 2000;
+const EXPECTED_TOKEN_CHARS_RATIO = 4;
 const EXPECTED_MAX_TAG_STRIP_COUNT = 100;
 const EXPECTED_DISCOVERY_MIN_LINES = 20;
 const EXPECTED_PLAN_PATH_PATTERN = ".claude/plans/";
@@ -101,13 +95,9 @@ const EXPECTED_ADDITIONAL_SENSITIVE_FILE_NAMES = [
   "known_hosts",
 ];
 
-const isStringArray = (value) =>
-  Array.isArray(value) && value.every((entry) => typeof entry === "string");
-
 describe("constants phase 1 smart filtering", () => {
-  it("derives MAX_NARRATIVE_CHARS from MAX_NARRATIVE_TOKENS and TOKEN_CHARS_RATIO", () => {
-    expect(MAX_NARRATIVE_CHARS).toBe(MAX_NARRATIVE_TOKENS * TOKEN_CHARS_RATIO);
-    expect(MAX_NARRATIVE_CHARS).toBe(EXPECTED_MAX_NARRATIVE_CHARS);
+  it("defines TOKEN_CHARS_RATIO for token estimation", () => {
+    expect(TOKEN_CHARS_RATIO).toBe(EXPECTED_TOKEN_CHARS_RATIO);
   });
 
   it("defines META_TOOLS with the exact expected members", () => {
@@ -135,14 +125,6 @@ describe("constants phase 1 smart filtering", () => {
   it("defines STRIP_TAGS in the exact required order", () => {
     expect(STRIP_TAGS).toEqual(EXPECTED_STRIP_TAGS);
     expect(STRIP_TAGS).toHaveLength(EXPECTED_STRIP_TAGS.length);
-  });
-
-  it("defines CAVEMAN_LITE_DROP_WORDS as an array of strings", () => {
-    expect(isStringArray(CAVEMAN_LITE_DROP_WORDS)).toBe(true);
-  });
-
-  it("defines CAVEMAN_LITE_DROP_PHRASES as an array of strings", () => {
-    expect(isStringArray(CAVEMAN_LITE_DROP_PHRASES)).toBe(true);
   });
 
   it("defines sensitive-detection collections as arrays", () => {
