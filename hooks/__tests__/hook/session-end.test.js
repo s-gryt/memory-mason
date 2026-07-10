@@ -2586,6 +2586,8 @@ describe("session-end.js helper warnings", () => {
   });
 });
 
+const MODIFICATION_TIME_DELTA_MS = 10000;
+
 describe("session-end.js findCodexSessionContent sort comparator", () => {
   it("returns content of most-recently-modified file when multiple jsonl files exist", () => {
     const dir = createTempDir("mm-codex-sort-");
@@ -2593,7 +2595,7 @@ describe("session-end.js findCodexSessionContent sort comparator", () => {
     const newer = path.join(dir, "newer.jsonl");
     writeText(older, buildTranscript(TWO));
     writeText(newer, buildTranscript(TWO));
-    const oldTime = new Date(Date.now() - 10000);
+    const oldTime = new Date(Date.now() - MODIFICATION_TIME_DELTA_MS);
     fs.utimesSync(older, oldTime, oldTime);
     const newTime = new Date(Date.now());
     fs.utimesSync(newer, newTime, newTime);
@@ -2609,7 +2611,7 @@ describe("session-end.js findCopilotCliSessionContent sort comparator", () => {
     const newerDir = path.join(sessionStateDir, "session-newer");
     writeText(path.join(olderDir, "data.jsonl"), "older content");
     writeText(path.join(newerDir, "data.jsonl"), "newer content");
-    const oldTime = new Date(Date.now() - 10000);
+    const oldTime = new Date(Date.now() - MODIFICATION_TIME_DELTA_MS);
     fs.utimesSync(olderDir, oldTime, oldTime);
     const newTime = new Date(Date.now());
     fs.utimesSync(newerDir, newTime, newTime);

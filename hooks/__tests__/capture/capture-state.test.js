@@ -179,6 +179,8 @@ describe("capture state file I/O", () => {
     const statePath = resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER);
     const validIso = new Date().toISOString();
 
+    const INVALID_NAG_SESSION_ID = 42;
+
     fs.mkdirSync(path.dirname(statePath), { recursive: true });
     fs.writeFileSync(
       statePath,
@@ -190,7 +192,7 @@ describe("capture state file I/O", () => {
               count: 1,
               firstSeenIso: validIso,
               lastSeenIso: validIso,
-              nagSessions: ["valid-session", 42, "another-valid", null],
+              nagSessions: ["valid-session", INVALID_NAG_SESSION_ID, "another-valid", null],
             },
           },
         },

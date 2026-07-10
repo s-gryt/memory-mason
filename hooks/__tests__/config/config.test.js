@@ -5,7 +5,6 @@ const { parseDotEnv, resolveVaultConfig } = require("../../lib/config/config");
 
 const TEST_HOMEDIR = os.homedir();
 const TEST_VAULT_PATH = "/tmp/test-vault";
-const VALID_CONFIG_TEXT = JSON.stringify({ vaultPath: TEST_VAULT_PATH });
 
 describe("parseDotEnv - equalsIndex <= 0 branch", () => {
   it("returns null (skips) for a line with no equals sign", () => {

@@ -888,7 +888,10 @@ describe("buildTranscriptExcerpt empty-turns branch", () => {
   it("returns empty result when parsed content yields no turns", () => {
     const input = JSON.stringify({ message: { role: "tool", content: "call" } });
 
-    expect(buildTranscriptExcerpt(input, TEN, ONE_THOUSAND)).toEqual({ markdown: "", turnCount: 0 });
+    expect(buildTranscriptExcerpt(input, TEN, ONE_THOUSAND)).toEqual({
+      markdown: "",
+      turnCount: 0,
+    });
   });
 });
 
