@@ -1678,6 +1678,68 @@ describe("appendToChunked - validation", () => {
     ).toThrow("fsApi must provide required sync methods");
   });
 
+  it("does not throw when folder exists with no chunk artifacts and meta has no chunks", () => {
+    const paths = makeChunkPaths();
+    const fsApi = makeFsApi({
+      [paths.folderPath]: null,
+    });
+
+    expect(() =>
+      appendToChunked(paths.vaultPath, paths.subfolder, paths.today, "x", {
+        session: TEST_SESSION,
+        fsApi,
+      }),
+    ).not.toThrow();
+  });
+});
+
+describe("appendToChunked - rollback skips write when marker absent", () => {
+  it("does not write when chunk content does not end with continued marker", () => {
+    const paths = makeChunkPaths();
+    const fsApi = makeFsApi({});
+    const hardCap = 50;
+
+    appendToChunked(paths.vaultPath, paths.subfolder, paths.today, "x", {
+      capBytes: TWENTY,
+      hardCapBytes: hardCap,
+      session: TEST_SESSION,
+      fsApi,
+    });
+
+    const firstChunkPath = resolveSessionChunkPath(fsApi, paths.folderPath, 0);
+    const contentWithoutMarker = fsApi._files[firstChunkPath];
+
+    const meta = JSON.parse(fsApi._files[paths.metaPath]);
+    const capBytes = meta.chunks[0].sizeBytes;
+    const overflowBytes = Math.max(1, hardCap - capBytes + 1);
+
+    fsApi.appendFileSync = (_p, _data, _encoding) => {};
+
+    const originalWriteFileSync = fsApi.writeFileSync.bind(fsApi);
+    let writeCallCount = 0;
+    fsApi.writeFileSync = (p, data, encoding) => {
+      writeCallCount += 1;
+      if (writeCallCount === 1) {
+        throw new Error("simulated rotate write failure");
+      }
+      originalWriteFileSync(p, data, encoding);
+    };
+
+    expect(() =>
+      appendToChunked(paths.vaultPath, paths.subfolder, paths.today, "y".repeat(overflowBytes), {
+        capBytes: TWENTY,
+        hardCapBytes: hardCap,
+        session: TEST_SESSION,
+        exchangeOpen: true,
+        fsApi,
+      }),
+    ).toThrow("simulated rotate write failure");
+
+    expect(fsApi._files[firstChunkPath]).toBe(contentWithoutMarker);
+  });
+});
+
+describe("appendToChunked - validation continued", () => {
   it("uses default fsApi when options is not an object", () => {
     const paths = makeChunkPaths();
     const delegatedFsApi = makeFsApi({});

@@ -174,6 +174,36 @@ describe("capture state file I/O", () => {
     expect(loadCaptureState(vaultPath, DEFAULT_SUBFOLDER)).toEqual(defaultCaptureState());
   });
 
+  it("strips non-string entries from nagSessions when loading coaching state", () => {
+    const vaultPath = createTempVaultPath();
+    const statePath = resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER);
+    const validIso = new Date().toISOString();
+
+    fs.mkdirSync(path.dirname(statePath), { recursive: true });
+    fs.writeFileSync(
+      statePath,
+      JSON.stringify({
+        lastCapture: null,
+        coachingState: {
+          promptHashCounts: {
+            abc123: {
+              count: 1,
+              firstSeenIso: validIso,
+              lastSeenIso: validIso,
+              nagSessions: ["valid-session", 42, "another-valid", null],
+            },
+          },
+        },
+      }),
+      UTF8_ENCODING,
+    );
+
+    const loaded = loadCaptureState(vaultPath, DEFAULT_SUBFOLDER);
+    const entry = loaded.coachingState.promptHashCounts.abc123;
+
+    expect(entry.nagSessions).toEqual(["valid-session", "another-valid"]);
+  });
+
   it("sanitizes invalid lastCapture records when loading state", () => {
     const vaultPath = createTempVaultPath();
     const statePath = resolveCaptureStatePath(vaultPath, DEFAULT_SUBFOLDER);

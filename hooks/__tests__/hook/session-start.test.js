@@ -2,6 +2,7 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
+const Module = require("node:module");
 const {
   SESSION_START_RECENT_LOG_LINES,
   HOT_CACHE_CONTEXT_MAX_CHARS,
@@ -1135,5 +1136,51 @@ describe("buildCoachingAdditionalText", () => {
 
   it("returns empty string when state is a non-null non-object (defensive catch)", () => {
     expect(sessionStart.buildCoachingAdditionalText(NON_OBJECT_PRIMITIVE)).toBe("");
+  });
+});
+
+describe("session-start.js require.main guard", () => {
+  it("invokes main when loaded as require.main", () => {
+    const entrypointPath = path.join(hooksRoot, ENTRYPOINT_FILE);
+    const entrypointSource = fs.readFileSync(entrypointPath, "utf-8");
+    const hookRuntimePath = require.resolve("../../lib/hook/hook-runtime");
+    const previousHookRuntimeModule = require.cache[hookRuntimePath];
+    const previousRequireMain = require.main;
+    const previousProcessMainModule = process.mainModule;
+    const callArguments = [];
+
+    const hookRuntimeModule = new Module(hookRuntimePath, module);
+    hookRuntimeModule.filename = hookRuntimePath;
+    hookRuntimeModule.loaded = true;
+    hookRuntimeModule.exports = {
+      runStdinMain(...args) {
+        callArguments.push(args);
+        return { status: 0, stdout: "", stderr: "" };
+      },
+    };
+
+    const entrypointModule = new Module(entrypointPath, module);
+    entrypointModule.filename = entrypointPath;
+    entrypointModule.paths = Module._nodeModulePaths(path.dirname(entrypointPath));
+
+    require.main = entrypointModule;
+    process.mainModule = entrypointModule;
+    require.cache[hookRuntimePath] = hookRuntimeModule;
+
+    try {
+      entrypointModule._compile(entrypointSource, entrypointPath);
+    } finally {
+      require.main = previousRequireMain;
+      process.mainModule = previousProcessMainModule;
+      if (typeof previousHookRuntimeModule === "undefined") {
+        delete require.cache[hookRuntimePath];
+      } else {
+        require.cache[hookRuntimePath] = previousHookRuntimeModule;
+      }
+    }
+
+    expect(callArguments).toHaveLength(1);
+    expect(callArguments[0]).toHaveLength(2);
+    expect(typeof callArguments[0][1]).toBe("function");
   });
 });

@@ -706,6 +706,12 @@ describe("filterMmTurns", () => {
     expect(() => filterMmTurns(null)).toThrow("turns must be an array");
     expect(() => filterMmTurns("bad")).toThrow("turns must be an array");
   });
+
+  it("returns skip state when user turn is an mm command", () => {
+    const turns = [{ role: TRANSCRIPT_ROLE_USER, content: "/mms" }];
+
+    expect(filterMmTurns(turns)).toEqual([]);
+  });
 });
 
 describe("selectRecentTurns", () => {
@@ -863,6 +869,26 @@ describe("buildFullTranscript", () => {
       markdown: "**User:** question\n\n**Assistant:** answer\n",
       turnCount: TWO,
     });
+  });
+});
+
+describe("buildFullTranscript early-exit branches", () => {
+  it("returns empty result for empty string content", () => {
+    expect(buildFullTranscript("")).toEqual({ markdown: "", turnCount: 0 });
+  });
+
+  it("returns empty result when content has no parseable user or assistant turns", () => {
+    const input = JSON.stringify({ message: { role: "system", content: "ignored" } });
+
+    expect(buildFullTranscript(input)).toEqual({ markdown: "", turnCount: 0 });
+  });
+});
+
+describe("buildTranscriptExcerpt empty-turns branch", () => {
+  it("returns empty result when parsed content yields no turns", () => {
+    const input = JSON.stringify({ message: { role: "tool", content: "call" } });
+
+    expect(buildTranscriptExcerpt(input, TEN, ONE_THOUSAND)).toEqual({ markdown: "", turnCount: 0 });
   });
 });
 

@@ -2585,3 +2585,35 @@ describe("session-end.js helper warnings", () => {
     expect(readFirstDailyChunk(vaultPath, DEFAULT_SUBFOLDER, now.date)).toContain("assistant");
   });
 });
+
+describe("session-end.js findCodexSessionContent sort comparator", () => {
+  it("returns content of most-recently-modified file when multiple jsonl files exist", () => {
+    const dir = createTempDir("mm-codex-sort-");
+    const older = path.join(dir, "older.jsonl");
+    const newer = path.join(dir, "newer.jsonl");
+    writeText(older, buildTranscript(TWO));
+    writeText(newer, buildTranscript(TWO));
+    const oldTime = new Date(Date.now() - 10000);
+    fs.utimesSync(older, oldTime, oldTime);
+    const newTime = new Date(Date.now());
+    fs.utimesSync(newer, newTime, newTime);
+    const result = sessionEnd.findCodexSessionContent(dir, "");
+    expect(result).not.toBe("");
+  });
+});
+
+describe("session-end.js findCopilotCliSessionContent sort comparator", () => {
+  it("returns content of most-recently-modified subdir when multiple subdirs exist", () => {
+    const sessionStateDir = createTempDir("mm-copilot-sort-");
+    const olderDir = path.join(sessionStateDir, "session-older");
+    const newerDir = path.join(sessionStateDir, "session-newer");
+    writeText(path.join(olderDir, "data.jsonl"), "older content");
+    writeText(path.join(newerDir, "data.jsonl"), "newer content");
+    const oldTime = new Date(Date.now() - 10000);
+    fs.utimesSync(olderDir, oldTime, oldTime);
+    const newTime = new Date(Date.now());
+    fs.utimesSync(newerDir, newTime, newTime);
+    const result = sessionEnd.findCopilotCliSessionContent(sessionStateDir, "");
+    expect(result).not.toBe("");
+  });
+});
