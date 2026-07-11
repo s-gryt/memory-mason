@@ -1814,4 +1814,3 @@ describe("pre-compact.js - exchangeOpen flag", () => {
       expect(options.exchangeOpen).toBe(true);
     }));
 });
-

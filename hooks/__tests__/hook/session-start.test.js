@@ -1137,4 +1137,3 @@ describe("buildCoachingAdditionalText", () => {
     expect(sessionStart.buildCoachingAdditionalText(NON_OBJECT_PRIMITIVE)).toBe("");
   });
 });
-
