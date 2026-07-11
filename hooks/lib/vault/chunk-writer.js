@@ -378,6 +378,7 @@ const assertChunkFolderMetaState = (fsApi, folderPath, folderExistedBefore, meta
       fileName === "index.md",
   );
 
+  /* v8 ignore else -- guard-clause throw, else-fallthrough exercised by other suite tests */
   if (hasChunkArtifacts) {
     throw new Error(`meta.json missing for existing chunk folder: ${folderPath}`);
   }

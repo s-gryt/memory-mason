@@ -359,6 +359,7 @@ module.exports = {
   main,
 };
 
+/* v8 ignore next 3 -- CLI entrypoint guard, exercised only via subprocess spawn */
 if (require.main === module) {
   main();
 }

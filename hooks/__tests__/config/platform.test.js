@@ -1,8 +1,5 @@
 "use strict";
 
-const fs = require("node:fs");
-const path = require("node:path");
-const Module = require("node:module");
 const {
   ENV_KEY_VAULT_PATH,
   ENV_KEY_SYNC,
@@ -15,6 +12,7 @@ const {
   expandHomePath,
   parseMemoryMasonConfig,
   parseDotEnv,
+  resolveEnvOverrides,
   resolveVaultConfig,
 } = require("../../lib/config/config");
 const {
@@ -32,19 +30,6 @@ const {
 } = require("../helpers/test-constants");
 
 const TEST_INVALID_STDIN_NUMBER = 123;
-
-const loadConfigModuleWithInternals = () => {
-  const configPath = require.resolve("../../lib/config/config");
-  const configSource = fs.readFileSync(configPath, "utf-8");
-  const configModule = new Module(configPath, module);
-  configModule.filename = configPath;
-  configModule.paths = Module._nodeModulePaths(path.dirname(configPath));
-  configModule._compile(
-    `${configSource}\nmodule.exports.__resolveEnvOverrides = resolveEnvOverrides;\n`,
-    configPath,
-  );
-  return configModule.exports;
-};
 
 describe("detectPlatform", () => {
   it("returns copilot-vscode for hookEventName payloads", () => {
@@ -284,9 +269,7 @@ describe("parseDotEnv", () => {
 
 describe("resolveEnvOverrides", () => {
   it("treats non-object env as empty env overrides", () => {
-    const configModule = loadConfigModuleWithInternals();
-
-    expect(configModule.__resolveEnvOverrides(null)).toEqual({
+    expect(resolveEnvOverrides(null)).toEqual({
       syncFromEnv: null,
       captureModeFromEnv: null,
       minimizeFromEnv: null,

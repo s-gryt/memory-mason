@@ -1,12 +1,10 @@
 "use strict";
 
-const fs = require("node:fs");
-const path = require("node:path");
-const Module = require("node:module");
 const {
   extractTagText,
   stripAnsiEscapeSequences,
   normalizeTranscriptText,
+  collapseAssistantRuns,
   collapseIntermediateAssistants,
   parseJsonlTranscript,
   filterMmTurns,
@@ -51,19 +49,6 @@ const expectedHelloWorldTurns = [
 
 const expectHelloWorldTranscript = (input) => {
   expect(parseJsonlTranscript(input)).toEqual(expectedHelloWorldTurns);
-};
-
-const loadTranscriptModuleWithInternals = () => {
-  const transcriptPath = require.resolve("../../lib/capture/transcript");
-  const transcriptSource = fs.readFileSync(transcriptPath, "utf-8");
-  const transcriptModule = new Module(transcriptPath, module);
-  transcriptModule.filename = transcriptPath;
-  transcriptModule.paths = Module._nodeModulePaths(path.dirname(transcriptPath));
-  transcriptModule._compile(
-    `${transcriptSource}\nmodule.exports.__collapseAssistantRuns = collapseAssistantRuns;\n`,
-    transcriptPath,
-  );
-  return transcriptModule.exports;
 };
 
 describe("transcript normalization helpers", () => {
@@ -237,11 +222,7 @@ describe("collapseIntermediateAssistants", () => {
   });
 
   it("returns empty for assistant runs with no turns", () => {
-    const transcriptModule = loadTranscriptModuleWithInternals();
-
-    expect(
-      transcriptModule.__collapseAssistantRuns([{ role: TRANSCRIPT_ROLE_ASSISTANT, turns: [] }]),
-    ).toEqual([]);
+    expect(collapseAssistantRuns([{ role: TRANSCRIPT_ROLE_ASSISTANT, turns: [] }])).toEqual([]);
   });
 });
 

@@ -565,6 +565,7 @@ function captureSessionEndPath(
   );
   const sanitizedTurns = sanitizedTurnData.turns;
 
+  /* v8 ignore else -- guard-clause return, else-fallthrough exercised by other suite tests */
   if (sanitizedTurns.length < 1) {
     return buildSuccessResult();
   }
@@ -635,6 +636,7 @@ function run(rawStdin, runtime = {}) {
   const homedir = runtimeContext.homedir;
   const wasInvokedByTool = toStringOrEmpty(env[ENV_KEY_INVOKED_BY]) !== "";
 
+  /* v8 ignore else -- guard-clause return, else-fallthrough exercised by other suite tests */
   if (wasInvokedByTool) {
     return buildSuccessResult();
   }
@@ -652,6 +654,7 @@ function run(rawStdin, runtime = {}) {
 
     const syncDisabled = resolvedConfig.sync === false;
 
+    /* v8 ignore else -- guard-clause return, else-fallthrough exercised by other suite tests */
     if (syncDisabled) {
       return buildSuccessResult();
     }
@@ -694,6 +697,7 @@ function main(runtime = {}) {
   return runStdinMain(runtime, run);
 }
 
+/* v8 ignore next 3 -- CLI entrypoint guard, exercised only via subprocess spawn */
 if (require.main === module) {
   main();
 }

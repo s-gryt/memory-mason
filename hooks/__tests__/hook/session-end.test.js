@@ -904,6 +904,38 @@ describe("session-end.js", () => {
     expect(dailyContent).toContain("<thinking>hidden</thinking>");
   });
 
+  it("session_end path returns success without write when all turns strip to empty content", () => {
+    const homeDir = createTempDir(TEST_HOME_PREFIX);
+    const vaultPath = createTempDir(TEST_VAULT_PREFIX);
+    const transcriptPath = path.join(
+      createTempDir(TEST_TRANSCRIPT_PREFIX),
+      TEST_DEFAULT_TRANSCRIPT_FILE,
+    );
+
+    writeText(
+      transcriptPath,
+      JSON.stringify({
+        message: {
+          role: TRANSCRIPT_ROLE_USER,
+          content: "<system-reminder>hidden</system-reminder>",
+        },
+      }),
+    );
+
+    const result = runScript(ENTRYPOINT_FILE, {
+      payload: {
+        hook_event_name: HOOK_EVENT_SESSION_END_SNAKE,
+        cwd: hooksRoot,
+        transcript_path: transcriptPath,
+        session_id: "session-end-all-turns-stripped-empty",
+      },
+      env: buildEnv(homeDir, { [ENV_KEY_VAULT_PATH]: vaultPath }),
+    });
+
+    expect(result.status).toBe(0);
+    expect(fs.existsSync(buildDailyFilePath(vaultPath, DEFAULT_SUBFOLDER, today()))).toBe(false);
+  });
+
   it("captures assistant reply from VS Code transcript entries on Stop", () => {
     const homeDir = createTempDir(TEST_HOME_PREFIX);
     const vaultPath = createTempDir(TEST_VAULT_PREFIX);

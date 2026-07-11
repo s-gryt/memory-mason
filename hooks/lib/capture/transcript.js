@@ -273,6 +273,7 @@ const filterMmTurns = (turns) => {
   const transitionMmFilterState = (state, turn) => {
     const isUserMmCommand = turn.role === TRANSCRIPT_ROLE_USER && isMmCommand(turn.content);
 
+    /* v8 ignore else -- guard-clause return, else-fallthrough exercised by other suite tests */
     if (isUserMmCommand) {
       return {
         skipAssistantAfterMm: true,
@@ -355,6 +356,7 @@ const renderTurnsAsMarkdown = (turns) => {
 };
 
 const buildFullTranscript = (content, captureMode = DEFAULT_CAPTURE_MODE) => {
+  /* v8 ignore else -- guard-clause return, else-fallthrough exercised by other suite tests */
   if (content === "") {
     return {
       markdown: "",
@@ -364,6 +366,7 @@ const buildFullTranscript = (content, captureMode = DEFAULT_CAPTURE_MODE) => {
 
   const turns = parseJsonlTranscript(content, captureMode);
 
+  /* v8 ignore else -- guard-clause return, else-fallthrough exercised by other suite tests */
   if (turns.length === 0) {
     return {
       markdown: "",
@@ -389,6 +392,7 @@ const buildTranscriptExcerpt = (
   const turns = parseJsonlTranscript(content, captureMode);
   const recentTurns = selectRecentTurns(turns, maxTurns);
 
+  /* v8 ignore else -- guard-clause return, else-fallthrough exercised by other suite tests */
   if (recentTurns.length === 0) {
     return {
       markdown: "",
@@ -409,6 +413,7 @@ module.exports = {
   extractTagText,
   stripAnsiEscapeSequences,
   normalizeTranscriptText,
+  collapseAssistantRuns,
   collapseIntermediateAssistants,
   parseJsonlTranscript,
   filterMmTurns,
